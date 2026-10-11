@@ -1,6 +1,8 @@
 #import "ZTRootListController.h"
 #import "SecurityManager.h"
 #import <UIKit/UIKit.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 #import <sys/sysctl.h>
 #import <signal.h>
 #import <sys/stat.h>
@@ -139,12 +141,16 @@ static void kill_all_zalo_processes(void);
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
 
 static void kill_all_zalo_processes(void) {
-    // 1. Thử gọi FBSSystemService của SpringBoard để đóng app chính thức
-    Class fbsClass = NSClassFromString(@"FBSSystemService");
-    if (fbsClass && [fbsClass respondsToSelector:@selector(sharedService)]) {
-        id service = [fbsClass sharedService];
-        if ([service respondsToSelector:@selector(terminateApplication:forReason:andReport:withDescription:)]) {
-            [service terminateApplication:ZALO_BUNDLE_ID forReason:1 andReport:NO withDescription:@"ZaloTweak Wipe"];
+    // 1. Thử gọi FBSSystemService của SpringBoard qua dynamic messaging để đóng app
+    Class fbsClass = objc_getClass("FBSSystemService");
+    if (fbsClass) {
+        SEL sharedSel = sel_registerName("sharedService");
+        if ([fbsClass respondsToSelector:sharedSel]) {
+            id service = ((id (*)(id, SEL))objc_msgSend)(fbsClass, sharedSel);
+            SEL termSel = sel_registerName("terminateApplication:forReason:andReport:withDescription:");
+            if (service && [service respondsToSelector:termSel]) {
+                ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, ZALO_BUNDLE_ID, 1, NO, @"ZaloTweak Wipe");
+            }
         }
     }
 
