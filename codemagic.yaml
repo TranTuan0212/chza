@@ -2,7 +2,7 @@ workflows:
   build-roothide:
     name: Build ZaloTweak (Roothide)
     max_build_duration: 15
-    instance_type: mac_mini_m1
+    instance_type: mac_mini_m2
     environment:
       xcode: 26.5
       vars:
@@ -11,8 +11,10 @@ workflows:
       - name: Setup Theos and iOS SDK
         script: |
           echo "==> Dang cai dat Theos..."
-          git clone --recursive https://github.com/theos/theos.git $THEOS
+          rm -rf $THEOS
+          git clone --depth=1 --recursive --shallow-submodules https://github.com/theos/theos.git $THEOS
           echo "==> Dang tai iOS SDK..."
+          rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
       - name: Build Roothide DEB
         script: |
@@ -25,7 +27,7 @@ workflows:
   build-rootless:
     name: Build ZaloTweak (Rootless)
     max_build_duration: 15
-    instance_type: mac_mini_m1
+    instance_type: mac_mini_m2
     environment:
       xcode: 26.5
       vars:
@@ -34,8 +36,10 @@ workflows:
       - name: Setup Theos and iOS SDK
         script: |
           echo "==> Dang cai dat Theos..."
-          git clone --recursive https://github.com/theos/theos.git $THEOS
+          rm -rf $THEOS
+          git clone --depth=1 --recursive --shallow-submodules https://github.com/theos/theos.git $THEOS
           echo "==> Dang tai iOS SDK..."
+          rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
       - name: Build Rootless DEB
         script: |
