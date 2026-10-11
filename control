@@ -1,0 +1,9 @@
+Package: com.sonhu.zalotweak
+Name: ZaloTweak
+Depends: mobilesubstrate | ellekit, preferenceloader
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: Device Spoofer & Keychain Isolator for Zalo iOS with Settings Menu
+Maintainer: sonhu
+Author: sonhu
+Section: Tweaks

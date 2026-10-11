@@ -1,0 +1,11 @@
+{
+    Filter = {
+        Bundles = (
+            "com.vng.zalo",
+            "com.vng.zalo.NotificationService",
+            "com.vng.zalo.NotificationContent",
+            "com.vng.zalo.shareExtension",
+            "com.vng.zalo.ShareExtension"
+        );
+    };
+}

@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>TRẠNG THÁI</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>enabled</string>
+            <key>label</key>
+            <string>Bật Fake Info Zalo</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>BẢN QUYỀN THIẾT BỊ (SUPABASE DRM)</string>
+            <key>footerText</key>
+            <string>Bấm "Sao Chép UDID" gửi cho admin để cấp key. Mỗi key kích hoạt duy nhất cho 1 máy này.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>UDID Máy Thật</string>
+            <key>get</key>
+            <string>getRealHardwareUDIDValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>📋 Sao Chép Mã UDID</string>
+            <key>action</key>
+            <string>copyRealUDIDAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>licenseKeyInput</string>
+            <key>label</key>
+            <string>Mã Key</string>
+            <key>placeholder</key>
+            <string>Dán mã key vào đây</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>🔑 KÍCH HOẠT / KIỂM TRA BẢN QUYỀN</string>
+            <key>action</key>
+            <string>activateLicenseAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>Trạng Thái</string>
+            <key>get</key>
+            <string>getLicenseStatusDisplayValue:</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>MODEL THIẾT BỊ GIẢ LẬP</string>
+            <key>footerText</key>
+            <string>Khi đổi model, tweak sẽ tự động đồng bộ RAM, CPU và Kernel OS tương ứng.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkListCell</string>
+            <key>default</key>
+            <string>iPhone14,2</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>detail</key>
+            <string>PSListItemsController</string>
+            <key>key</key>
+            <string>deviceMachine</string>
+            <key>label</key>
+            <string>Chọn Thiết Bị</string>
+            <key>validTitles</key>
+            <array>
+                <string>iPhone 13 Pro (6GB RAM)</string>
+                <string>iPhone 14 Pro (6GB RAM)</string>
+                <string>iPhone 15 Pro Max (8GB RAM)</string>
+                <string>iPhone 12 (4GB RAM)</string>
+            </array>
+            <key>validValues</key>
+            <array>
+                <string>iPhone14,2</string>
+                <string>iPhone15,2</string>
+                <string>iPhone16,2</string>
+                <string>iPhone13,2</string>
+            </array>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>THAO TÁC 1-CLICK AN TOÀN CHỐNG KHÓA</string>
+            <key>footerText</key>
+            <string>Quy trình: Tắt app ➔ Xóa sạch Data cũ ➔ Xóa sạch Cache/Shared Group ➔ Cấp IDFV &amp; Keychain ảo mới 100%.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>🚀 ÁP DỤNG &amp; WIPE SẠCH DỮ LIỆU (1-CLICK)</string>
+            <key>action</key>
+            <string>applyAndWipeCleanSequence:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>⚡ Tắt Nhanh Ứng Dụng Zalo (Kill App)</string>
+            <key>action</key>
+            <string>killZalo:</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>THÔNG TIN ĐỊNH DANH HIỆN TẠI</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>spoofedIDFV</string>
+            <key>label</key>
+            <string>IDFV</string>
+            <key>placeholder</key>
+            <string>UUID Identifier For Vendor</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>profileId</string>
+            <key>label</key>
+            <string>Profile ID</string>
+            <key>placeholder</key>
+            <string>Keychain Profile Namespace</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>footerAlignment</key>
+            <integer>1</integer>
+            <key>footerText</key>
+            <string>ZaloTweak v1.0.0 by sonhu
+Hỗ trợ Dopamine / Roothide / Rootless</string>
+        </dict>
+    </array>
+    <key>title</key>
+    <string>ZaloTweak</string>
+</dict>
+</plist>

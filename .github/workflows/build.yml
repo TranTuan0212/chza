@@ -1,0 +1,45 @@
+name: Build ZaloTweak DEB
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          # Tải iOS SDK
+          git clone --depth=1 https://github.com/theos/sdks.git ~/theos/sdks
+          echo "THEOS=~/theos" >> $GITHUB_ENV
+
+      - name: Build Roothide DEB
+        run: |
+          make clean
+          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+
+      - name: Rename Roothide DEB
+        run: |
+          mkdir -p output
+          mv packages/*.deb output/ZaloTweak_roothide.deb
+
+      - name: Build Rootless DEB
+        run: |
+          make clean
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+          mv packages/*.deb output/ZaloTweak_rootless.deb
+
+      - name: Upload DEB Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ZaloTweak-DEB-Packages
+          path: output/*.deb
