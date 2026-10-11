@@ -428,4 +428,63 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     }];
 }
 
+#pragma mark - Audit Log Actions
+
+static NSString *findAuditLogPath(void) {
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:doc]) {
+            return doc;
+        }
+    }
+    NSString *zaloData = get_zalo_data_container_path();
+    if (zaloData) {
+        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
+            return zaloDoc;
+        }
+    }
+    return @"/var/mobile/Library/Preferences/ZaloAudit.log";
+}
+
+- (void)viewAuditLogAction:(PSSpecifier *)specifier {
+    NSString *logPath = findAuditLogPath();
+    NSError *err = nil;
+    NSString *content = [NSString stringWithContentsOfFile:logPath encoding:NSUTF8StringEncoding error:&err];
+
+    if (!content || content.length == 0) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Có Dữ Liệu Log"
+                                                                       message:@"Chưa có nhật ký nào được ghi lại.\n\nVui lòng đảm bảo bạn đã: \n1. Bật công tắc 'Bật Soi Log (Audit Mode)' ở trên\n2. Mở ứng dụng Zalo lên hoạt động trong 10-20 giây để tweak ghi nhận các truy vấn."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"📋 Nhật Ký Kiểm Toán Zalo"
+                                                                   message:[content length] > 1500 ? [NSString stringWithFormat:@"%@\n\n... (và nhiều dòng khác)", [content substringToIndex:1500]] : content
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"📤 Chia Sẻ / Lưu File" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSURL *fileURL = [NSURL fileURLWithPath:logPath];
+        UIActivityViewController *activityVC = [[UIActivityViewController alloc] initWithActivityItems:@[fileURL] applicationActivities:nil];
+        [self presentViewController:activityVC animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)clearAuditLogAction:(PSSpecifier *)specifier {
+    NSString *logPath = findAuditLogPath();
+    [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Đã Xóa Sạch"
+                                                                   message:@"Toàn bộ lịch sử nhật ký kiểm toán ZaloAudit.log đã được xóa."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 @end

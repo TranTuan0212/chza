@@ -20,6 +20,7 @@
 @property (nonatomic, strong) NSString *profileId;         // Dùng để cách ly Keychain theo profile
 @property (nonatomic, assign) uint64_t diskTotalSize;      // Dung lượng tổng ổ cứng (bytes)
 @property (nonatomic, assign) uint64_t diskFreeSize;       // Dung lượng trống ổ cứng (bytes)
+@property (nonatomic, assign) BOOL enableAuditLog;         // Bật ghi nhật ký kiểm toán Zalo (Audit Mode)
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

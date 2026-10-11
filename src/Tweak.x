@@ -88,6 +88,7 @@ static NSString *getConfigPath(void) {
         self.profileId = dict[@"profileId"] ?: [[NSUUID UUID] UUIDString];
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
+        self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
 
         if (!dict[@"spoofedIDFV"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
             if (self.bootTimeSec == 0) {
@@ -99,6 +100,7 @@ static NSString *getConfigPath(void) {
         }
     } else {
         self.enabled = YES;
+        self.enableAuditLog = NO;
         [self generateNewProfile];
     }
 }
@@ -106,6 +108,7 @@ static NSString *getConfigPath(void) {
 - (void)saveSettings {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     dict[@"enabled"] = @(self.enabled);
+    dict[@"enableAuditLog"] = @(self.enableAuditLog);
     dict[@"deviceMachine"] = self.deviceMachine;
     dict[@"deviceModel"] = self.deviceModel;
     dict[@"deviceName"] = self.deviceName;
@@ -162,6 +165,59 @@ static NSString *getConfigPath(void) {
 }
 
 @end
+
+// ==========================================
+// HỆ THỐNG AUDIT LOG (KIỂM TOÁN HÀNH VI ZALO)
+// ==========================================
+#define GLOBAL_AUDIT_LOG_PATH @"/var/mobile/Library/Preferences/ZaloAudit.log"
+
+static NSString *getAuditLogPath(void) {
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+        return doc;
+    }
+    return GLOBAL_AUDIT_LOG_PATH;
+}
+
+static NSMutableSet *loggedAuditKeys = nil;
+static dispatch_queue_t auditQueue = nil;
+
+static void logAudit(NSString *category, NSString *detail) {
+    if (![ZTSettings sharedSettings].enableAuditLog) return;
+
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        loggedAuditKeys = [[NSMutableSet alloc] init];
+        auditQueue = dispatch_queue_create("com.sonhu.zalotweak.auditQueue", DISPATCH_QUEUE_SERIAL);
+    });
+
+    NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, detail];
+    dispatch_async(auditQueue, ^{
+        if ([loggedAuditKeys containsObject:dedupKey]) {
+            return;
+        }
+        [loggedAuditKeys addObject:dedupKey];
+
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setDateFormat:@"HH:mm:ss"];
+        NSString *timeStr = [df stringFromDate:[NSDate date]];
+
+        NSString *line = [NSString stringWithFormat:@"[%@] [%@] %@\n", timeStr, category, detail];
+        NSString *path = getAuditLogPath();
+
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!handle) {
+            [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+            handle = [NSFileHandle fileHandleForWritingAtPath:path];
+        }
+        if (handle) {
+            [handle seekToEndOfFile];
+            [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+            [handle closeFile];
+        }
+    });
+}
 
 // ==========================================
 // 1. TẦNG C API: sysctl, sysctlbyname & uname HOOKING
@@ -265,6 +321,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     ZTSettings *settings = [ZTSettings sharedSettings];
 
     if (strcmp(name, "hw.machine") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.machine -> [ĐÃ FAKE] %@", settings.deviceMachine]);
         const char *val = [settings.deviceMachine UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -276,6 +333,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "hw.model") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.model -> [ĐÃ FAKE] %@", settings.deviceModel]);
         const char *val = [settings.deviceModel UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -287,6 +345,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "kern.osproductversion") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.osproductversion -> [ĐÃ FAKE] %@", settings.systemVersion]);
         const char *val = [settings.systemVersion UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -298,6 +357,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "kern.osversion") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.osversion -> [ĐÃ FAKE] %@", settings.kernOsVersion]);
         const char *val = [settings.kernOsVersion UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -314,6 +374,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         strcmp(name, "hw.activecpu") == 0 ||
         strcmp(name, "hw.logicalcpu_max") == 0 ||
         strcmp(name, "hw.physicalcpu_max") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE] %u core", name, settings.ncpu]);
         uint32_t cpu = settings.ncpu;
         if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
             memcpy(oldp, &cpu, sizeof(uint32_t));
@@ -323,6 +384,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "hw.memsize") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.memsize -> [ĐÃ FAKE] %llu bytes (%llu GB)", settings.memsize, settings.memsize / (1024*1024*1024ULL)]);
         uint64_t ram = settings.memsize;
         if (oldp && oldlenp && *oldlenp >= sizeof(uint64_t)) {
             memcpy(oldp, &ram, sizeof(uint64_t));
@@ -341,6 +403,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "kern.boottime") == 0 && settings.bootTimeSec > 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.boottime -> [ĐÃ FAKE] Timestamp: %llu", settings.bootTimeSec]);
         struct timeval bt;
         bt.tv_sec = (time_t)settings.bootTimeSec;
         bt.tv_usec = 345678;
@@ -352,6 +415,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "kern.bootsessionuuid") == 0 && settings.bootSessionUUID.length > 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.bootsessionuuid -> [ĐÃ FAKE] %@", settings.bootSessionUUID]);
         const char *val = [settings.bootSessionUUID UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -363,6 +427,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     }
 
     if (strcmp(name, "kern.hostname") == 0 && settings.deviceName.length > 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.hostname -> [ĐÃ FAKE] %@", settings.deviceName]);
         const char *val = [settings.deviceName UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -373,6 +438,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         return 0;
     }
 
+    logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [CHƯA HOOK - LẤY TỰ NHIÊN TỪ MÁY]", name]);
     return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
 }
 
@@ -539,6 +605,10 @@ static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
         }
     }
 
+    if (service || account) {
+        logAudit(@"KEYCHAIN", [NSString stringWithFormat:@"Query Service: '%@', Account: '%@' -> [ĐÃ CÔ LẬP THEO PROFILE]", service ?: @"(null)", account ?: @"(null)"]);
+    }
+
     return dict;
 }
 
@@ -629,8 +699,12 @@ static BOOL is_jailbreak_path(const char *path) {
 static int (*orig_access)(const char *path, int mode);
 static int my_access(const char *path, int mode) {
     if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
+    }
+    if (path && (strstr(path, "Library") || strstr(path, "Applications") || strstr(path, "var") || strstr(path, "etc") || strstr(path, "bin"))) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [CHO PHÉP]", path]);
     }
     return orig_access(path, mode);
 }
@@ -638,8 +712,12 @@ static int my_access(const char *path, int mode) {
 static int (*orig_stat)(const char *path, struct stat *buf);
 static int my_stat(const char *path, struct stat *buf) {
     if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
+    }
+    if (path && (strstr(path, "Library") || strstr(path, "Applications") || strstr(path, "var") || strstr(path, "etc") || strstr(path, "bin"))) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [CHO PHÉP]", path]);
     }
     return orig_stat(path, buf);
 }
@@ -647,6 +725,7 @@ static int my_stat(const char *path, struct stat *buf) {
 static int (*orig_lstat)(const char *path, struct stat *buf);
 static int my_lstat(const char *path, struct stat *buf) {
     if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
     }
@@ -713,6 +792,7 @@ static const char *my_dyld_get_image_name(uint32_t image_index) {
 static CFDictionaryRef (*orig_CNCopyCurrentNetworkInfo)(CFStringRef interfaceName);
 static CFDictionaryRef my_CNCopyCurrentNetworkInfo(CFStringRef interfaceName) {
     if (is_tweak_active()) {
+        logAudit(@"WIFI-CHECK", @"Zalo cố đọc WiFi SSID/BSSID trạm phát -> [ĐÃ CHẶN ẨN HOÀN TOÀN]");
         return NULL;
     }
     return orig_CNCopyCurrentNetworkInfo ? orig_CNCopyCurrentNetworkInfo(interfaceName) : NULL;
@@ -781,8 +861,10 @@ static int my_statfs(const char *path, struct statfs *buf) {
             [scheme isEqualToString:@"zbra"] ||
             [scheme isEqualToString:@"filza"] ||
             [scheme isEqualToString:@"undecimus"]) {
+            logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CHẶN - TRẢ VỀ NO]", [url absoluteString]]);
             return NO;
         }
+        logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [CHO PHÉP]", [url absoluteString]]);
     }
     return %orig;
 }

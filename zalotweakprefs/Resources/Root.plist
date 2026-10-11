@@ -176,6 +176,45 @@
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
+            <key>label</key>
+            <string>KIỂM TOÁN &amp; THEO DÕI HÀNH VI ZALO (AUDIT LOG)</string>
+            <key>footerText</key>
+            <string>Bật chức năng này để ghi lại chính xác mọi thông số phần cứng, file hệ thống và Keychain mà Zalo bí mật đọc.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <false/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>enableAuditLog</string>
+            <key>label</key>
+            <string>Bật Soi Log (Audit Mode)</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>📄 Xem / Xuất Nhật Ký Zalo Đã Đọc</string>
+            <key>action</key>
+            <string>viewAuditLogAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>🗑️ Xóa Trắng File Log</string>
+            <key>action</key>
+            <string>clearAuditLogAction:</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
             <key>footerAlignment</key>
             <integer>1</integer>
             <key>footerText</key>
