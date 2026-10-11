@@ -15,9 +15,10 @@ workflows:
           echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
           git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
-          echo "==> Dang tai iOS SDK..."
-          rm -rf $THEOS/sdks
-          git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
+          echo "==> Dang tai va giai nen iOS 16.5 SDK chua day du Private Frameworks..."
+          mkdir -p $THEOS/sdks
+          curl -fsSL https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz -o /tmp/iPhoneOS16.5.sdk.tar.xz
+          tar -xf /tmp/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks
       - name: Build Roothide DEB
         script: |
           echo "==> Bien dich ban Roothide..."
@@ -42,9 +43,10 @@ workflows:
           echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
           git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
-          echo "==> Dang tai iOS SDK..."
-          rm -rf $THEOS/sdks
-          git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
+          echo "==> Dang tai va giai nen iOS 16.5 SDK chua day du Private Frameworks..."
+          mkdir -p $THEOS/sdks
+          curl -fsSL https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz -o /tmp/iPhoneOS16.5.sdk.tar.xz
+          tar -xf /tmp/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks
       - name: Build Rootless DEB
         script: |
           echo "==> Bien dich ban Rootless..."
