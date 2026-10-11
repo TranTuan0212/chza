@@ -10,9 +10,9 @@ workflows:
     scripts:
       - name: Setup Theos and iOS SDK
         script: |
-          echo "==> Dang cai dat Theos..."
+          echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
-          git clone --depth=1 --recursive --shallow-submodules https://github.com/theos/theos.git $THEOS
+          git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
           echo "==> Dang tai iOS SDK..."
           rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
@@ -35,9 +35,9 @@ workflows:
     scripts:
       - name: Setup Theos and iOS SDK
         script: |
-          echo "==> Dang cai dat Theos..."
+          echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
-          git clone --depth=1 --recursive --shallow-submodules https://github.com/theos/theos.git $THEOS
+          git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
           echo "==> Dang tai iOS SDK..."
           rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
