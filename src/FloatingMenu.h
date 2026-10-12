@@ -11,5 +11,6 @@
 + (instancetype)sharedManager;
 - (void)setupInAppMenu;
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
+- (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 @end

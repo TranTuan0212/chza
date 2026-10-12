@@ -21,6 +21,9 @@
 @property (nonatomic, assign) uint64_t diskTotalSize;      // Dung lượng tổng ổ cứng (bytes)
 @property (nonatomic, assign) uint64_t diskFreeSize;       // Dung lượng trống ổ cứng (bytes)
 @property (nonatomic, assign) BOOL enableAuditLog;         // Bật ghi nhật ký kiểm toán Zalo (Audit Mode)
+@property (nonatomic, strong) NSString *lastWipedIDFV;     // IDFV lần wipe trước
+@property (nonatomic, strong) NSString *lastWipedIP;       // IP mạng lần wipe trước
+@property (nonatomic, assign) uint64_t lastWipedTimestamp; // Thời điểm wipe lần trước
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

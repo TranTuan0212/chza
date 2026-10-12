@@ -90,6 +90,9 @@ static NSString *getConfigPath(void) {
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
         self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
+        self.lastWipedIDFV = dict[@"lastWipedIDFV"] ?: @"";
+        self.lastWipedIP = dict[@"lastWipedIP"] ?: @"";
+        self.lastWipedTimestamp = [dict[@"lastWipedTimestamp"] unsignedLongLongValue] ?: 0;
 
         if (!dict[@"spoofedIDFV"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
             if (self.bootTimeSec == 0) {
@@ -102,6 +105,9 @@ static NSString *getConfigPath(void) {
     } else {
         self.enabled = YES;
         self.enableAuditLog = NO;
+        self.lastWipedIDFV = @"";
+        self.lastWipedIP = @"";
+        self.lastWipedTimestamp = 0;
         [self generateNewProfile];
     }
 }
@@ -126,6 +132,9 @@ static NSString *getConfigPath(void) {
     dict[@"profileId"] = self.profileId;
     dict[@"diskTotalSize"] = @(self.diskTotalSize);
     dict[@"diskFreeSize"] = @(self.diskFreeSize);
+    if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
+    if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
+    dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
 
     NSString *path = getConfigPath();
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
