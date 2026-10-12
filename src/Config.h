@@ -17,6 +17,7 @@
 @property (nonatomic, assign) uint64_t bootTimeSec;        // kern.boottime sec
 @property (nonatomic, strong) NSString *bootSessionUUID;   // kern.bootsessionuuid
 @property (nonatomic, strong) NSString *spoofedIDFV;       // identifierForVendor UUID
+@property (nonatomic, strong) NSString *spoofedIDFA;       // advertisingIdentifier IDFA
 @property (nonatomic, strong) NSString *profileId;         // Dùng để cách ly Keychain theo profile
 @property (nonatomic, assign) uint64_t diskTotalSize;      // Dung lượng tổng ổ cứng (bytes)
 @property (nonatomic, assign) uint64_t diskFreeSize;       // Dung lượng trống ổ cứng (bytes)

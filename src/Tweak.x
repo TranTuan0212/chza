@@ -88,6 +88,7 @@ static NSString *getConfigPath(void) {
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: [[NSUUID UUID] UUIDString];
+        self.spoofedIDFA = dict[@"spoofedIDFA"] ?: [[NSUUID UUID] UUIDString];
         self.profileId = dict[@"profileId"] ?: [[NSUUID UUID] UUIDString];
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
@@ -96,7 +97,7 @@ static NSString *getConfigPath(void) {
         self.lastWipedIP = dict[@"lastWipedIP"] ?: @"";
         self.lastWipedTimestamp = [dict[@"lastWipedTimestamp"] unsignedLongLongValue] ?: 0;
 
-        if (!dict[@"spoofedIDFV"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
+        if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
             if (self.bootTimeSec == 0) {
                 uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
                 self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
@@ -131,6 +132,7 @@ static NSString *getConfigPath(void) {
     dict[@"bootTimeSec"] = @(self.bootTimeSec);
     dict[@"bootSessionUUID"] = self.bootSessionUUID ?: @"";
     dict[@"spoofedIDFV"] = self.spoofedIDFV;
+    dict[@"spoofedIDFA"] = self.spoofedIDFA ?: [[NSUUID UUID] UUIDString];
     dict[@"profileId"] = self.profileId;
     dict[@"diskTotalSize"] = @(self.diskTotalSize);
     dict[@"diskFreeSize"] = @(self.diskFreeSize);
@@ -172,6 +174,7 @@ static NSString *getConfigPath(void) {
     self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
     self.bootSessionUUID = [[NSUUID UUID] UUIDString];
     self.spoofedIDFV = [[NSUUID UUID] UUIDString];
+    self.spoofedIDFA = [[NSUUID UUID] UUIDString];
     self.profileId = [[NSUUID UUID] UUIDString];
     [self saveSettings];
 }
@@ -519,6 +522,44 @@ static int my_uname(struct utsname *buf) {
 
 %end
 
+// ==========================================
+// BẢO VỆ DANH TÍNH QUẢNG CÁO: IDFA & APP TRACKING
+// ==========================================
+%hook ASIdentifierManager
+
+- (NSUUID *)advertisingIdentifier {
+    NSString *fake = [ZTSettings sharedSettings].spoofedIDFA;
+    if (fake && fake.length > 0) {
+        logAudit(@"IDFA-CHECK", [NSString stringWithFormat:@"advertisingIdentifier -> [ĐÃ FAKE IDFA MỚI] %@", fake]);
+        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
+        if (uuid) return uuid;
+    }
+    logAudit(@"IDFA-CHECK", @"advertisingIdentifier -> [TRẢ VỀ ZERO UUID]");
+    return [[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000000"];
+}
+
+- (BOOL)isAdvertisingTrackingEnabled {
+    return NO;
+}
+
+%end
+
+%hook ATTrackingManager
+
++ (NSInteger)trackingAuthorizationStatus {
+    logAudit(@"TRACKING-CHECK", @"trackingAuthorizationStatus -> [ĐÃ CHẶN THEO DÕI - TRẢ VỀ DENIED (2)]");
+    return 2; // ATTrackingManagerAuthorizationStatusDenied
+}
+
++ (void)requestTrackingAuthorizationWithCompletionHandler:(void (^)(NSInteger status))completion {
+    logAudit(@"TRACKING-CHECK", @"requestTrackingAuthorization -> [TỰ ĐỘNG TRẢ VỀ DENIED (2)]");
+    if (completion) {
+        completion(2);
+    }
+}
+
+%end
+
 %hook UIScreen
 
 // Giữ nguyên bounds vật lý để UIWindow và cảm ứng hiển thị vừa vặn màn hình thực tế, không bị vỡ bố cục
@@ -802,7 +843,7 @@ static CFDictionaryRef my_CNCopyCurrentNetworkInfo(CFStringRef interfaceName) {
     return orig_CNCopyCurrentNetworkInfo ? orig_CNCopyCurrentNetworkInfo(interfaceName) : NULL;
 }
 
-// Giả lập dung lượng ổ cứng ở tầng POSIX C (statfs)
+// Giả lập dung lượng ổ cứng ở tầng POSIX C (statfs, fstatfs)
 static int (*orig_statfs)(const char *path, struct statfs *buf);
 static int my_statfs(const char *path, struct statfs *buf) {
     int ret = orig_statfs(path, buf);
@@ -818,6 +859,36 @@ static int my_statfs(const char *path, struct statfs *buf) {
         }
     }
     return ret;
+}
+
+static int (*orig_fstatfs)(int fd, struct statfs *buf);
+static int my_fstatfs(int fd, struct statfs *buf) {
+    int ret = orig_fstatfs ? orig_fstatfs(fd, buf) : -1;
+    if (ret == 0 && is_tweak_active() && buf) {
+        ZTSettings *settings = [ZTSettings sharedSettings];
+        uint64_t bsize = buf->f_bsize ? (uint64_t)buf->f_bsize : 4096ULL;
+        if (settings.diskTotalSize > 0) {
+            buf->f_blocks = settings.diskTotalSize / bsize;
+        }
+        if (settings.diskFreeSize > 0) {
+            buf->f_bavail = settings.diskFreeSize / bsize;
+            buf->f_bfree = buf->f_bavail;
+        }
+    }
+    return ret;
+}
+
+// Hook CacheDeleteCopyAvailableSpaceForVolume để chống Zalo đọc dung lượng thật từ daemon 'deleted'
+static CFNumberRef (*orig_CacheDeleteCopyAvailableSpaceForVolume)(CFStringRef volume);
+static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume) {
+    if (is_tweak_active()) {
+        uint64_t fakeFree = [ZTSettings sharedSettings].diskFreeSize;
+        if (fakeFree > 0) {
+            logAudit(@"DISK-CHECK", [NSString stringWithFormat:@"CacheDeleteCopyAvailableSpaceForVolume -> [ĐÃ FAKE DUNG LƯỢNG TRỐNG %.1f GB]", (double)fakeFree / (1000.0 * 1000.0 * 1000.0)]);
+            return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &fakeFree);
+        }
+    }
+    return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
 }
 
 static inline BOOL is_sideload_provision_path(NSString *path) {
@@ -1011,6 +1082,14 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         MSHookFunction((void *)sysctlbyname, (void *)my_sysctlbyname, (void **)&orig_sysctlbyname);
         MSHookFunction((void *)uname, (void *)my_uname, (void **)&orig_uname);
         MSHookFunction((void *)statfs, (void *)my_statfs, (void **)&orig_statfs);
+        void *fstatfs_ptr = (void *)fstatfs;
+        if (fstatfs_ptr) {
+            MSHookFunction(fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
+        }
+        void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
+        if (cdFunc) {
+            MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
+        }
 
         // Hook Anti-Jailbreak File & Dylib Checks
         MSHookFunction((void *)open, (void *)my_open, (void **)&orig_open);

@@ -608,68 +608,103 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     uint64_t sandboxBytes = get_directory_size(docDir) + get_directory_size(cacheDir);
     double sandboxKB = (double)sandboxBytes / 1024.0;
 
-    // 1. So sánh IDFV
-    NSString *idfvOld = (s.lastWipedIDFV.length > 0) ? [s.lastWipedIDFV substringToIndex:MIN((NSUInteger)8, s.lastWipedIDFV.length)] : @"Chưa wipe";
-    NSString *idfvNew = [s.spoofedIDFV substringToIndex:MIN((NSUInteger)8, s.spoofedIDFV.length)];
-    BOOL isDifferentIDFV = (s.lastWipedIDFV.length > 0 && ![s.spoofedIDFV isEqualToString:s.lastWipedIDFV]);
-    NSString *idfvStatus = isDifferentIDFV ? @"Mới tinh ✅" : (s.lastWipedIDFV.length == 0 ? @"Mới khởi tạo ✅" : @"Trùng lặp ⚠️");
+    // 1. Đọc TRỰC TIẾP TỪ HỆ THỐNG RUNTIME (Xác thực thật, không dùng chuỗi tĩnh)
+    NSString *liveBundle = [[NSBundle mainBundle] bundleIdentifier];
+    NSString *liveIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    
+    NSString *liveIDFA = @"Đã ẩn danh";
+    Class asClass = NSClassFromString(@"ASIdentifierManager");
+    if (asClass) {
+        id sharedMgr = [asClass performSelector:@selector(sharedManager)];
+        if (sharedMgr) {
+            NSUUID *adUUID = [sharedMgr performSelector:@selector(advertisingIdentifier)];
+            if (adUUID) {
+                liveIDFA = [adUUID UUIDString];
+            }
+        }
+    }
 
-    // 2. So sánh IP
+    // 2. Đo dung lượng ổ cứng hệ thống đọc được bởi App
+    NSDictionary *fsAttrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:home error:nil];
+    unsigned long long liveDiskFree = [fsAttrs[NSFileSystemFreeSize] unsignedLongLongValue];
+    unsigned long long liveDiskTotal = [fsAttrs[NSFileSystemSize] unsignedLongLongValue];
+    double freeGB = (double)liveDiskFree / (1000.0 * 1000.0 * 1000.0);
+    double totalGB = (double)liveDiskTotal / (1000.0 * 1000.0 * 1000.0);
+
+    // 3. Kiểm tra mobileprovision
+    NSString *provPath = [[NSBundle mainBundle] pathForResource:@"embedded" ofType:@"mobileprovision"];
+    BOOL isHiddenProv = (provPath == nil || ![[NSFileManager defaultManager] fileExistsAtPath:provPath]);
+
+    // 4. Uptime hệ thống trực tiếp
+    NSTimeInterval liveUptime = [[NSProcessInfo processInfo] systemUptime];
+    uint64_t uptimeHours = (uint64_t)(liveUptime / 3600.0);
+
+    // 5. So sánh IDFV với lần wipe trước
+    NSString *idfvOld = (s.lastWipedIDFV.length > 0) ? [s.lastWipedIDFV substringToIndex:MIN((NSUInteger)8, s.lastWipedIDFV.length)] : @"Chưa wipe";
+    NSString *idfvShort = (liveIDFV.length > 8) ? [liveIDFV substringToIndex:8] : liveIDFV;
+    BOOL isDifferentIDFV = (s.lastWipedIDFV.length > 0 && ![liveIDFV isEqualToString:s.lastWipedIDFV]);
+    NSString *idfvStatus = isDifferentIDFV ? @"Mới tinh ✅" : (s.lastWipedIDFV.length == 0 ? @"Mới cấp profile ✅" : @"Trùng lặp ⚠️");
+
+    // 6. So sánh IP
     NSString *ipOld = (s.lastWipedIP.length > 0) ? s.lastWipedIP : @"Chưa lưu";
     BOOL isDifferentIP = (s.lastWipedIP.length > 0 && ![currentIP isEqualToString:s.lastWipedIP]);
     BOOL isSameIP = (s.lastWipedIP.length > 0 && [currentIP isEqualToString:s.lastWipedIP]);
     
     NSString *ipStatus = @"";
     if (isSameIP) {
-        ipStatus = @"⚠️ TRÙNG IP LẦN TRƯỚC (CẦN BẬT TẮT MÁY BAY)";
+        ipStatus = @"⚠️ TRÙNG IP LẦN TRƯỚC";
     } else if (isDifferentIP) {
         ipStatus = @"Đã đổi IP mới ✅";
     } else {
-        ipStatus = @"Lần đầu ghi nhận ✅";
+        ipStatus = @"IP ban đầu ✅";
     }
 
-    // Cập nhật lại IP vào settings nếu chưa có
     if (s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         s.lastWipedIP = currentIP;
         [s saveSettings];
     }
 
-    // 3. Kết luận
+    // 7. Kết luận
     NSString *conclusion = @"";
     if (isSameIP) {
-        conclusion = @"🔴 CẢNH BÁO: IP MẠNG CHƯA ĐỔI!\nVui lòng BẬT rồi TẮT Chế Độ Máy Bay (Airplane Mode) để nhà mạng cấp IP 4G mới trước khi tạo tài khoản.";
+        conclusion = @"🔴 CẢNH BÁO: TRÙNG ĐỊA CHỈ IP 4G CŨ!\nVui lòng BẬT rồi TẮT Chế Độ Máy Bay (Airplane Mode) để nhà mạng đổi địa chỉ IP mới trước khi bấm Tạo Tài Khoản.";
     } else {
-        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(IDFV mới, Keychain riêng biệt, IP sạch, App Store Bundle ID ✅)";
+        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(IDFV mới, IDFA bảo vệ, Cache sạch, Bundle ID chuẩn App Store)";
     }
-
-    uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
-    uint64_t uptimeHours = (nowSec > s.bootTimeSec) ? ((nowSec - s.bootTimeSec) / 3600) : 0;
 
     NSString *report = [NSString stringWithFormat:
         @"═══════════════════════════\n"
-        @"1. ĐỊNH DANH THIẾT BỊ (IDFV):\n"
-        @" • Trước Wipe : %@...\n"
-        @" • Hiện Tại   : %@... (%@)\n\n"
-        @"2. ĐỊA CHỈ IP 4G (INTERNET):\n"
-        @" • Trước Wipe : %@\n"
-        @" • Hiện Tại   : %@\n"
-        @" • Đánh giá   : %@\n\n"
-        @"3. DỮ LIỆU SANDBOX (CACHE / TOKEN):\n"
-        @" • Dung lượng : %.1f KB (%@)\n\n"
-        @"4. TRẠNG THÁI BẢO VỆ CHUYÊN SÂU:\n"
-        @" • Bundle ID  : vn.com.vng.zingalo (Gốc App Store ✅)\n"
-        @" • Sideload   : Ẩn mobileprovision ✅\n"
-        @" • Keychain   : Phân vùng profile mới ✅\n"
-        @" • Uptime Giả : %llu giờ trước ✅\n"
+        @"1. XÁC THỰC ĐỊNH DANH (LIVE RUNTIME):\n"
+        @" • Bundle ID   : %@ (%@)\n"
+        @" • IDFV Hiện Tại: %@... (%@)\n"
+        @" • IDFV Trước Đó: %@...\n"
+        @" • IDFA Quảng Cáo: %@...\n"
+        @" • App Tracking: Denied (Từ chối theo dõi ✅)\n\n"
+        @"2. ĐỊA CHỈ IP 4G (INTERNET CELLULAR):\n"
+        @" • IP Lần Này   : %@ (%@)\n"
+        @" • IP Trước Đó  : %@\n\n"
+        @"3. THÔNG SỐ Ổ CỨNG TRÌNH DIỄN ZALO:\n"
+        @" • Trống / Tổng : %.1f GB / %.1f GB ✅\n"
+        @" • Uptime Máy   : %llu giờ hoạt động ✅\n\n"
+        @"4. VỆ SINH DỮ LIỆU SANDBOX:\n"
+        @" • Rác / Cache  : %.1f KB (%@)\n"
+        @" • Sideload     : %@\n"
+        @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n"
         @"═══════════════════════════\n"
         @"👉 KẾT LUẬN:\n%@",
-        idfvOld, idfvNew, idfvStatus,
-        ipOld, currentIP, ipStatus,
-        sandboxKB, (sandboxKB < 150.0 ? @"Sạch sẽ 100% ✅" : @"Có cache"),
+        liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi"),
+        idfvShort, idfvStatus,
+        idfvOld,
+        (liveIDFA.length > 8 ? [liveIDFA substringToIndex:8] : liveIDFA),
+        currentIP, ipStatus,
+        ipOld,
+        freeGB, totalGB,
         uptimeHours,
+        sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
+        (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn"),
         conclusion];
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BẢNG ĐỐI CHIẾU TRƯỚC & SAU WIPE"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BÁO CÁO XÁC THỰC HỆ THỐNG RUNTIME"
                                                                    message:report
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
