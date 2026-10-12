@@ -14,6 +14,7 @@
 #import <errno.h>
 #import <stdarg.h>
 #import <stdio.h>
+#import <dlfcn.h>
 #import <substrate.h>
 #import "Config.h"
 #import "SecurityManager.h"
