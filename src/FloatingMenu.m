@@ -619,6 +619,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 
     NSString *liveBundle = [[NSBundle mainBundle] bundleIdentifier];
     NSString *liveIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+    NSString *liveDeviceName = [[UIDevice currentDevice] name];
+    NSString *liveSystemVersion = [[UIDevice currentDevice] systemVersion];
     
     NSString *liveIDFA = @"Đã ẩn danh";
     Class asClass = NSClassFromString(@"ASIdentifierManager");
@@ -647,20 +649,21 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     NSTimeInterval liveUptime = [[NSProcessInfo processInfo] systemUptime];
     uint64_t uptimeHours = (uint64_t)(liveUptime / 3600.0);
 
-    // 5. So sánh IDFV với lần wipe trước
+    // 5. ĐỐI CHIẾU THỰC TẾ: So sánh IDFV với lần wipe trước
     NSString *idfvOld = (s.lastWipedIDFV.length > 0) ? [s.lastWipedIDFV substringToIndex:MIN((NSUInteger)8, s.lastWipedIDFV.length)] : @"Chưa wipe";
     NSString *idfvShort = (liveIDFV.length > 8) ? [liveIDFV substringToIndex:8] : liveIDFV;
     BOOL isDifferentIDFV = (s.lastWipedIDFV.length > 0 && ![liveIDFV isEqualToString:s.lastWipedIDFV]);
-    NSString *idfvStatus = isDifferentIDFV ? @"Mới tinh ✅" : (s.lastWipedIDFV.length == 0 ? @"Mới cấp profile ✅" : @"Trùng lặp ⚠️");
+    BOOL isDuplicateIDFV = (s.lastWipedIDFV.length > 0 && [liveIDFV isEqualToString:s.lastWipedIDFV]);
+    NSString *idfvStatus = isDifferentIDFV ? @"Mới tinh ✅" : (s.lastWipedIDFV.length == 0 ? @"Mới cấp profile ✅" : @"TRÙNG LẶP IDFV CŨ ❌");
 
-    // 6. So sánh IP
+    // 6. ĐỐI CHIẾU THỰC TẾ: So sánh IP mạng ngoài
     NSString *ipOld = (s.lastWipedIP.length > 0) ? s.lastWipedIP : @"Chưa lưu";
     BOOL isDifferentIP = (s.lastWipedIP.length > 0 && ![currentIP isEqualToString:s.lastWipedIP]);
     BOOL isSameIP = (s.lastWipedIP.length > 0 && [currentIP isEqualToString:s.lastWipedIP]);
     
     NSString *ipStatus = @"";
     if (isSameIP) {
-        ipStatus = @"⚠️ TRÙNG IP LẦN TRƯỚC";
+        ipStatus = @"TRÙNG IP CŨ (CẦN BẬT AIRPLANE MODE) ❌";
     } else if (isDifferentIP) {
         ipStatus = @"Đã đổi IP mới ✅";
     } else {
@@ -711,22 +714,45 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         appGroupWorking = NO;
     }
 
-    BOOL allStorageHealthy = (leveldbRelWritable && leveldbAtWritable && appGroupWorking);
+    // 8. ĐỐI CHIẾU TOÀN DIỆN KHÔNG CHO PHÉP FAKE OK
+    BOOL isMachineSpoofed = ([liveMachineStr isEqualToString:s.deviceMachine] && liveMachineStr.length > 0);
+    BOOL isAllPassed = (isMachineSpoofed && 
+                        (!isSameIP) && 
+                        (!isDuplicateIDFV) && 
+                        leveldbRelWritable && 
+                        leveldbAtWritable && 
+                        appGroupWorking && 
+                        isHiddenProv);
 
-    // 8. Kết luận toàn diện
     NSString *conclusion = @"";
-    if (isSameIP) {
-        conclusion = @"🔴 CẢNH BÁO: TRÙNG ĐỊA CHỈ IP 4G CŨ!\nVui lòng BẬT rồi TẮT Chế Độ Máy Bay (Airplane Mode) để nhà mạng đổi địa chỉ IP mới trước khi bấm Tạo Tài Khoản.";
-    } else if (!allStorageHealthy) {
-        conclusion = @"⚠️ CẢNH BÁO: LỖI KHO LƯU TRỮ CƠ SỞ DỮ LIỆU C++!\nLevelDB (hàm C open/openat) chưa ghi được qua đường dẫn tương đối. Vui lòng bấm [2️⃣] Deep Wipe.";
+    if (!isAllPassed) {
+        NSMutableString *errList = [NSMutableString stringWithString:@"🔴 KHÔNG ĐẠT TIÊU CHUẨN! PHÁT HIỆN CẢNH BÁO:\n"];
+        if (!isMachineSpoofed) [errList appendString:@"• Machine C chưa khớp với cấu hình profile.\n"];
+        if (isSameIP) [errList appendString:@"• TRÙNG IP 4G CŨ! Hãy Bật rồi Tắt Chế Độ Máy Bay.\n"];
+        if (isDuplicateIDFV) [errList appendString:@"• TRÙNG IDFV CŨ! Vui lòng bấm [2️⃣] Deep Wipe.\n"];
+        if (!leveldbRelWritable || !leveldbAtWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tương đối C.\n"];
+        if (!appGroupWorking) [errList appendString:@"• Lỗi quyền App Group Sandbox.\n"];
+        if (!isHiddenProv) [errList appendString:@"• Chưa che giấu mobileprovision (lộ Sideload).\n"];
+        [errList appendString:@"👉 TUYỆT ĐỐI KHÔNG TẠO TÀI KHOẢN CHO ĐẾN KHI KHẮC PHỤC HẾT!"];
+        conclusion = errList;
     } else {
-        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(C POSIX sysctl/open/openat thông suốt, IDFV mới, IDFA ẩn, App Group an toàn, IP 4G mới)";
+        conclusion = [NSString stringWithFormat:
+            @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100%% ĐỂ REG ACC!\n"
+            @"• Đã đối chiếu chéo thực tế 100%% qua hàm C & OS:\n"
+            @"  - Tên máy: %@\n"
+            @"  - Phiên bản: iOS %@\n"
+            @"  - C open/openat tương đối: Đã thông suốt\n"
+            @"  - IDFV: Cấp mới tinh không trùng lặp\n"
+            @"  - IP 4G: Đã xoay dải mạng mới",
+            liveDeviceName, liveSystemVersion];
     }
 
     NSString *report = [NSString stringWithFormat:
         @"═══════════════════════════\n"
         @"1. XÁC THỰC ĐỊNH DANH (LIVE C & RUNTIME):\n"
         @" • Machine (C)  : %@ (%@)\n"
+        @" • Tên Thiết Bị : %@\n"
+        @" • Phiên Bản iOS: %@\n"
         @" • Bundle ID    : %@ (%@)\n"
         @" • IDFV Hiện Tại: %@... (%@)\n"
         @" • IDFV Trước Đó: %@...\n"
@@ -747,9 +773,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         @" • openat(tương đối): %@\n"
         @" • App Groups Suite : %@\n"
         @"═══════════════════════════\n"
-        @"👉 KẾT LUẬN:\n%@",
-        liveMachineStr, ([liveMachineStr isEqualToString:s.deviceMachine] ? @"Đã Fake thành công ✅" : @"Máy thật ⚠️"),
-        liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi"),
+        @"👉 KẾT LUẬN ĐỐI CHIẾU:\n%@",
+        liveMachineStr, (isMachineSpoofed ? @"Khớp Profile ✅" : @"Chưa khớp ❌"),
+        liveDeviceName,
+        liveSystemVersion,
+        liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi ❌"),
         idfvShort, idfvStatus,
         idfvOld,
         (liveIDFA.length > 8 ? [liveIDFA substringToIndex:8] : liveIDFA),
@@ -758,13 +786,13 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         freeGB, totalGB,
         uptimeHours,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
-        (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn"),
+        (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn ❌"),
         (leveldbRelWritable ? @"C open() tương đối THÀNH CÔNG ✅" : @"Lỗi mở file C ❌"),
         (leveldbAtWritable ? @"C openat() tương đối THÀNH CÔNG ✅" : @"Lỗi mở openat ❌"),
         (appGroupWorking ? @"Đã chuyển hướng Sandbox an toàn ✅" : @"Lỗi truy cập ❌"),
         conclusion];
 
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BÁO CÁO XÁC THỰC HỆ THỐNG RUNTIME"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BÁO CÁO ĐỐI CHIẾU HỆ THỐNG RUNTIME"
                                                                    message:report
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];

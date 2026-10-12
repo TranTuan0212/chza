@@ -159,19 +159,56 @@ static NSString *getConfigPath(void) {
 - (void)generateNewProfile {
     self.deviceMachine = @"iPhone14,2"; // iPhone 13 Pro
     self.deviceModel = @"D63AP";
-    self.deviceName = @"iPhone";
-    self.systemVersion = @"16.5";
-    self.kernOsVersion = @"20F66";
     self.ncpu = 6;
     self.memsize = 6442450944ULL;
     self.screenWidth = 390.0;
     self.screenHeight = 844.0;
     self.screenScale = 3.0;
-    self.diskTotalSize = 128000000000ULL;
-    self.diskFreeSize = 65000000000ULL + ((uint64_t)arc4random_uniform(15000000)) * 1000ULL;
 
-    // Giả lập uptime từ 1 đến 5 ngày trước
-    uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
+    // 1. Tên thiết bị người dùng đời thực ngẫu nhiên
+    NSArray *userNames = @[
+        @"iPhone",
+        @"iPhone của Tuấn",
+        @"iPhone của Linh",
+        @"iPhone (2)",
+        @"iPhone của Huy",
+        @"iPhone 13 Pro",
+        @"iPhone của Nam",
+        @"iPhone của Trang",
+        @"iPhone của Hoàng",
+        @"iPhone của Mai",
+        @"iPhone của Lan",
+        @"iPhone của Minh"
+    ];
+    self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+
+    // 2. Phiên bản iOS & Build Number chuẩn Apple tương ứng
+    NSArray *iosProfiles = @[
+        @{@"ver": @"16.6", @"build": @"20G75"},
+        @{@"ver": @"16.6.1", @"build": @"20G81"},
+        @{@"ver": @"16.7.2", @"build": @"20H115"},
+        @{@"ver": @"17.2.1", @"build": @"21C66"},
+        @{@"ver": @"17.4.1", @"build": @"21E236"},
+        @{@"ver": @"17.5.1", @"build": @"21F90"},
+        @{@"ver": @"17.6.1", @"build": @"21G93"},
+        @{@"ver": @"18.0", @"build": @"22A3354"}
+    ];
+    NSDictionary *chosenOS = iosProfiles[arc4random_uniform((uint32_t)iosProfiles.count)];
+    self.systemVersion = chosenOS[@"ver"];
+    self.kernOsVersion = chosenOS[@"build"];
+
+    // 3. Phân khúc dung lượng ổ cứng (128GB hoặc 256GB) kèm dung lượng trống thực tế ngẫu nhiên
+    BOOL is256 = (arc4random_uniform(2) == 1);
+    if (is256) {
+        self.diskTotalSize = 256000000000ULL;
+        self.diskFreeSize = 95000000000ULL + ((uint64_t)arc4random_uniform(90000000)) * 1000ULL;
+    } else {
+        self.diskTotalSize = 128000000000ULL;
+        self.diskFreeSize = 35000000000ULL + ((uint64_t)arc4random_uniform(50000000)) * 1000ULL;
+    }
+
+    // 4. Giả lập uptime từ 8 giờ đến 6 ngày trước
+    uint32_t randomOffset = 28800 + (arc4random_uniform(489600));
     self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
     self.bootSessionUUID = [[NSUUID UUID] UUIDString];
     self.spoofedIDFV = [[NSUUID UUID] UUIDString];
