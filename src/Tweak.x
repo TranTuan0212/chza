@@ -120,8 +120,18 @@ static NSString *getConfigPath(void) {
         self.batteryLevel = [dict[@"batteryLevel"] floatValue] ?: 0.85f;
         self.batteryState = [dict[@"batteryState"] integerValue] ?: 1;
         self.regionMode = dict[@"regionMode"] ?: @"VN";
+        self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
+        self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
+        self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
 
-        if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
+        if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {
+            if (self.spoofedSerial.length == 0) {
+                extern NSString *generate_random_serial(void);
+                extern NSString *generate_random_mac(void);
+                self.spoofedSerial = generate_random_serial();
+                self.spoofedWifiMAC = generate_random_mac();
+                self.spoofedBluetoothMAC = generate_random_mac();
+            }
             if (self.bootTimeSec == 0) {
                 uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
                 self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
@@ -168,6 +178,9 @@ static NSString *getConfigPath(void) {
     dict[@"batteryLevel"] = @(self.batteryLevel);
     dict[@"batteryState"] = @(self.batteryState);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
+    if (self.spoofedSerial) dict[@"spoofedSerial"] = self.spoofedSerial;
+    if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
+    if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -185,6 +198,24 @@ static NSString *getConfigPath(void) {
         [[NSFileManager defaultManager] createDirectoryAtPath:[localDoc stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         [dict writeToFile:localDoc atomically:YES];
     }
+}
+
+NSString *generate_random_serial(void) {
+    const char chars[] = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    char serial[13] = {0};
+    serial[0] = 'F';
+    serial[1] = (arc4random_uniform(2) == 0) ? '1' : '2';
+    serial[2] = '7';
+    for (int i = 3; i < 12; i++) {
+        serial[i] = chars[arc4random_uniform(sizeof(chars) - 1)];
+    }
+    return [NSString stringWithUTF8String:serial];
+}
+
+NSString *generate_random_mac(void) {
+    const char *ouis[] = {"f0:18:98", "ac:de:48", "88:66:5a", "dc:a9:04", "a4:83:e7"};
+    const char *oui = ouis[arc4random_uniform(5)];
+    return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
 }
 
 static NSString *get_real_hardware_machine(void) {
@@ -321,6 +352,11 @@ static NSString *get_real_hardware_model(void) {
     // 5. Giả lập mức pin ngẫu nhiên hợp lý (55% - 95%) và không cắm sạc
     self.batteryLevel = 0.55f + ((float)arc4random_uniform(40)) / 100.0f;
     self.batteryState = 1; // UIDeviceBatteryStateUnplugged
+
+    // 6. Giả lập Serial Number và MAC Address phần cứng
+    self.spoofedSerial = generate_random_serial();
+    self.spoofedWifiMAC = generate_random_mac();
+    self.spoofedBluetoothMAC = generate_random_mac();
 
     [self saveSettings];
 }
@@ -484,6 +520,8 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     if (!name || !is_tweak_active()) {
         return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
     }
+
+    logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"sysctlbyname('%s')", name]);
 
     ZTSettings *settings = [ZTSettings sharedSettings];
 
@@ -1112,6 +1150,9 @@ static int my_mkdir(const char *path, mode_t mode) {
 
 static char *(*orig_getenv)(const char *name);
 static char *my_getenv(const char *name) {
+    if (name) {
+        logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"getenv('%s')", name]);
+    }
     if (is_tweak_active() && name) {
         if (strcmp(name, "DYLD_INSERT_LIBRARIES") == 0) {
             return NULL;
@@ -1272,6 +1313,59 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
         }
     }
     return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
+}
+
+// ==========================================
+// HOOK MOBILEGESTALT (MGCOPYANSWER) & HARDWARE RADAR
+// ==========================================
+static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property);
+static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
+    if (!property || CFGetTypeID(property) != CFStringGetTypeID()) {
+        return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
+    }
+    NSString *prop = (__bridge NSString *)property;
+    ZTSettings *settings = [ZTSettings sharedSettings];
+
+    // Ghi nhận radar toàn bộ truy vấn MobileGestalt phần cứng của Zalo
+    logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer('%@')", prop]);
+
+    if (is_tweak_active()) {
+        if ([prop isEqualToString:@"SerialNumber"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"SerialNumber -> [ĐÃ FAKE] %@", settings.spoofedSerial]);
+            return settings.spoofedSerial ? (__bridge_retained CFTypeRef)[settings.spoofedSerial copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"UniqueDeviceID"]) {
+            NSString *udid = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"UniqueDeviceID -> [ĐÃ FAKE] %@", udid]);
+            return (__bridge_retained CFTypeRef)[udid copy];
+        }
+        if ([prop isEqualToString:@"WifiAddress"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"WifiAddress -> [ĐÃ FAKE] %@", settings.spoofedWifiMAC]);
+            return settings.spoofedWifiMAC ? (__bridge_retained CFTypeRef)[settings.spoofedWifiMAC copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"BluetoothAddress"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"BluetoothAddress -> [ĐÃ FAKE] %@", settings.spoofedBluetoothMAC]);
+            return settings.spoofedBluetoothMAC ? (__bridge_retained CFTypeRef)[settings.spoofedBluetoothMAC copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"UserAssignedDeviceName"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"UserAssignedDeviceName -> [ĐÃ FAKE] %@", settings.deviceName]);
+            return settings.deviceName ? (__bridge_retained CFTypeRef)[settings.deviceName copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"ProductType"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"ProductType -> [ĐÃ FAKE] %@", settings.deviceMachine]);
+            return settings.deviceMachine ? (__bridge_retained CFTypeRef)[settings.deviceMachine copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"ProductVersion"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"ProductVersion -> [ĐÃ FAKE] %@", settings.systemVersion]);
+            return settings.systemVersion ? (__bridge_retained CFTypeRef)[settings.systemVersion copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"BuildVersion"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"BuildVersion -> [ĐÃ FAKE] %@", settings.kernOsVersion]);
+            return settings.kernOsVersion ? (__bridge_retained CFTypeRef)[settings.kernOsVersion copy] : orig_MGCopyAnswer(property);
+        }
+    }
+
+    return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
 }
 
 static inline BOOL is_sideload_provision_path(NSString *path) {
@@ -1959,6 +2053,12 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         if (!dyldImgFunc) dyldImgFunc = (void *)_dyld_get_image_name;
         if (dyldImgFunc) {
             MSHookFunction(dyldImgFunc, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
+        }
+
+        // Hook MobileGestalt MGCopyAnswer (Radar bắt toàn bộ điểm check phần cứng của Zalo)
+        void *mgFunc = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
+        if (mgFunc) {
+            MSHookFunction(mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
 
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {

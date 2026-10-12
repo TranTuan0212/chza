@@ -280,9 +280,20 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                                            handler:^(UIAlertAction *action) {
         [self showHardwareSpecsFrom:top];
     }]];
+
+    // Nút 5: Đổi Khu Vực & Nhà Mạng (VN / Du Học Sinh Mỹ / Mỹ)
+    NSString *currentRegion = settings.regionMode ?: @"VN";
+    NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
+                           ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)");
+    NSString *regionButtonTitle = [NSString stringWithFormat:@"🌐 [5️⃣] Khu Vực & SIM: %@", regionName];
+    [sheet addAction:[UIAlertAction actionWithTitle:regionButtonTitle
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self showRegionSelectionMenuFrom:top];
+    }]];
     
-    // Nút 5: Nhật Ký Kiểm Toán (Audit Log)
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📋 [5️⃣] Nhật Ký Kiểm Toán (Audit Log Console)"
+    // Nút 6: Nhật Ký Kiểm Toán (Audit Log)
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📋 [6️⃣] Nhật Ký Kiểm Toán & HAR Inspector"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
         [self showAuditLogMenuFrom:top];
@@ -375,9 +386,17 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
     uint64_t uptimeHours = (nowSec > s.bootTimeSec) ? ((nowSec - s.bootTimeSec) / 3600) : 0;
     
+    NSString *currentRegion = s.regionMode ?: @"VN";
+    NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
+                           ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)");
+
     NSString *info = [NSString stringWithFormat:
+                      @"• Khu Vực & SIM: %@\n"
+                      @"• Nhà Mạng: %@ (MCC %@, MNC %@)\n"
                       @"• Model Máy: %@ (%@)\n"
                       @"• Tên Thiết Bị: %@\n"
+                      @"• Serial Number: %@\n"
+                      @"• Wi-Fi MAC: %@\n"
                       @"• Phiên Bản iOS: %@ (Build %@)\n"
                       @"• IDFV Đang Giả: %@\n"
                       @"• Profile Keychain: %@\n"
@@ -386,8 +405,12 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                       @"• Màn Hình: %.0fx%.0f @%.0fx\n"
                       @"• Uptime: %llu giờ trước\n"
                       @"• Ổ Cứng: %.1f GB / %.1f GB",
+                      regionName,
+                      s.carrierName ?: @"Viettel", s.carrierMCC ?: @"452", s.carrierMNC ?: @"04",
                       s.deviceMachine, s.deviceModel,
                       s.deviceName,
+                      s.spoofedSerial ?: @"N/A",
+                      s.spoofedWifiMAC ?: @"N/A",
                       s.systemVersion, s.kernOsVersion,
                       s.spoofedIDFV,
                       [s.profileId substringToIndex:MIN((NSUInteger)8, s.profileId.length)],
@@ -402,6 +425,52 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                                                                    message:info
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+    [top presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showRegionSelectionMenuFrom:(UIViewController *)top {
+    ZTSettings *s = [ZTSettings sharedSettings];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 Chọn Khu Vực & Nhà Mạng SIM"
+                                                                   message:@"Tùy chọn này giúp đồng bộ tên máy, nhà mạng SIM (MCC, MNC, ISO) và mã quốc gia để Zalo cấp OTP và đăng ký mượt mà nhất."
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.regionMode = @"VN";
+        [s generateNewProfile];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang khu vực Việt Nam (+84).\n• SIM: %@ (MCC %@)\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.regionMode = @"US_STUDENT";
+        [s generateNewProfile];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Du Học Sinh Mỹ (+1).\n• SIM: %@ (US)\n• Tên máy: %@\n\n💡 MẸO: Hãy kết nối Proxy/VPN US trước khi Reg để Zalo duyệt mượt 100%%.", s.carrierName, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ / Mỹ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.regionMode = @"US";
+        [s generateNewProfile];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Hoa Kỳ (+1).\n• SIM: %@ (US)\n• Tên máy: %@", s.carrierName, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+
     [top presentViewController:alert animated:YES completion:nil];
 }
 

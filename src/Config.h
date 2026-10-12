@@ -32,6 +32,9 @@
 @property (nonatomic, assign) float batteryLevel;           // Mức pin (vd: 0.82)
 @property (nonatomic, assign) NSInteger batteryState;       // Trạng thái pin (UIDeviceBatteryStateUnplugged = 1)
 @property (nonatomic, strong) NSString *regionMode;        // Khu vực: @"VN", @"US_STUDENT", @"US"
+@property (nonatomic, strong) NSString *spoofedSerial;      // Serial Number (vd: "F17X892JK9L")
+@property (nonatomic, strong) NSString *spoofedWifiMAC;     // Wi-Fi MAC Address
+@property (nonatomic, strong) NSString *spoofedBluetoothMAC;// Bluetooth MAC Address
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;
