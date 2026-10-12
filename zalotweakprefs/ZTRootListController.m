@@ -147,8 +147,27 @@ static void kill_all_zalo_processes(void);
 
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
 
+static BOOL is_valid_zalo_sandbox_path(NSString *path) {
+    if (!path || path.length < 35) return NO;
+    // BẮT BUỘC đường dẫn phải nằm trong Data Application hoặc Shared AppGroup của Sandbox
+    if ([path containsString:@"/Containers/Data/Application/"] ||
+        [path containsString:@"/Containers/Shared/AppGroup/"]) {
+        // Tuyệt đối không được là các thư mục gốc
+        if ([path isEqualToString:@"/var/mobile/Containers/Data/Application"] ||
+            [path isEqualToString:@"/var/mobile/Containers/Shared/AppGroup"] ||
+            [path isEqualToString:@"/private/var/mobile/Containers/Data/Application"] ||
+            [path isEqualToString:@"/private/var/mobile/Containers/Shared/AppGroup"] ||
+            [path isEqualToString:@"/var/mobile"] ||
+            [path isEqualToString:@"/private/var/mobile"]) {
+            return NO;
+        }
+        return YES;
+    }
+    return NO;
+}
+
 static void kill_all_zalo_processes(void) {
-    // 1. Thử gọi FBSSystemService của SpringBoard qua dynamic messaging để đóng app
+    // 1. Tắt chuẩn qua FBSSystemService của SpringBoard
     Class fbsClass = objc_getClass("FBSSystemService");
     if (fbsClass) {
         SEL sharedSel = sel_registerName("sharedService");
@@ -163,7 +182,7 @@ static void kill_all_zalo_processes(void) {
         }
     }
 
-    // 2. Quét toàn bộ tiến trình qua POSIX sysctl để tiêu diệt sạch kể cả app extensions
+    // 2. Chỉ kill đúng tiến trình có tên là "Zalo" (TUYỆT ĐỐI KHÔNG DÙNG "zing" LÀM CHẾT TIẾN TRÌNH HỆ THỐNG)
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t size = 0;
     if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
@@ -173,10 +192,8 @@ static void kill_all_zalo_processes(void) {
                 int count = (int)(size / sizeof(struct kinfo_proc));
                 for (int i = 0; i < count; i++) {
                     const char *name = procs[i].kp_proc.p_comm;
-                    if (name && (strcasestr(name, "zalo") != NULL ||
-                                 strcasestr(name, "zing") != NULL ||
-                                 strcmp(name, "NotificationSer") == 0 ||
-                                 strcmp(name, "NotificationCon") == 0)) {
+                    if (name && (strcasecmp(name, "Zalo") == 0 ||
+                                 strcmp(name, "vn.com.vng.zingalo") == 0)) {
                         kill(procs[i].kp_proc.p_pid, SIGKILL);
                     }
                 }
@@ -184,10 +201,15 @@ static void kill_all_zalo_processes(void) {
             free(procs);
         }
     }
-    [NSThread sleepForTimeInterval:0.4];
+    [NSThread sleepForTimeInterval:0.3];
 }
 
 static void wipe_directory_contents(NSString *dirPath) {
+    // CHỐT CHẶN AN TOÀN TUYỆT ĐỐI: Từ chối xóa ngay nếu không phải thư mục sandbox Zalo!
+    if (!is_valid_zalo_sandbox_path(dirPath)) {
+        return;
+    }
+
     NSFileManager *fm = [NSFileManager defaultManager];
     if (![fm fileExistsAtPath:dirPath]) return;
 
@@ -213,68 +235,49 @@ static void wipe_directory_contents(NSString *dirPath) {
 
 static NSArray<NSString *> *get_zalo_data_container_paths(void) {
     NSMutableArray *paths = [NSMutableArray array];
-    Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
-    if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        for (NSString *bid in get_known_zalo_bundle_ids()) {
-            LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
-            if (proxy) {
-                if ([proxy respondsToSelector:@selector(dataContainerURL)] && proxy.dataContainerURL) {
-                    NSString *p = proxy.dataContainerURL.path;
-                    if (p && ![paths containsObject:p]) [paths addObject:p];
-                } else if ([proxy respondsToSelector:@selector(containerURL)] && proxy.containerURL) {
-                    NSString *p = proxy.containerURL.path;
-                    if (p && ![paths containsObject:p]) [paths addObject:p];
+
+    // Quét trực tiếp qua metadata trong thư mục Sandbox thực tế (Không dùng LSApplicationProxy containerURL)
+    NSArray *baseDirs = @[@"/var/mobile/Containers/Data/Application", @"/private/var/mobile/Containers/Data/Application"];
+    for (NSString *baseDir in baseDirs) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *subdirs = [fm contentsOfDirectoryAtPath:baseDir error:nil];
+        for (NSString *uuid in subdirs) {
+            NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
+            NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
+            NSString *ident = meta[@"MCMMetadataIdentifier"];
+            if (ident && [get_known_zalo_bundle_ids() containsObject:ident]) {
+                NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+                if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
+                    [paths addObject:fullP];
                 }
             }
         }
-    }
-
-    NSString *baseDir = @"/var/mobile/Containers/Data/Application";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *subdirs = [fm contentsOfDirectoryAtPath:baseDir error:nil];
-    for (NSString *uuid in subdirs) {
-        NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
-        NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
-        NSString *ident = meta[@"MCMMetadataIdentifier"];
-        if (ident && ([ident containsString:@"zalo"] || [ident containsString:@"zingalo"] || [get_known_zalo_bundle_ids() containsObject:ident])) {
-            NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
-            if (![paths containsObject:fullP]) {
-                [paths addObject:fullP];
-            }
-        }
+        if (paths.count > 0) break;
     }
     return paths;
 }
 
 static NSArray<NSString *> *get_zalo_group_container_paths(void) {
     NSMutableArray *paths = [NSMutableArray array];
-    Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
-    if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        for (NSString *bid in get_known_zalo_bundle_ids()) {
-            LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
-            if (proxy && proxy.groupContainerURLs) {
-                for (NSURL *url in proxy.groupContainerURLs.allValues) {
-                    if (url.path && ![paths containsObject:url.path]) {
-                        [paths addObject:url.path];
-                    }
+
+    NSArray *baseDirs = @[@"/var/mobile/Containers/Shared/AppGroup", @"/private/var/mobile/Containers/Shared/AppGroup"];
+    for (NSString *baseDir in baseDirs) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *subdirs = [fm contentsOfDirectoryAtPath:baseDir error:nil];
+        for (NSString *uuid in subdirs) {
+            NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
+            NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
+            NSString *identifier = meta[@"MCMMetadataIdentifier"];
+            if (identifier && ([identifier containsString:@"zingalo"] ||
+                               [identifier containsString:@"com.zing.zalo"] ||
+                               [identifier containsString:@"com.vng.zalo"])) {
+                NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+                if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
+                    [paths addObject:fullP];
                 }
             }
         }
-    }
-
-    NSString *baseDir = @"/var/mobile/Containers/Shared/AppGroup";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *subdirs = [fm contentsOfDirectoryAtPath:baseDir error:nil];
-    for (NSString *uuid in subdirs) {
-        NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
-        NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
-        NSString *identifier = meta[@"MCMMetadataIdentifier"];
-        if ([identifier containsString:@"zalo"] || [identifier containsString:@"zing"] || [identifier containsString:@"vng"]) {
-            NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
-            if (![paths containsObject:fullP]) {
-                [paths addObject:fullP];
-            }
-        }
+        if (paths.count > 0) break;
     }
     return paths;
 }
@@ -339,6 +342,8 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     // 2. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
     NSArray *dataContainers = get_zalo_data_container_paths();
     for (NSString *dataContainer in dataContainers) {
+        if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
+
         wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"]);
         wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"]);
 
@@ -357,6 +362,7 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     // 3. Xóa sạch Shared App Group
     NSArray *groupContainers = get_zalo_group_container_paths();
     for (NSString *groupPath in groupContainers) {
+        if (!is_valid_zalo_sandbox_path(groupPath)) continue;
         wipe_directory_contents(groupPath);
     }
 
