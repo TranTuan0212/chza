@@ -24,8 +24,10 @@ workflows:
           echo "==> Bien dich ban Roothide..."
           make clean
           make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
+          find .theos/ -name "Zalotweak.dylib" -exec cp {} packages/ \; 2>/dev/null || true
     artifacts:
       - packages/*.deb
+      - packages/*.dylib
 
   build-rootless:
     name: Build ZaloTweak (Rootless)
@@ -52,5 +54,7 @@ workflows:
           echo "==> Bien dich ban Rootless..."
           make clean
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+          find .theos/ -name "Zalotweak.dylib" -exec cp {} packages/ \; 2>/dev/null || true
     artifacts:
       - packages/*.deb
+      - packages/*.dylib

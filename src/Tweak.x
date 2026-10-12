@@ -599,6 +599,11 @@ static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
 
     NSString *prefix = [NSString stringWithFormat:@"%@_", profile];
 
+    // Cách ly kSecAttrAccessGroup để không bao giờ đọc chung Keychain với Zalo chính
+    if (dict[(__bridge id)kSecAttrAccessGroup]) {
+        [dict removeObjectForKey:(__bridge id)kSecAttrAccessGroup];
+    }
+
     // Chỉ prefix khi service thực sự có trong truy vấn
     id service = dict[(__bridge id)kSecAttrService];
     if (service && [service isKindOfClass:[NSString class]]) {
@@ -846,6 +851,35 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
     return fakeAttrs;
 }
 
+// Cách ly hoàn toàn Shared App Groups: Chuyển hướng về thư mục riêng trong Sandbox Zalo Clone
+- (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
+    if (groupIdentifier && ([groupIdentifier containsString:@"zalo"] || [groupIdentifier containsString:@"zingalo"] || [groupIdentifier containsString:@"vng"])) {
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *isolatedGroup = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/IsolatedAppGroups/%@", groupIdentifier]];
+            [[NSFileManager defaultManager] createDirectoryAtPath:isolatedGroup withIntermediateDirectories:YES attributes:nil error:nil];
+            [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+            [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+            return [NSURL fileURLWithPath:isolatedGroup];
+        }
+    }
+    return %orig;
+}
+
+// Chặn không cho quét danh sách các container ứng dụng khác trên máy
+- (NSArray<NSString *> *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error {
+    if (path) {
+        NSString *lower = [path lowercaseString];
+        if ([lower containsString:@"/containers/data/application"] && ![lower containsString:[NSHomeDirectory() lowercaseString]]) {
+            return @[];
+        }
+        if ([lower containsString:@"/containers/shared/appgroup"]) {
+            return @[];
+        }
+    }
+    return %orig;
+}
+
 %end
 
 // ==========================================
@@ -885,8 +919,9 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 %hook UIApplication
 
 - (BOOL)canOpenURL:(NSURL *)url {
-    if (is_tweak_active() && url) {
+    if (url) {
         NSString *scheme = [[url scheme] lowercaseString];
+        // 1. Chặn phát hiện Jailbreak qua schemes
         if ([scheme isEqualToString:@"cydia"] ||
             [scheme isEqualToString:@"sileo"] ||
             [scheme isEqualToString:@"zbra"] ||
@@ -895,7 +930,29 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
             logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CHẶN - TRẢ VỀ NO]", [url absoluteString]]);
             return NO;
         }
-        logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [CHO PHÉP]", [url absoluteString]]);
+        // 2. Cách ly tuyệt đối: Chặn phát hiện các app Zalo khác trên máy
+        if ([scheme hasPrefix:@"zalo"] ||
+            [scheme isEqualToString:@"zingalo"] ||
+            [scheme isEqualToString:@"vng"] ||
+            [scheme hasPrefix:@"vng-"] ||
+            [scheme isEqualToString:@"vngconnect"]) {
+            logAudit(@"INTER-APP-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CÁCH LY - TRẢ VỀ NO]", [url absoluteString]]);
+            return NO;
+        }
+    }
+    return %orig;
+}
+
+%end
+
+%hook UIPasteboard
+
++ (UIPasteboard *)pasteboardWithName:(UIPasteboardName)pasteboardName create:(BOOL)create {
+    if (pasteboardName) {
+        NSString *lower = [pasteboardName lowercaseString];
+        if ([lower containsString:@"zalo"] || [lower containsString:@"zingalo"] || [lower containsString:@"vng"]) {
+            return nil;
+        }
     }
     return %orig;
 }
