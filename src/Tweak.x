@@ -156,14 +156,45 @@ static NSString *getConfigPath(void) {
     }
 }
 
+static NSString *get_real_hardware_machine(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    struct utsname u;
+    if (uname(&u) == 0 && strlen(u.machine) > 0) {
+        return [NSString stringWithUTF8String:u.machine];
+    }
+    return @"iPhone";
+}
+
+static NSString *get_real_hardware_model(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.model", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    return @"N/A";
+}
+
 - (void)generateNewProfile {
-    self.deviceMachine = @"iPhone14,2"; // iPhone 13 Pro
-    self.deviceModel = @"D63AP";
-    self.ncpu = 6;
-    self.memsize = 6442450944ULL;
-    self.screenWidth = 390.0;
-    self.screenHeight = 844.0;
-    self.screenScale = 3.0;
+    // 1. Luôn giữ nguyên Machine và Model thật của máy bạn để khớp màn hình và GPU 100%
+    self.deviceMachine = get_real_hardware_machine();
+    self.deviceModel = get_real_hardware_model();
+
+    // Đồng bộ kích thước màn hình theo đúng thiết bị vật lý
+    CGRect screenBounds = [UIScreen mainScreen].bounds;
+    CGFloat scale = [UIScreen mainScreen].scale;
+    self.screenWidth = (screenBounds.size.width > 0) ? screenBounds.size.width : 390.0;
+    self.screenHeight = (screenBounds.size.height > 0) ? screenBounds.size.height : 844.0;
+    self.screenScale = (scale > 0) ? scale : 3.0;
+
+    // CPU và RAM theo máy thật
+    self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount] ?: 6;
+    self.memsize = [[NSProcessInfo processInfo] physicalMemory] ?: 6442450944ULL;
 
     // 1. Tên thiết bị người dùng đời thực ngẫu nhiên
     NSArray *userNames = @[

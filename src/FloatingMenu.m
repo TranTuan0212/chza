@@ -687,16 +687,32 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         unlink("KVCore/Device/_zt_rel_test.tmp");
     }
 
-    // b. Gọi hàm C openat() với AT_FDCWD và ĐƯỜNG DẪN TƯƠNG ĐỐI
+    // b. Gọi hàm C open() với ĐƯỜNG DẪN TUYỆT ĐỐI (Sandbox Application Support)
+    NSString *absDeviceDir = [home stringByAppendingPathComponent:@"Library/Application Support/KVCore/Device"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:absDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *absTestFile = [absDeviceDir stringByAppendingPathComponent:@"_zt_abs_test.tmp"];
+    int fd_abs = open([absTestFile UTF8String], O_RDWR | O_CREAT, 0644);
+    BOOL leveldbAbsWritable = NO;
+    if (fd_abs >= 0) {
+        char testDataAbs[] = "ZT_ABS_OK";
+        write(fd_abs, testDataAbs, sizeof(testDataAbs));
+        close(fd_abs);
+        leveldbAbsWritable = YES;
+        unlink([absTestFile UTF8String]);
+    }
+
+    // c. Gọi hàm C openat() với AT_FDCWD và ĐƯỜNG DẪN TƯƠNG ĐỐI
     int fd_at = openat(AT_FDCWD, "KVCore/Device/_zt_at_test.tmp", O_RDWR | O_CREAT, 0644);
     BOOL leveldbAtWritable = NO;
     if (fd_at >= 0) {
+        char testDataAt[] = "ZT_AT_OK";
+        write(fd_at, testDataAt, sizeof(testDataAt));
         close(fd_at);
         leveldbAtWritable = YES;
         unlink("KVCore/Device/_zt_at_test.tmp");
     }
 
-    // c. Gọi hàm hệ thống NSUserDefaults với SuiteName
+    // d. Gọi hàm hệ thống NSUserDefaults với SuiteName (App Groups)
     BOOL appGroupWorking = NO;
     @try {
         NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
@@ -720,6 +736,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                         (!isSameIP) && 
                         (!isDuplicateIDFV) && 
                         leveldbRelWritable && 
+                        leveldbAbsWritable && 
                         leveldbAtWritable && 
                         appGroupWorking && 
                         isHiddenProv);
@@ -730,7 +747,9 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         if (!isMachineSpoofed) [errList appendString:@"• Machine C chưa khớp với cấu hình profile.\n"];
         if (isSameIP) [errList appendString:@"• TRÙNG IP 4G CŨ! Hãy Bật rồi Tắt Chế Độ Máy Bay.\n"];
         if (isDuplicateIDFV) [errList appendString:@"• TRÙNG IDFV CŨ! Vui lòng bấm [2️⃣] Deep Wipe.\n"];
-        if (!leveldbRelWritable || !leveldbAtWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tương đối C.\n"];
+        if (!leveldbRelWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tương đối C (KVCore/Device).\n"];
+        if (!leveldbAbsWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tuyệt đối C.\n"];
+        if (!leveldbAtWritable) [errList appendString:@"• LevelDB không thể ghi qua hàm openat C.\n"];
         if (!appGroupWorking) [errList appendString:@"• Lỗi quyền App Group Sandbox.\n"];
         if (!isHiddenProv) [errList appendString:@"• Chưa che giấu mobileprovision (lộ Sideload).\n"];
         [errList appendString:@"👉 TUYỆT ĐỐI KHÔNG TẠO TÀI KHOẢN CHO ĐẾN KHI KHẮC PHỤC HẾT!"];
@@ -741,7 +760,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
             @"• Đã đối chiếu chéo thực tế 100%% qua hàm C & OS:\n"
             @"  - Tên máy: %@\n"
             @"  - Phiên bản: iOS %@\n"
-            @"  - C open/openat tương đối: Đã thông suốt\n"
+            @"  - C open (tương đối & tuyệt đối): Đã thông suốt\n"
+            @"  - C openat (AT_FDCWD): Đã thông suốt\n"
             @"  - IDFV: Cấp mới tinh không trùng lặp\n"
             @"  - IP 4G: Đã xoay dải mạng mới",
             liveDeviceName, liveSystemVersion];
@@ -769,9 +789,10 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         @" • Sideload     : %@\n"
         @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n\n"
         @"5. THỰC THI C++ LEVELDB (GỌI HÀM C TRỰC TIẾP):\n"
-        @" • open(tương đối)  : %@\n"
-        @" • openat(tương đối): %@\n"
-        @" • App Groups Suite : %@\n"
+        @" • C open (tương đối)  : %@\n"
+        @" • C open (tuyệt đối)  : %@\n"
+        @" • C openat (AT_FDCWD) : %@\n"
+        @" • App Groups Suite    : %@\n"
         @"═══════════════════════════\n"
         @"👉 KẾT LUẬN ĐỐI CHIẾU:\n%@",
         liveMachineStr, (isMachineSpoofed ? @"Khớp Profile ✅" : @"Chưa khớp ❌"),
@@ -787,8 +808,9 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         uptimeHours,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
         (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn ❌"),
-        (leveldbRelWritable ? @"C open() tương đối THÀNH CÔNG ✅" : @"Lỗi mở file C ❌"),
-        (leveldbAtWritable ? @"C openat() tương đối THÀNH CÔNG ✅" : @"Lỗi mở openat ❌"),
+        (leveldbRelWritable ? @"C tương đối THÀNH CÔNG ✅" : @"Lỗi mở tương đối ❌"),
+        (leveldbAbsWritable ? @"C tuyệt đối THÀNH CÔNG ✅" : @"Lỗi mở tuyệt đối ❌"),
+        (leveldbAtWritable ? @"C openat() THÀNH CÔNG ✅" : @"Lỗi mở openat ❌"),
         (appGroupWorking ? @"Đã chuyển hướng Sandbox an toàn ✅" : @"Lỗi truy cập ❌"),
         conclusion];
 
