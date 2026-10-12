@@ -228,7 +228,6 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
         dict[@"deviceName"] = vnNames[arc4random_uniform((uint32_t)vnNames.count)];
     }
 }
-}
 
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
 
