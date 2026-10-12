@@ -33,18 +33,23 @@ static inline BOOL is_tweak_active(void) {
     return active;
 }
 
+static int s_is_orig = -1;
 static inline BOOL is_original_zalo_app(void) {
-    static BOOL sIsOriginal = NO;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        NSString *infoPath = [[NSBundle mainBundle] pathForResource:@"Info" ofType:@"plist"];
-        NSDictionary *info = infoPath ? [NSDictionary dictionaryWithContentsOfFile:infoPath] : nil;
-        NSString *bid = info ? info[@"CFBundleIdentifier"] : [[NSBundle mainBundle] bundleIdentifier];
-        if (!bid || [bid isEqualToString:@"vn.com.vng.zingalo"] || [bid isEqualToString:@"com.vng.zalo"] || [bid isEqualToString:@"com.zing.zalo"]) {
-            sIsOriginal = YES;
+    if (s_is_orig != -1) return (s_is_orig == 1);
+    s_is_orig = 0; // Guard tạm thời tránh đệ quy
+    CFBundleRef mb = CFBundleGetMainBundle();
+    if (mb) {
+        CFStringRef bid = CFBundleGetIdentifier(mb);
+        if (bid) {
+            if (CFStringCompare(bid, CFSTR("vn.com.vng.zingalo"), 0) == kCFCompareEqualTo ||
+                CFStringCompare(bid, CFSTR("com.vng.zalo"), 0) == kCFCompareEqualTo ||
+                CFStringCompare(bid, CFSTR("com.zing.zalo"), 0) == kCFCompareEqualTo) {
+                s_is_orig = 1;
+                return YES;
+            }
         }
-    });
-    return sIsOriginal;
+    }
+    return NO;
 }
 
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
@@ -216,7 +221,10 @@ static uint64_t get_real_disk_total_size(void) {
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
-        if (dict[@"showFloatingMenu"]) {
+        BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
+        if (isAppExtension) {
+            self.showFloatingMenu = NO;
+        } else if (dict[@"showFloatingMenu"]) {
             self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
             // Mặc định: Zalo gốc từ App Store (DEB) TẮT nút nổi (dùng Cài đặt Settings). Clone/Sideload BẬT nút nổi.
@@ -446,11 +454,10 @@ static void logAudit(NSString *category, NSString *detail) {
 
     if (![ZTSettings sharedSettings].enableAuditLog) return;
 
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    if (!auditQueue) {
         loggedAuditKeys = [[NSMutableSet alloc] init];
         auditQueue = dispatch_queue_create("com.sonhu.zalotweak.auditQueue", DISPATCH_QUEUE_SERIAL);
-    });
+    }
 
     NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, detail];
     dispatch_async(auditQueue, ^{
@@ -1111,10 +1118,8 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
 
     logAudit(@"VPN-CHECK", @"Zalo quét getifaddrs tìm giao diện VPN -> [ĐÃ ẨN TUN/UTUN]");
 
-    struct ifaddrs *prev = NULL;
     struct ifaddrs *curr = *ifap;
     while (curr) {
-        BOOL hide = NO;
         if (curr->ifa_name) {
             const char *n = curr->ifa_name;
             if (strncmp(n, "tun", 3) == 0 ||
@@ -1122,21 +1127,12 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
                 strncmp(n, "ppp", 3) == 0 ||
                 strncmp(n, "ipsec", 5) == 0 ||
                 strncmp(n, "utun", 4) == 0) {
-                hide = YES;
+                // Không ngắt con trỏ danh sách liên kết để bảo vệ bộ nhớ malloc của freeifaddrs
+                // Thay vào đó, đổi tên interface thành pdp_ip để Zalo không nhận diện ra VPN
+                curr->ifa_name = "pdp_ip9";
             }
         }
-        if (hide) {
-            if (prev) {
-                prev->ifa_next = curr->ifa_next;
-                curr = curr->ifa_next;
-            } else {
-                *ifap = curr->ifa_next;
-                curr = *ifap;
-            }
-        } else {
-            prev = curr;
-            curr = curr->ifa_next;
-        }
+        curr = curr->ifa_next;
     }
     return 0;
 }
@@ -1393,11 +1389,17 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 // HOOK NSBundle: ĐẢM BẢO ZALO CLONE ĐƯỢC NHẬN DIỆN LÀ BẢN GỐC APP STORE
 // ==========================================
 
+static BOOL s_in_bundle_hook = NO;
+
 %hook NSBundle
 
 - (NSString *)bundleIdentifier {
     if (self == [NSBundle mainBundle]) {
-        if (is_original_zalo_app()) {
+        if (s_in_bundle_hook) return %orig;
+        s_in_bundle_hook = YES;
+        BOOL isOrig = is_original_zalo_app();
+        s_in_bundle_hook = NO;
+        if (isOrig) {
             return %orig;
         }
         if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
@@ -1411,7 +1413,11 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
     if (self == [NSBundle mainBundle] && key && [key isEqualToString:@"CFBundleIdentifier"]) {
-        if (is_original_zalo_app()) {
+        if (s_in_bundle_hook) return %orig;
+        s_in_bundle_hook = YES;
+        BOOL isOrig = is_original_zalo_app();
+        s_in_bundle_hook = NO;
+        if (isOrig) {
             return %orig;
         }
         if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
@@ -1426,6 +1432,13 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 - (NSDictionary *)infoDictionary {
     NSDictionary *dict = %orig;
     if (self == [NSBundle mainBundle] && dict) {
+        if (s_in_bundle_hook) return dict;
+        s_in_bundle_hook = YES;
+        BOOL isOrig = is_original_zalo_app();
+        s_in_bundle_hook = NO;
+        if (isOrig) {
+            return dict;
+        }
         void *retAddr = __builtin_return_address(0);
         Dl_info info;
         if (dladdr(retAddr, &info) && info.dli_fname) {
@@ -1518,10 +1531,9 @@ static NSString *getHarPath(void) {
 static dispatch_queue_t harQueue = nil;
 
 static void append_to_har_file(NSDictionary *entryDict) {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
+    if (!harQueue) {
         harQueue = dispatch_queue_create("com.sonhu.zalotweak.harQueue", DISPATCH_QUEUE_SERIAL);
-    });
+    }
 
     dispatch_async(harQueue, ^{
         NSString *harPath = getHarPath();
@@ -1848,8 +1860,12 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         // 1. Kích hoạt toàn bộ hook Objective-C của Logos
         %init;
 
-        // 2. Khởi tạo toàn bộ dữ liệu cấu hình và xác thực bản quyền TRƯỚC KHI cài đặt hook C
-        // Đảm bảo dispatch_once hoàn tất sạch sẽ, không bị deadlock
+        // 2. Khởi tạo toàn bộ dữ liệu cấu hình, bộ nhớ hàng đợi và xác thực bản quyền
+        // Đảm bảo không bị deadlock re-entrant dispatch_once
+        loggedAuditKeys = [[NSMutableSet alloc] init];
+        auditQueue = dispatch_queue_create("com.sonhu.zalotweak.auditQueue", DISPATCH_QUEUE_SERIAL);
+        harQueue = dispatch_queue_create("com.sonhu.zalotweak.harQueue", DISPATCH_QUEUE_SERIAL);
+
         [ZTSettings sharedSettings];
         [[ZTSecurityManager sharedManager] isLicenseValid];
 
@@ -1926,9 +1942,11 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         [cfgDict writeToFile:cfgPath atomically:YES];
         [cfgDict writeToFile:GLOBAL_PREFS_PATH atomically:YES];
 
-        // Khởi tạo In-App Floating Menu (Chỉ hiện khi là Zalo Clone/Sideload hoặc người dùng bật trong Cài đặt)
-        if ([ZTSettings sharedSettings].showFloatingMenu) {
-            [[ZTMenuManager sharedManager] setupInAppMenu];
+        // Khởi tạo In-App Floating Menu (Chỉ hiện khi là Zalo Clone/Sideload hoặc người dùng bật trong Cài đặt, và KHÔNG PHẢI App Extension)
+        if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
+            if ([ZTSettings sharedSettings].showFloatingMenu) {
+                [[ZTMenuManager sharedManager] setupInAppMenu];
+            }
         }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu
