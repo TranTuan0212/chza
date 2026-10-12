@@ -1859,6 +1859,8 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     return %orig;
 }
 
+%end
+
 %hook UIWindow
 
 - (void)makeKeyAndVisible {
