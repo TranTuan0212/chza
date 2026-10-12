@@ -453,9 +453,30 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         [top presentViewController:viewAlert animated:YES completion:nil];
     }]];
     
+    [alert addAction:[UIAlertAction actionWithTitle:@"🌐 Xuất File HAR (Charles / Proxyman)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        NSString *home = NSHomeDirectory();
+        NSString *harPath = home ? [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"] : @"/var/mobile/Library/Preferences/ZaloTraffic.har";
+        if (![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
+            UIAlertController *noHar = [UIAlertController alertControllerWithTitle:@"Chưa Có Dữ Liệu HAR"
+                                                                           message:@"Chưa có request mạng nào được ghi nhận.\nHãy chắc chắn bạn đã Bật Kiểm Toán (Audit) và dùng Zalo vài giây."
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [noHar addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [top presentViewController:noHar animated:YES completion:nil];
+            return;
+        }
+        NSURL *fileURL = [NSURL fileURLWithPath:harPath];
+        UIActivityViewController *avc = [[UIActivityViewController alloc] initWithActivityItems:@[fileURL] applicationActivities:nil];
+        [top presentViewController:avc animated:YES completion:nil];
+    }]];
+
     [alert addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Sạch File Log" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
-        UIAlertController *delAlert = [UIAlertController alertControllerWithTitle:@"Đã Xóa" message:@"Đã xóa sạch nội dung file ZaloAudit.log." preferredStyle:UIAlertControllerStyleAlert];
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *hPath = [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
+            [[NSFileManager defaultManager] removeItemAtPath:hPath error:nil];
+        }
+        UIAlertController *delAlert = [UIAlertController alertControllerWithTitle:@"Đã Xóa" message:@"Đã xóa sạch nội dung file ZaloAudit.log và ZaloTraffic.har." preferredStyle:UIAlertControllerStyleAlert];
         [delAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:delAlert animated:YES completion:nil];
     }]];
@@ -520,6 +541,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                 [lower containsString:@"appsmanager"] ||
                 [lower containsString:@"adbk"] ||
                 [lower isEqualToString:@"zaloaudit.log"] ||
+                [lower isEqualToString:@"zalotraffic.har"] ||
                 [lower containsString:@"com.sonhu.zalotweak"]) {
                 continue;
             }

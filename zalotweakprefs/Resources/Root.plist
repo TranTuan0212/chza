@@ -82,6 +82,43 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
+            <string>KHU VỰC &amp; QUỐC GIA</string>
+            <key>footerText</key>
+            <string>Chọn 'Du Học Sinh Mỹ (+1)' nếu bạn dùng SIM/SĐT Mỹ. Tweak sẽ tự động đồng bộ nhà mạng Mỹ (T-Mobile, AT&amp;T, Mint) và định danh phù hợp.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkListCell</string>
+            <key>default</key>
+            <string>VN</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>detail</key>
+            <string>PSListItemsController</string>
+            <key>key</key>
+            <string>regionMode</string>
+            <key>label</key>
+            <string>Hồ Sơ Khu Vực</string>
+            <key>validTitles</key>
+            <array>
+                <string>🇻🇳 Việt Nam (+84) [Mặc Định]</string>
+                <string>🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&amp;T]</string>
+                <string>🇺🇸 Hoa Kỳ / Mỹ (+1) [Verizon / AT&amp;T]</string>
+            </array>
+            <key>validValues</key>
+            <array>
+                <string>VN</string>
+                <string>US_STUDENT</string>
+                <string>US</string>
+            </array>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
             <string>MODEL THIẾT BỊ GIẢ LẬP</string>
             <key>footerText</key>
             <string>Khi đổi model, tweak sẽ tự động đồng bộ RAM, CPU và Kernel OS tương ứng.</string>

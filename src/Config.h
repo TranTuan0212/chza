@@ -25,6 +25,13 @@
 @property (nonatomic, strong) NSString *lastWipedIDFV;     // IDFV lần wipe trước
 @property (nonatomic, strong) NSString *lastWipedIP;       // IP mạng lần wipe trước
 @property (nonatomic, assign) uint64_t lastWipedTimestamp; // Thời điểm wipe lần trước
+@property (nonatomic, strong) NSString *carrierName;        // Tên nhà mạng (vd: "Viettel", "VN MOBIFONE", "VINAPHONE")
+@property (nonatomic, strong) NSString *carrierMCC;         // Mobile Country Code (vd: "452")
+@property (nonatomic, strong) NSString *carrierMNC;         // Mobile Network Code (vd: "04", "01", "02")
+@property (nonatomic, strong) NSString *carrierCountryCode; // Country Code ISO (vd: "vn")
+@property (nonatomic, assign) float batteryLevel;           // Mức pin (vd: 0.82)
+@property (nonatomic, assign) NSInteger batteryState;       // Trạng thái pin (UIDeviceBatteryStateUnplugged = 1)
+@property (nonatomic, strong) NSString *regionMode;        // Khu vực: @"VN", @"US_STUDENT", @"US"
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

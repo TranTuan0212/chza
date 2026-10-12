@@ -7,6 +7,10 @@
 #import <sys/utsname.h>
 #import <sys/stat.h>
 #import <sys/mount.h>
+#import <ifaddrs.h>
+#import <net/if.h>
+#import <CoreTelephony/CTCarrier.h>
+#import <CoreTelephony/CTTelephonyNetworkInfo.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <stdlib.h>
@@ -22,6 +26,18 @@
 
 static inline BOOL is_tweak_active(void) {
     return [ZTSettings sharedSettings].enabled && [[ZTSecurityManager sharedManager] isLicenseValid];
+}
+
+static inline BOOL is_original_zalo_app(void) {
+    static BOOL sIsOriginal = NO;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        if (!bid || [bid isEqualToString:@"vn.com.vng.zingalo"] || [bid isEqualToString:@"com.vng.zalo"] || [bid isEqualToString:@"com.zing.zalo"]) {
+            sIsOriginal = YES;
+        }
+    });
+    return sIsOriginal;
 }
 
 #define GLOBAL_PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
@@ -97,6 +113,13 @@ static NSString *getConfigPath(void) {
         self.lastWipedIDFV = dict[@"lastWipedIDFV"] ?: @"";
         self.lastWipedIP = dict[@"lastWipedIP"] ?: @"";
         self.lastWipedTimestamp = [dict[@"lastWipedTimestamp"] unsignedLongLongValue] ?: 0;
+        self.carrierName = dict[@"carrierName"] ?: @"Viettel";
+        self.carrierMCC = dict[@"carrierMCC"] ?: @"452";
+        self.carrierMNC = dict[@"carrierMNC"] ?: @"04";
+        self.carrierCountryCode = dict[@"carrierCountryCode"] ?: @"vn";
+        self.batteryLevel = [dict[@"batteryLevel"] floatValue] ?: 0.85f;
+        self.batteryState = [dict[@"batteryState"] integerValue] ?: 1;
+        self.regionMode = dict[@"regionMode"] ?: @"VN";
 
         if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0) {
             if (self.bootTimeSec == 0) {
@@ -112,6 +135,7 @@ static NSString *getConfigPath(void) {
         self.lastWipedIDFV = @"";
         self.lastWipedIP = @"";
         self.lastWipedTimestamp = 0;
+        self.regionMode = @"VN";
         [self generateNewProfile];
     }
 }
@@ -137,6 +161,13 @@ static NSString *getConfigPath(void) {
     dict[@"profileId"] = self.profileId;
     dict[@"diskTotalSize"] = @(self.diskTotalSize);
     dict[@"diskFreeSize"] = @(self.diskFreeSize);
+    dict[@"carrierName"] = self.carrierName ?: @"Viettel";
+    dict[@"carrierMCC"] = self.carrierMCC ?: @"452";
+    dict[@"carrierMNC"] = self.carrierMNC ?: @"04";
+    dict[@"carrierCountryCode"] = self.carrierCountryCode ?: @"vn";
+    dict[@"batteryLevel"] = @(self.batteryLevel);
+    dict[@"batteryState"] = @(self.batteryState);
+    dict[@"regionMode"] = self.regionMode ?: @"VN";
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -196,22 +227,63 @@ static NSString *get_real_hardware_model(void) {
     self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount] ?: 6;
     self.memsize = [[NSProcessInfo processInfo] physicalMemory] ?: 6442450944ULL;
 
-    // 1. Tên thiết bị người dùng đời thực ngẫu nhiên
-    NSArray *userNames = @[
-        @"iPhone",
-        @"iPhone của Tuấn",
-        @"iPhone của Linh",
-        @"iPhone (2)",
-        @"iPhone của Huy",
-        @"iPhone 13 Pro",
-        @"iPhone của Nam",
-        @"iPhone của Trang",
-        @"iPhone của Hoàng",
-        @"iPhone của Mai",
-        @"iPhone của Lan",
-        @"iPhone của Minh"
-    ];
-    self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+    // 1. Tên thiết bị & Nhà mạng theo Khu Vực (VN / Du Học Sinh Mỹ / Mỹ)
+    NSString *region = self.regionMode ?: @"VN";
+    if ([region isEqualToString:@"US_STUDENT"]) {
+        NSArray *userNames = @[
+            @"Huy's iPhone", @"Nam's iPhone", @"Trang's iPhone", @"Alex's iPhone",
+            @"Minh's iPhone", @"Linh's iPhone", @"Kevin's iPhone", @"Ha's iPhone",
+            @"Duc's iPhone", @"Vy's iPhone", @"Phong's iPhone", @"Chi's iPhone",
+            @"Dan's iPhone", @"Jenny's iPhone"
+        ];
+        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+
+        NSArray *carriers = @[
+            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"},
+            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
+            @{@"name": @"Mint Mobile", @"mcc": @"310", @"mnc": @"260"}
+        ];
+        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        self.carrierName = chosenCarrier[@"name"];
+        self.carrierMCC = chosenCarrier[@"mcc"];
+        self.carrierMNC = chosenCarrier[@"mnc"];
+        self.carrierCountryCode = @"us";
+    } else if ([region isEqualToString:@"US"]) {
+        NSArray *userNames = @[
+            @"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone",
+            @"John's iPhone", @"Daniel's iPhone", @"Chris's iPhone", @"Jessica's iPhone"
+        ];
+        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+
+        NSArray *carriers = @[
+            @{@"name": @"Verizon", @"mcc": @"311", @"mnc": @"480"},
+            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
+            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"}
+        ];
+        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        self.carrierName = chosenCarrier[@"name"];
+        self.carrierMCC = chosenCarrier[@"mcc"];
+        self.carrierMNC = chosenCarrier[@"mnc"];
+        self.carrierCountryCode = @"us";
+    } else {
+        NSArray *userNames = @[
+            @"iPhone", @"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)",
+            @"iPhone của Huy", @"iPhone 13 Pro", @"iPhone của Nam", @"iPhone của Trang",
+            @"iPhone của Hoàng", @"iPhone của Mai", @"iPhone của Lan", @"iPhone của Minh"
+        ];
+        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+
+        NSArray *carriers = @[
+            @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
+            @{@"name": @"VINAPHONE", @"mcc": @"452", @"mnc": @"02"},
+            @{@"name": @"VN MOBIFONE", @"mcc": @"452", @"mnc": @"01"}
+        ];
+        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        self.carrierName = chosenCarrier[@"name"];
+        self.carrierMCC = chosenCarrier[@"mcc"];
+        self.carrierMNC = chosenCarrier[@"mnc"];
+        self.carrierCountryCode = @"vn";
+    }
 
     // 2. Phiên bản iOS & Build Number chuẩn Apple tương ứng
     NSArray *iosProfiles = @[
@@ -245,6 +317,11 @@ static NSString *get_real_hardware_model(void) {
     self.spoofedIDFV = [[NSUUID UUID] UUIDString];
     self.spoofedIDFA = [[NSUUID UUID] UUIDString];
     self.profileId = [[NSUUID UUID] UUIDString];
+
+    // 5. Giả lập mức pin ngẫu nhiên hợp lý (55% - 95%) và không cắm sạc
+    self.batteryLevel = 0.55f + ((float)arc4random_uniform(40)) / 100.0f;
+    self.batteryState = 1; // UIDeviceBatteryStateUnplugged
+
     [self saveSettings];
 }
 
@@ -592,6 +669,20 @@ static int my_uname(struct utsname *buf) {
     return @"iPhone";
 }
 
+- (float)batteryLevel {
+    if (!is_tweak_active()) return %orig;
+    return [ZTSettings sharedSettings].batteryLevel;
+}
+
+- (UIDeviceBatteryState)batteryState {
+    if (!is_tweak_active()) return %orig;
+    return (UIDeviceBatteryState)[ZTSettings sharedSettings].batteryState;
+}
+
+- (BOOL)isBatteryMonitoringEnabled {
+    return YES;
+}
+
 %end
 
 // ==========================================
@@ -628,6 +719,37 @@ static int my_uname(struct utsname *buf) {
     if (completion) {
         completion(2);
     }
+}
+
+%end
+
+// ==========================================
+// GIẢ LẬP NHÀ MẠNG VIỄN THÔNG (CARRIER INFO)
+// ==========================================
+%hook CTCarrier
+
+- (NSString *)carrierName {
+    if (!is_tweak_active()) return %orig;
+    return [ZTSettings sharedSettings].carrierName ?: @"Viettel";
+}
+
+- (NSString *)mobileCountryCode {
+    if (!is_tweak_active()) return %orig;
+    return [ZTSettings sharedSettings].carrierMCC ?: @"452";
+}
+
+- (NSString *)mobileNetworkCode {
+    if (!is_tweak_active()) return %orig;
+    return [ZTSettings sharedSettings].carrierMNC ?: @"04";
+}
+
+- (NSString *)isoCountryCode {
+    if (!is_tweak_active()) return %orig;
+    return [ZTSettings sharedSettings].carrierCountryCode ?: @"vn";
+}
+
+- (BOOL)allowsVOIP {
+    return YES;
 }
 
 %end
@@ -707,10 +829,18 @@ static int my_uname(struct utsname *buf) {
 static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
     if (!query) return nil;
     NSMutableDictionary *dict = [(__bridge NSDictionary *)query mutableCopy];
+
+    // BẢO VỆ TUYỆT ĐỐI CHO APPS MANAGER KHI BACKUP ZALO GỐC:
+    // Nếu là Zalo gốc, giữ nguyên 100% kSecAttrAccessGroup (group.vn.com.vng.zingalo)
+    // và Service/Account để Apps Manager dump Keychain chính xác vào file .adbk!
+    if (is_original_zalo_app()) {
+        return dict;
+    }
+
     NSString *profile = [ZTSettings sharedSettings].profileId;
     if (!profile || profile.length == 0) return dict;
 
-    // Chỉ áp dụng cho mật khẩu Generic & Internet, KHÔNG làm hỏng Certificate / TLS / Keys
+    // Chỉ áp dụng cho mật khẩu Generic & Internet trên Zalo Clone để không xung đột Zalo gốc
     id secClass = dict[(__bridge id)kSecClass];
     if (secClass) {
         if (![secClass isEqual:(__bridge id)kSecClassGenericPassword] &&
@@ -721,7 +851,7 @@ static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
 
     NSString *prefix = [NSString stringWithFormat:@"%@_", profile];
 
-    // Cách ly kSecAttrAccessGroup để không bao giờ đọc chung Keychain với Zalo chính
+    // Cách ly kSecAttrAccessGroup của Zalo Clone
     if (dict[(__bridge id)kSecAttrAccessGroup]) {
         [dict removeObjectForKey:(__bridge id)kSecAttrAccessGroup];
     }
@@ -990,10 +1120,10 @@ static char *my_getenv(const char *name) {
     return orig_getenv(name);
 }
 
-// Chuyển hướng CFPreferences App Groups sang container an toàn của clone
+// Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
 static CFPropertyListRef (*orig_CFPreferencesCopyAppValue)(CFStringRef key, CFStringRef applicationID);
 static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID) {
-    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
             NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
@@ -1005,7 +1135,7 @@ static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringR
 
 static void (*orig_CFPreferencesSetAppValue)(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID);
 static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID) {
-    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
             NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
@@ -1018,7 +1148,7 @@ static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value
 
 static Boolean (*orig_CFPreferencesAppSynchronize)(CFStringRef applicationID);
 static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
-    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
             NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
@@ -1037,6 +1167,63 @@ static CFDictionaryRef my_CNCopyCurrentNetworkInfo(CFStringRef interfaceName) {
         return NULL;
     }
     return orig_CNCopyCurrentNetworkInfo ? orig_CNCopyCurrentNetworkInfo(interfaceName) : NULL;
+}
+
+// Lọc các giao diện mạng ảo (VPN, Tunnel, utun, ppp) để Zalo không quét được
+static int (*orig_getifaddrs)(struct ifaddrs **ifap);
+static int my_getifaddrs(struct ifaddrs **ifap) {
+    int ret = orig_getifaddrs ? orig_getifaddrs(ifap) : getifaddrs(ifap);
+    if (ret != 0 || !ifap || !*ifap || !is_tweak_active()) {
+        return ret;
+    }
+
+    struct ifaddrs *prev = NULL;
+    struct ifaddrs *curr = *ifap;
+    while (curr) {
+        BOOL hide = NO;
+        if (curr->ifa_name) {
+            const char *n = curr->ifa_name;
+            if (strncmp(n, "tun", 3) == 0 ||
+                strncmp(n, "tap", 3) == 0 ||
+                strncmp(n, "ppp", 3) == 0 ||
+                strncmp(n, "ipsec", 5) == 0 ||
+                strncmp(n, "utun", 4) == 0) {
+                hide = YES;
+            }
+        }
+        if (hide) {
+            if (prev) {
+                prev->ifa_next = curr->ifa_next;
+                curr = curr->ifa_next;
+            } else {
+                *ifap = curr->ifa_next;
+                curr = *ifap;
+            }
+        } else {
+            prev = curr;
+            curr = curr->ifa_next;
+        }
+    }
+    return 0;
+}
+
+// Ẩn dylib của jailbreak / tweak trong RAM khi Zalo duyệt _dyld_get_image_name
+static const char *(*orig_dyld_get_image_name)(uint32_t image_index);
+static const char *my_dyld_get_image_name(uint32_t image_index) {
+    const char *name = orig_dyld_get_image_name ? orig_dyld_get_image_name(image_index) : _dyld_get_image_name(image_index);
+    if (!name || !is_tweak_active()) return name;
+
+    if (strstr(name, "Zalotweak") ||
+        strstr(name, "ElleKit") ||
+        strstr(name, "MobileSubstrate") ||
+        strstr(name, "libhooker") ||
+        strstr(name, "SubstrateLoader") ||
+        strstr(name, "CydiaSubstrate") ||
+        strstr(name, "TweakInject") ||
+        strstr(name, "frida")) {
+        return "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    }
+    return name;
 }
 
 // Giả lập dung lượng ổ cứng ở tầng POSIX C (statfs, fstatfs)
@@ -1193,10 +1380,15 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     return fakeAttrs;
 }
 
-// Cách ly hoàn toàn Shared App Groups: Chuyển hướng về thư mục riêng trong Sandbox Zalo Clone
+// Cách ly Shared App Groups cho bản Clone khi thiếu quyền (Zalo gốc dùng App Group thật để Apps Manager backup)
 - (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
+    NSURL *origURL = %orig;
+    if (origURL) {
+        // Zalo gốc có App Group chuẩn từ iOS -> Dùng URL gốc này để Apps Manager sao lưu chuẩn 100%!
+        return origURL;
+    }
     if (groupIdentifier && ([groupIdentifier containsString:@"zalo"] || [groupIdentifier containsString:@"zingalo"] || [groupIdentifier containsString:@"vng"])) {
-        logAudit(@"APP-GROUP", [NSString stringWithFormat:@"Zalo truy vấn App Group '%@' -> [ĐÃ CÁCH LY VỀ THƯ MỤC RIÊNG]", groupIdentifier]);
+        logAudit(@"APP-GROUP", [NSString stringWithFormat:@"Zalo truy vấn App Group '%@' (nil) -> [ĐÃ CÁCH LY VỀ THƯ MỤC RIÊNG]", groupIdentifier]);
         NSString *home = NSHomeDirectory();
         if (home) {
             NSString *isolatedGroup = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/IsolatedAppGroups/%@", groupIdentifier]];
@@ -1206,7 +1398,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             return [NSURL fileURLWithPath:isolatedGroup isDirectory:YES];
         }
     }
-    return %orig;
+    return origURL;
 }
 
 // Chặn không cho quét danh sách các container ứng dụng khác trên máy
@@ -1352,86 +1544,264 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 %end
 
 // ==========================================
-// 8. TẦNG MẠNG: SOI CHI TIẾT REQUEST ZALO (AUDIT & NETWORK INSPECTOR)
+// 8. TẦNG MẠNG: HAR NETWORK INSPECTOR TOÀN DIỆN (REQUEST & RESPONSE CHUẨN HAR 1.2)
 // ==========================================
 
-static void inspect_and_log_zalo_request(NSURLRequest *request, NSData *explicitBody) {
+static NSString *getHarPath(void) {
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        return [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
+    }
+    return @"/var/mobile/Library/Preferences/ZaloTraffic.har";
+}
+
+static dispatch_queue_t harQueue = nil;
+
+static void append_to_har_file(NSDictionary *entryDict) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        harQueue = dispatch_queue_create("com.sonhu.zalotweak.harQueue", DISPATCH_QUEUE_SERIAL);
+    });
+
+    dispatch_async(harQueue, ^{
+        NSString *harPath = getHarPath();
+        NSMutableDictionary *harRoot = nil;
+        if ([[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
+            NSData *existingData = [NSData dataWithContentsOfFile:harPath];
+            if (existingData) {
+                harRoot = [NSJSONSerialization JSONObjectWithData:existingData options:NSJSONReadingMutableContainers error:nil];
+            }
+        }
+
+        if (!harRoot || ![harRoot isKindOfClass:[NSMutableDictionary class]] || !harRoot[@"log"]) {
+            harRoot = [NSMutableDictionary dictionary];
+            NSMutableDictionary *logDict = [NSMutableDictionary dictionary];
+            logDict[@"version"] = @"1.2";
+            logDict[@"creator"] = @{
+                @"name": @"ZaloTweak HAR Inspector",
+                @"version": @"1.0"
+            };
+            logDict[@"entries"] = [NSMutableArray array];
+            harRoot[@"log"] = logDict;
+        }
+
+        NSMutableArray *entries = harRoot[@"log"][@"entries"];
+        if (entries) {
+            [entries addObject:entryDict];
+            // Giới hạn 500 request gần nhất
+            if (entries.count > 500) {
+                [entries removeObjectsInRange:NSMakeRange(0, entries.count - 500)];
+            }
+        }
+
+        NSData *jsonData = [NSJSONSerialization dataWithJSONObject:harRoot options:NSJSONWritingPrettyPrinted error:nil];
+        if (jsonData) {
+            [jsonData writeToFile:harPath atomically:YES];
+        }
+    });
+}
+
+static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {
     if (![ZTSettings sharedSettings].enableAuditLog) return;
     if (!request || !request.URL) return;
 
     NSURL *url = request.URL;
-    NSString *host = [url.host lowercaseString];
-    if (!host) return;
+    NSString *urlStr = url.absoluteString ?: @"";
+    NSString *method = request.HTTPMethod ?: @"GET";
 
-    // 1. Chỉ bắt các domain của Zalo/VNG hoặc IP liên quan
-    BOOL isZalo = [host containsString:@"zalo"] || [host containsString:@"vng"] || [host containsString:@"zing"];
-    if (!isZalo) return;
+    NSTimeInterval duration = finishDate ? [finishDate timeIntervalSinceDate:startDate] : 0;
+    uint64_t durationMs = (uint64_t)(duration * 1000.0);
 
-    // 2. Bỏ qua các file tĩnh, media, ảnh, sticker để tránh làm tràn file log
-    NSString *path = [url.path lowercaseString];
-    if ([path hasSuffix:@".png"] || [path hasSuffix:@".jpg"] || [path hasSuffix:@".jpeg"] ||
-        [path hasSuffix:@".webp"] || [path hasSuffix:@".gif"] || [path hasSuffix:@".mp4"] ||
-        [path hasSuffix:@".mp3"] || [path hasSuffix:@".aac"] || [path hasSuffix:@".m4a"] ||
-        [path containsString:@"/sticker/"] || [path containsString:@"/avatar/"]) {
-        return;
-    }
+    NSHTTPURLResponse *httpResp = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
+    NSInteger statusCode = httpResp ? httpResp.statusCode : (error ? error.code : 0);
+    NSString *statusText = httpResp ? [NSHTTPURLResponse localizedStringForStatusCode:statusCode] : (error ? [error localizedDescription] : @"Pending/Unknown");
 
-    // 3. Trích xuất User-Agent
-    NSString *ua = [request valueForHTTPHeaderField:@"User-Agent"] ?: @"(none)";
-
-    // 4. Trích xuất Payload Body (Dữ liệu Zalo gửi kèm)
-    NSData *bodyData = explicitBody ?: request.HTTPBody;
-    NSString *bodyStr = nil;
-    if (bodyData && bodyData.length > 0) {
-        bodyStr = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
-        if (!bodyStr) {
-            bodyStr = [NSString stringWithFormat:@"(Dữ liệu nhị phân %lu bytes)", (unsigned long)bodyData.length];
-        } else {
-            bodyStr = [bodyStr stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
-            if (bodyStr.length > 600) {
-                bodyStr = [[bodyStr substringToIndex:600] stringByAppendingString:@"... (còn tiếp)"];
-            }
+    // 1. Format Human-Readable Text Log (In ra Console & ZaloAudit.log)
+    NSMutableString *logText = [NSMutableString string];
+    [logText appendString:@"\n================================================================================"];
+    [logText appendFormat:@"\n🌐 [HAR] %@ %@", method, urlStr];
+    [logText appendFormat:@"\n⏱ Thời gian: %llums | Status: %ld %@", durationMs, (long)statusCode, statusText];
+    
+    // Request Headers
+    [logText appendString:@"\n--------------------------------- REQUEST HEADERS ------------------------------"];
+    NSDictionary *reqHeaders = request.allHTTPHeaderFields;
+    if (reqHeaders.count > 0) {
+        for (NSString *hKey in reqHeaders) {
+            [logText appendFormat:@"\n   • %@: %@", hKey, reqHeaders[hKey]];
         }
     } else {
-        bodyStr = @"(Không có body)";
+        [logText appendString:@"\n   (Không có headers)"];
     }
 
-    NSString *method = request.HTTPMethod ?: @"GET";
-    NSString *logLine = [NSString stringWithFormat:@"%@ %@\n   • UA: %@\n   • Body: %@",
-                         method, url.absoluteString, ua, bodyStr];
+    // Request Body
+    [logText appendString:@"\n--------------------------------- REQUEST BODY ---------------------------------"];
+    NSString *reqBodyStr = nil;
+    if (reqBody && reqBody.length > 0) {
+        reqBodyStr = [[NSString alloc] initWithData:reqBody encoding:NSUTF8StringEncoding];
+        if (reqBodyStr) {
+            [logText appendFormat:@"\n%@", reqBodyStr];
+        } else {
+            [logText appendFormat:@"\n(Dữ liệu nhị phân %lu bytes)", (unsigned long)reqBody.length];
+        }
+    } else {
+        [logText appendString:@"\n(Không có body)"];
+    }
 
-    logAudit(@"ZALO-HTTP", logLine);
+    // Response Headers
+    [logText appendString:@"\n--------------------------------- RESPONSE HEADERS -----------------------------"];
+    NSDictionary *respHeaders = httpResp.allHeaderFields;
+    if (respHeaders.count > 0) {
+        for (NSString *hKey in respHeaders) {
+            [logText appendFormat:@"\n   • %@: %@", hKey, respHeaders[hKey]];
+        }
+    } else {
+        [logText appendString:@"\n   (Không có headers)"];
+    }
+
+    // Response Body
+    [logText appendString:@"\n--------------------------------- RESPONSE BODY --------------------------------"];
+    NSString *respBodyStr = nil;
+    if (respData && respData.length > 0) {
+        respBodyStr = [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding];
+        if (respBodyStr) {
+            [logText appendFormat:@"\n%@", respBodyStr];
+        } else {
+            [logText appendFormat:@"\n(Dữ liệu nhị phân %lu bytes)", (unsigned long)respData.length];
+        }
+    } else {
+        [logText appendString:@"\n(Không có body phản hồi)"];
+    }
+    [logText appendString:@"\n================================================================================"];
+
+    logAudit(@"HAR-INSPECTOR", logText);
+
+    // 2. Tạo đối tượng HAR Entry chuẩn JSON 1.2
+    NSISO8601DateFormatter *isoDF = [[NSISO8601DateFormatter alloc] init];
+    NSString *startedISO = [isoDF stringFromDate:startDate];
+
+    NSMutableArray *reqHeadersArray = [NSMutableArray array];
+    for (NSString *k in reqHeaders) {
+        [reqHeadersArray addObject:@{@"name": k, @"value": [NSString stringWithFormat:@"%@", reqHeaders[k]]}];
+    }
+
+    NSMutableDictionary *postDataDict = nil;
+    if (reqBodyStr) {
+        postDataDict = [NSMutableDictionary dictionary];
+        postDataDict[@"mimeType"] = reqHeaders[@"Content-Type"] ?: @"application/octet-stream";
+        postDataDict[@"text"] = reqBodyStr;
+    }
+
+    NSMutableArray *respHeadersArray = [NSMutableArray array];
+    for (NSString *k in respHeaders) {
+        [respHeadersArray addObject:@{@"name": k, @"value": [NSString stringWithFormat:@"%@", respHeaders[k]]}];
+    }
+
+    NSMutableDictionary *contentDict = [NSMutableDictionary dictionary];
+    contentDict[@"size"] = @(respData ? respData.length : 0);
+    contentDict[@"mimeType"] = respHeaders[@"Content-Type"] ?: @"application/octet-stream";
+    if (respBodyStr) {
+        contentDict[@"text"] = respBodyStr;
+    }
+
+    NSDictionary *harEntry = @{
+        @"startedDateTime": startedISO ?: @"",
+        @"time": @(durationMs),
+        @"request": @{
+            @"method": method,
+            @"url": urlStr,
+            @"httpVersion": @"HTTP/1.1",
+            @"cookies": @[],
+            @"headers": reqHeadersArray,
+            @"queryString": @[],
+            @"postData": postDataDict ?: [NSNull null],
+            @"headersSize": @(-1),
+            @"bodySize": @(reqBody ? reqBody.length : 0)
+        },
+        @"response": @{
+            @"status": @(statusCode),
+            @"statusText": statusText ?: @"",
+            @"httpVersion": @"HTTP/1.1",
+            @"cookies": @[],
+            @"headers": respHeadersArray,
+            @"content": contentDict,
+            @"redirectURL": respHeaders[@"Location"] ?: @"",
+            @"headersSize": @(-1),
+            @"bodySize": @(respData ? respData.length : 0)
+        },
+        @"cache": @{},
+        @"timings": @{
+            @"send": @(0),
+            @"wait": @(durationMs),
+            @"receive": @(0)
+        }
+    };
+
+    append_to_har_file(harEntry);
 }
 
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    inspect_and_log_zalo_request(request, nil);
+    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(id)completionHandler {
-    inspect_and_log_zalo_request(request, nil);
-    return %orig;
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    NSDate *startDate = [NSDate date];
+    NSData *reqBody = request.HTTPBody;
+
+    if (!completionHandler) {
+        record_har_traffic(request, reqBody, nil, nil, nil, startDate, nil);
+        return %orig(request, nil);
+    }
+
+    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSDate *finishDate = [NSDate date];
+        record_har_traffic(request, reqBody, response, data, error, startDate, finishDate);
+        completionHandler(data, response, error);
+    };
+
+    return %orig(request, wrappedHandler);
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    inspect_and_log_zalo_request(request, bodyData);
+    record_har_traffic(request, bodyData, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
 
-- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(id)completionHandler {
-    inspect_and_log_zalo_request(request, bodyData);
-    return %orig;
-}
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    NSDate *startDate = [NSDate date];
 
-- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(id)completionHandler {
-    NSData *fileData = nil;
-    if (fileURL) {
-        fileData = [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil];
+    if (!completionHandler) {
+        record_har_traffic(request, bodyData, nil, nil, nil, startDate, nil);
+        return %orig(request, bodyData, nil);
     }
-    inspect_and_log_zalo_request(request, fileData);
-    return %orig;
+
+    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSDate *finishDate = [NSDate date];
+        record_har_traffic(request, bodyData, response, data, error, startDate, finishDate);
+        completionHandler(data, response, error);
+    };
+
+    return %orig(request, bodyData, wrappedHandler);
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    NSDate *startDate = [NSDate date];
+    NSData *fileData = fileURL ? [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil] : nil;
+
+    if (!completionHandler) {
+        record_har_traffic(request, fileData, nil, nil, nil, startDate, nil);
+        return %orig(request, fileURL, nil);
+    }
+
+    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        NSDate *finishDate = [NSDate date];
+        record_har_traffic(request, fileData, response, data, error, startDate, finishDate);
+        completionHandler(data, response, error);
+    };
+
+    return %orig(request, fileURL, wrappedHandler);
 }
 
 %end
@@ -1439,22 +1809,44 @@ static void inspect_and_log_zalo_request(NSURLRequest *request, NSData *explicit
 %hook NSURLConnection
 
 + (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
-    inspect_and_log_zalo_request(request, nil);
-    return %orig;
+    NSDate *startDate = [NSDate date];
+    NSURLResponse *resp = nil;
+    NSError *err = nil;
+    NSData *data = %orig(request, &resp, &err);
+    NSDate *finishDate = [NSDate date];
+
+    if (response) *response = resp;
+    if (error) *error = err;
+
+    record_har_traffic(request, request.HTTPBody, resp, data, err, startDate, finishDate);
+    return data;
 }
 
-+ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(id)handler {
-    inspect_and_log_zalo_request(request, nil);
-    %orig;
++ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *response, NSData *data, NSError *connectionError))handler {
+    NSDate *startDate = [NSDate date];
+
+    if (!handler) {
+        record_har_traffic(request, request.HTTPBody, nil, nil, nil, startDate, nil);
+        %orig;
+        return;
+    }
+
+    void (^wrappedHandler)(NSURLResponse *, NSData *, NSError *) = ^(NSURLResponse *response, NSData *data, NSError *connectionError) {
+        NSDate *finishDate = [NSDate date];
+        record_har_traffic(request, request.HTTPBody, response, data, connectionError, startDate, finishDate);
+        handler(response, data, connectionError);
+    };
+
+    %orig(request, queue, wrappedHandler);
 }
 
 - (id)initWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    inspect_and_log_zalo_request(request, nil);
+    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
 
 + (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    inspect_and_log_zalo_request(request, nil);
+    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
 
@@ -1557,6 +1949,16 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         void *cnFunc = (void *)CNCopyCurrentNetworkInfo;
         if (cnFunc) {
             MSHookFunction(cnFunc, (void *)my_CNCopyCurrentNetworkInfo, (void **)&orig_CNCopyCurrentNetworkInfo);
+        }
+
+        // Hook getifaddrs (Lọc bỏ interface VPN, tap, tun, utun)
+        MSHookFunction((void *)getifaddrs, (void *)my_getifaddrs, (void **)&orig_getifaddrs);
+
+        // Hook _dyld_get_image_name (Che giấu dylib tweak/jailbreak)
+        void *dyldImgFunc = dlsym(RTLD_DEFAULT, "_dyld_get_image_name");
+        if (!dyldImgFunc) dyldImgFunc = (void *)_dyld_get_image_name;
+        if (dyldImgFunc) {
+            MSHookFunction(dyldImgFunc, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
         }
 
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {

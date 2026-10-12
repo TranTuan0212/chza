@@ -93,10 +93,69 @@ static void kill_all_zalo_processes(void);
 
     if ([key isEqualToString:@"deviceMachine"]) {
         [self syncHardwareSpecsForMachine:(NSString *)value inDict:dict];
+    } else if ([key isEqualToString:@"regionMode"]) {
+        [self syncCarrierForRegion:(NSString *)value inDict:dict];
     }
 
     save_dict_to_all_locations(dict);
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+}
+
+- (void)syncCarrierForRegion:(NSString *)region inDict:(NSMutableDictionary *)dict {
+    if ([region isEqualToString:@"US_STUDENT"]) {
+        NSArray *carriers = @[
+            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"},
+            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
+            @{@"name": @"Mint Mobile", @"mcc": @"310", @"mnc": @"260"}
+        ];
+        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        dict[@"carrierName"] = c[@"name"];
+        dict[@"carrierMCC"] = c[@"mcc"];
+        dict[@"carrierMNC"] = c[@"mnc"];
+        dict[@"carrierCountryCode"] = @"us";
+
+        NSArray *studentNames = @[
+            @"Huy's iPhone", @"Nam's iPhone", @"Trang's iPhone", @"Alex's iPhone",
+            @"Minh's iPhone", @"Linh's iPhone", @"Kevin's iPhone", @"Ha's iPhone",
+            @"Duc's iPhone", @"Vy's iPhone", @"Phong's iPhone", @"Chi's iPhone"
+        ];
+        dict[@"deviceName"] = studentNames[arc4random_uniform((uint32_t)studentNames.count)];
+    } else if ([region isEqualToString:@"US"]) {
+        NSArray *carriers = @[
+            @{@"name": @"Verizon", @"mcc": @"311", @"mnc": @"480"},
+            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
+            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"}
+        ];
+        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        dict[@"carrierName"] = c[@"name"];
+        dict[@"carrierMCC"] = c[@"mcc"];
+        dict[@"carrierMNC"] = c[@"mnc"];
+        dict[@"carrierCountryCode"] = @"us";
+
+        NSArray *usNames = @[
+            @"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone",
+            @"John's iPhone", @"Daniel's iPhone", @"Chris's iPhone", @"Jessica's iPhone"
+        ];
+        dict[@"deviceName"] = usNames[arc4random_uniform((uint32_t)usNames.count)];
+    } else {
+        NSArray *carriers = @[
+            @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
+            @{@"name": @"VINAPHONE", @"mcc": @"452", @"mnc": @"02"},
+            @{@"name": @"VN MOBIFONE", @"mcc": @"452", @"mnc": @"01"}
+        ];
+        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        dict[@"carrierName"] = c[@"name"];
+        dict[@"carrierMCC"] = c[@"mcc"];
+        dict[@"carrierMNC"] = c[@"mnc"];
+        dict[@"carrierCountryCode"] = @"vn";
+
+        NSArray *vnNames = @[
+            @"iPhone", @"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)",
+            @"iPhone của Huy", @"iPhone 13 Pro", @"iPhone của Nam", @"iPhone của Trang",
+            @"iPhone của Hoàng", @"iPhone của Mai", @"iPhone của Lan", @"iPhone của Minh"
+        ];
+        dict[@"deviceName"] = vnNames[arc4random_uniform((uint32_t)vnNames.count)];
+    }
 }
 
 - (void)syncHardwareSpecsForMachine:(NSString *)machine inDict:(NSMutableDictionary *)dict {
@@ -145,6 +204,23 @@ static void kill_all_zalo_processes(void);
     uint64_t total = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
     uint64_t randomUsed = 38000000000ULL + ((uint64_t)arc4random_uniform(25000000)) * 1000ULL;
     dict[@"diskFreeSize"] = @(total > randomUsed ? (total - randomUsed) : (total / 2));
+
+    if (!dict[@"carrierName"]) {
+        NSArray *carriers = @[
+            @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
+            @{@"name": @"VINAPHONE", @"mcc": @"452", @"mnc": @"02"},
+            @{@"name": @"VN MOBIFONE", @"mcc": @"452", @"mnc": @"01"}
+        ];
+        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        dict[@"carrierName"] = c[@"name"];
+        dict[@"carrierMCC"] = c[@"mcc"];
+        dict[@"carrierMNC"] = c[@"mnc"];
+        dict[@"carrierCountryCode"] = @"vn";
+    }
+    if (!dict[@"batteryLevel"]) {
+        dict[@"batteryLevel"] = @(0.65f + ((float)arc4random_uniform(30)) / 100.0f);
+        dict[@"batteryState"] = @(1);
+    }
 }
 
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
@@ -223,12 +299,14 @@ static void wipe_directory_contents(NSString *dirPath) {
         if ([item hasPrefix:@".com.apple.mobile_container_manager"]) {
             continue;
         }
-        // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk CỦA APPS MANAGER VÀ FILE AUDIT LOG
+        // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk CỦA APPS MANAGER, FILE AUDIT LOG VÀ CẤU HÌNH TWEAK
         NSString *lower = [item lowercaseString];
         if ([lower hasSuffix:@".adbk"] ||
             [lower containsString:@"appsmanager"] ||
             [lower containsString:@"adbk"] ||
-            [lower isEqualToString:@"zaloaudit.log"]) {
+            [lower isEqualToString:@"zaloaudit.log"] ||
+            [lower isEqualToString:@"zalotraffic.har"] ||
+            [lower containsString:@"com.sonhu.zalotweak"]) {
             continue;
         }
         NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
@@ -397,6 +475,9 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 
     NSString *currentMachine = dict[@"deviceMachine"] ?: @"iPhone14,2";
     [self syncHardwareSpecsForMachine:currentMachine inDict:dict];
+
+    NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
+    [self syncCarrierForRegion:currentRegion inDict:dict];
 
     uint64_t totalDisk = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
     uint64_t randomUsed = 42000000000ULL + ((uint64_t)arc4random_uniform(25000000)) * 1000ULL;
