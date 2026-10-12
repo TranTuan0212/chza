@@ -143,39 +143,41 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>MODEL THIẾT BỊ GIẢ LẬP</string>
+            <string>PHẦN CỨNG MÁY THẬT (TỰ ĐỘNG NHẬN DIỆN 100%)</string>
             <key>footerText</key>
-            <string>Khi đổi model, tweak sẽ tự động đồng bộ RAM, CPU và Kernel OS tương ứng.</string>
+            <string>Tweak tự động nhận diện chính xác 100% phần cứng máy bạn (Model, iOS, CPU, RAM, Màn hình, Ổ cứng). Mỗi lần Wipe chỉ tạo mới Serial, MAC, IDFV, Uptime và Pin để vượt hoàn toàn hệ thống chống gian lận VNG mà không lệch thông số phần cứng.</string>
         </dict>
         <dict>
             <key>cell</key>
-            <string>PSLinkListCell</string>
-            <key>default</key>
-            <string>iPhone14,2</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>detail</key>
-            <string>PSListItemsController</string>
-            <key>key</key>
-            <string>deviceMachine</string>
+            <string>PSTitleValueCell</string>
             <key>label</key>
-            <string>Chọn Thiết Bị</string>
-            <key>validTitles</key>
-            <array>
-                <string>iPhone 13 Pro (6GB RAM)</string>
-                <string>iPhone 14 Pro (6GB RAM)</string>
-                <string>iPhone 15 Pro Max (8GB RAM)</string>
-                <string>iPhone 12 (4GB RAM)</string>
-            </array>
-            <key>validValues</key>
-            <array>
-                <string>iPhone14,2</string>
-                <string>iPhone15,2</string>
-                <string>iPhone16,2</string>
-                <string>iPhone13,2</string>
-            </array>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
+            <string>Dòng Máy</string>
+            <key>get</key>
+            <string>getHardwareMachineValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>Phiên Bản iOS</string>
+            <key>get</key>
+            <string>getHardwareOSValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>CPU &amp; RAM Thật</string>
+            <key>get</key>
+            <string>getHardwareSpecsValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>Độ Phân Giải</string>
+            <key>get</key>
+            <string>getHardwareScreenValue:</string>
         </dict>
 
         <dict>
@@ -184,7 +186,7 @@
             <key>label</key>
             <string>THAO TÁC 1-CLICK AN TOÀN CHỐNG KHÓA</string>
             <key>footerText</key>
-            <string>Quy trình: Tắt app ➔ Xóa sạch Data cũ ➔ Xóa sạch Cache/Shared Group ➔ Cấp IDFV &amp; Keychain ảo mới 100%.</string>
+            <string>Quy trình: Tắt app ➔ Xóa sạch Data cũ ➔ Xóa sạch Cache/Shared Group ➔ Cấp Serial, MAC, IDFV &amp; Keychain ảo mới 100%.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -207,31 +209,39 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>THÔNG TIN ĐỊNH DANH HIỆN TẠI</string>
+            <string>THÔNG TIN ĐỊNH DANH ẢO (MỚI SAU MỖI LẦN WIPE)</string>
         </dict>
         <dict>
             <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>spoofedIDFV</string>
+            <string>PSTitleValueCell</string>
             <key>label</key>
-            <string>IDFV</string>
-            <key>placeholder</key>
-            <string>UUID Identifier For Vendor</string>
+            <string>Serial Number Ảo</string>
+            <key>get</key>
+            <string>getSpoofedSerialValue:</string>
         </dict>
         <dict>
             <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>profileId</string>
+            <string>PSTitleValueCell</string>
             <key>label</key>
-            <string>Profile ID</string>
-            <key>placeholder</key>
-            <string>Keychain Profile Namespace</string>
+            <string>MAC Wi-Fi Ảo</string>
+            <key>get</key>
+            <string>getSpoofedWifiMACValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>IDFV Hiện Tại</string>
+            <key>get</key>
+            <string>getSpoofedIDFVValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>Profile Keychain</string>
+            <key>get</key>
+            <string>getSpoofedProfileIdValue:</string>
         </dict>
 
         <dict>

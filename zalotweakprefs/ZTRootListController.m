@@ -25,6 +25,45 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
 static void save_dict_to_all_locations(NSDictionary *dict);
 static void kill_all_zalo_processes(void);
 
+static NSString *get_prefs_real_machine(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    return (strlen(buf) > 0) ? [NSString stringWithUTF8String:buf] : @"iPhone";
+}
+
+static NSString *get_prefs_real_model(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.model", buf, &size, NULL, 0);
+    return (strlen(buf) > 0) ? [NSString stringWithUTF8String:buf] : @"";
+}
+
+static NSString *get_prefs_real_os_version(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("kern.osversion", buf, &size, NULL, 0);
+    return (strlen(buf) > 0) ? [NSString stringWithUTF8String:buf] : @"";
+}
+
+static NSString *generate_random_serial_prefs(void) {
+    const char chars[] = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    char serial[13] = {0};
+    serial[0] = 'F';
+    serial[1] = (arc4random_uniform(2) == 0) ? '1' : '2';
+    serial[2] = '7';
+    for (int i = 3; i < 12; i++) {
+        serial[i] = chars[arc4random_uniform(sizeof(chars) - 1)];
+    }
+    return [NSString stringWithUTF8String:serial];
+}
+
+static NSString *generate_random_mac_prefs(void) {
+    const char *ouis[] = {"f0:18:98", "ac:de:48", "88:66:5a", "dc:a9:04", "a4:83:e7"};
+    const char *oui = ouis[arc4random_uniform(5)];
+    return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
+}
+
 @interface LSApplicationProxy : NSObject
 + (instancetype)applicationProxyForIdentifier:(NSString *)identifier;
 - (NSURL *)containerURL;
@@ -58,8 +97,22 @@ static void kill_all_zalo_processes(void);
         needSave = YES;
     }
     if (!dict[@"deviceMachine"]) {
-        dict[@"deviceMachine"] = @"iPhone14,2";
-        [self syncHardwareSpecsForMachine:@"iPhone14,2" inDict:dict];
+        dict[@"deviceMachine"] = get_prefs_real_machine();
+        dict[@"deviceModel"] = get_prefs_real_model();
+        dict[@"systemVersion"] = [[UIDevice currentDevice] systemVersion];
+        dict[@"kernOsVersion"] = get_prefs_real_os_version();
+        dict[@"ncpu"] = @((uint32_t)[[NSProcessInfo processInfo] activeProcessorCount]);
+        dict[@"memsize"] = @([[NSProcessInfo processInfo] physicalMemory]);
+        CGRect bounds = [UIScreen mainScreen].bounds;
+        dict[@"screenWidth"] = @(bounds.size.width);
+        dict[@"screenHeight"] = @(bounds.size.height);
+        dict[@"screenScale"] = @([UIScreen mainScreen].scale);
+        needSave = YES;
+    }
+    if (!dict[@"spoofedSerial"] || [dict[@"spoofedSerial"] length] == 0) {
+        dict[@"spoofedSerial"] = generate_random_serial_prefs();
+        dict[@"spoofedWifiMAC"] = generate_random_mac_prefs();
+        dict[@"spoofedBluetoothMAC"] = generate_random_mac_prefs();
         needSave = YES;
     }
     if (!dict[@"spoofedIDFV"] || [dict[@"spoofedIDFV"] length] == 0) {
@@ -96,9 +149,7 @@ static void kill_all_zalo_processes(void);
     NSString *key = [specifier propertyForKey:@"key"];
     dict[key] = value;
 
-    if ([key isEqualToString:@"deviceMachine"]) {
-        [self syncHardwareSpecsForMachine:(NSString *)value inDict:dict];
-    } else if ([key isEqualToString:@"regionMode"]) {
+    if ([key isEqualToString:@"regionMode"]) {
         [self syncCarrierForRegion:(NSString *)value inDict:dict];
     }
 
@@ -162,70 +213,6 @@ static void kill_all_zalo_processes(void);
         dict[@"deviceName"] = vnNames[arc4random_uniform((uint32_t)vnNames.count)];
     }
 }
-
-- (void)syncHardwareSpecsForMachine:(NSString *)machine inDict:(NSMutableDictionary *)dict {
-    if ([machine isEqualToString:@"iPhone14,2"]) { // 13 Pro
-        dict[@"deviceModel"] = @"D63AP";
-        dict[@"ncpu"] = @(6);
-        dict[@"memsize"] = @(6442450944ULL);
-        dict[@"systemVersion"] = @"16.5";
-        dict[@"kernOsVersion"] = @"20F66";
-        dict[@"screenWidth"] = @(390.0);
-        dict[@"screenHeight"] = @(844.0);
-        dict[@"screenScale"] = @(3.0);
-        dict[@"diskTotalSize"] = @(128000000000ULL);
-    } else if ([machine isEqualToString:@"iPhone15,2"]) { // 14 Pro
-        dict[@"deviceModel"] = @"D73AP";
-        dict[@"ncpu"] = @(6);
-        dict[@"memsize"] = @(6442450944ULL);
-        dict[@"systemVersion"] = @"16.6";
-        dict[@"kernOsVersion"] = @"20G75";
-        dict[@"screenWidth"] = @(393.0);
-        dict[@"screenHeight"] = @(852.0);
-        dict[@"screenScale"] = @(3.0);
-        dict[@"diskTotalSize"] = @(256000000000ULL);
-    } else if ([machine isEqualToString:@"iPhone16,2"]) { // 15 Pro Max
-        dict[@"deviceModel"] = @"D84AP";
-        dict[@"ncpu"] = @(6);
-        dict[@"memsize"] = @(8589934592ULL);
-        dict[@"systemVersion"] = @"17.4";
-        dict[@"kernOsVersion"] = @"21E219";
-        dict[@"screenWidth"] = @(430.0);
-        dict[@"screenHeight"] = @(932.0);
-        dict[@"screenScale"] = @(3.0);
-        dict[@"diskTotalSize"] = @(256000000000ULL);
-    } else if ([machine isEqualToString:@"iPhone13,2"]) { // iPhone 12
-        dict[@"deviceModel"] = @"D53gAP";
-        dict[@"ncpu"] = @(6);
-        dict[@"memsize"] = @(4294967296ULL);
-        dict[@"systemVersion"] = @"16.5";
-        dict[@"kernOsVersion"] = @"20F66";
-        dict[@"screenWidth"] = @(390.0);
-        dict[@"screenHeight"] = @(844.0);
-        dict[@"screenScale"] = @(3.0);
-        dict[@"diskTotalSize"] = @(128000000000ULL);
-    }
-
-    uint64_t total = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
-    uint64_t randomUsed = 38000000000ULL + ((uint64_t)arc4random_uniform(25000000)) * 1000ULL;
-    dict[@"diskFreeSize"] = @(total > randomUsed ? (total - randomUsed) : (total / 2));
-
-    if (!dict[@"carrierName"]) {
-        NSArray *carriers = @[
-            @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
-            @{@"name": @"VINAPHONE", @"mcc": @"452", @"mnc": @"02"},
-            @{@"name": @"VN MOBIFONE", @"mcc": @"452", @"mnc": @"01"}
-        ];
-        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
-        dict[@"carrierName"] = c[@"name"];
-        dict[@"carrierMCC"] = c[@"mcc"];
-        dict[@"carrierMNC"] = c[@"mnc"];
-        dict[@"carrierCountryCode"] = @"vn";
-    }
-    if (!dict[@"batteryLevel"]) {
-        dict[@"batteryLevel"] = @(0.65f + ((float)arc4random_uniform(30)) / 100.0f);
-        dict[@"batteryState"] = @(1);
-    }
 }
 
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
@@ -463,7 +450,7 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     [UIPasteboard generalPasteboard].items = @[];
     [UIPasteboard generalPasteboard].string = @"";
 
-    // 5. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree)
+    // 5. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
     NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
 
     NSString *newIDFV = [[NSUUID UUID] UUIDString];
@@ -474,19 +461,40 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 
     dict[@"enabled"] = @(YES);
     dict[@"spoofedIDFV"] = newIDFV;
+    dict[@"spoofedIDFA"] = [[NSUUID UUID] UUIDString];
     dict[@"profileId"] = newProfileId;
     dict[@"bootTimeSec"] = @(newBootTime);
     dict[@"bootSessionUUID"] = newBootUUID;
 
-    NSString *currentMachine = dict[@"deviceMachine"] ?: @"iPhone14,2";
-    [self syncHardwareSpecsForMachine:currentMachine inDict:dict];
+    // Giữ nguyên 100% phần cứng máy thật
+    dict[@"deviceMachine"] = get_prefs_real_machine();
+    dict[@"deviceModel"] = get_prefs_real_model();
+    dict[@"systemVersion"] = [[UIDevice currentDevice] systemVersion];
+    dict[@"kernOsVersion"] = get_prefs_real_os_version();
+    dict[@"ncpu"] = @((uint32_t)[[NSProcessInfo processInfo] activeProcessorCount]);
+    dict[@"memsize"] = @([[NSProcessInfo processInfo] physicalMemory]);
+
+    CGRect bounds = [UIScreen mainScreen].bounds;
+    dict[@"screenWidth"] = @(bounds.size.width);
+    dict[@"screenHeight"] = @(bounds.size.height);
+    dict[@"screenScale"] = @([UIScreen mainScreen].scale);
+
+    // Cấp Serial Number & MAC Address mới ngẫu nhiên mỗi lần Wipe
+    dict[@"spoofedSerial"] = generate_random_serial_prefs();
+    dict[@"spoofedWifiMAC"] = generate_random_mac_prefs();
+    dict[@"spoofedBluetoothMAC"] = generate_random_mac_prefs();
+
+    dict[@"batteryLevel"] = @(0.55f + ((float)arc4random_uniform(40)) / 100.0f);
+    dict[@"batteryState"] = @(1);
 
     NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
     [self syncCarrierForRegion:currentRegion inDict:dict];
 
-    uint64_t totalDisk = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
-    uint64_t randomUsed = 42000000000ULL + ((uint64_t)arc4random_uniform(25000000)) * 1000ULL;
-    dict[@"diskFreeSize"] = @(totalDisk > randomUsed ? (totalDisk - randomUsed) : 60000000000ULL);
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
+    uint64_t totalDisk = [attrs[NSFileSystemSize] unsignedLongLongValue] ?: 128000000000ULL;
+    dict[@"diskTotalSize"] = @(totalDisk);
+    uint64_t randomUsed = 35000000000ULL + ((uint64_t)arc4random_uniform(45000000)) * 1000ULL;
+    dict[@"diskFreeSize"] = @(totalDisk > randomUsed ? (totalDisk - randomUsed) : (totalDisk / 2));
 
     dict[@"wipePending"] = @(YES);
 
@@ -498,7 +506,7 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     [self reloadSpecifiers];
 
     // Thông báo hoàn tất
-    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n- Ổ cứng: Cấp dung lượng trống ngẫu nhiên\n\n⚠️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) để đổi IP 4G trước khi mở lại Zalo.", newIDFV];
+    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n⚠️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) để đổi IP 4G trước khi mở lại Zalo.", newIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"]];
 
     dispatch_async(dispatch_get_main_queue(), ^{
         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất Tuyệt Đối"
@@ -507,6 +515,67 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
         [doneAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:doneAlert animated:YES completion:nil];
     });
+}
+
+- (id)getHardwareMachineValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *machine = dict[@"deviceMachine"] ?: get_prefs_real_machine();
+    NSString *model = dict[@"deviceModel"] ?: get_prefs_real_model();
+    if (model.length > 0) {
+        return [NSString stringWithFormat:@"%@ (%@)", machine, model];
+    }
+    return machine;
+}
+
+- (id)getHardwareOSValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *sysVer = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+    NSString *kernVer = dict[@"kernOsVersion"] ?: get_prefs_real_os_version();
+    return [NSString stringWithFormat:@"iOS %@ (%@)", sysVer, kernVer];
+}
+
+- (id)getHardwareSpecsValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    uint32_t ncpu = [dict[@"ncpu"] unsignedIntValue] ?: (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
+    uint64_t ram = [dict[@"memsize"] unsignedLongLongValue] ?: [[NSProcessInfo processInfo] physicalMemory];
+    double ramGB = (double)ram / (1024.0 * 1024.0 * 1024.0);
+    return [NSString stringWithFormat:@"%u Cores | %.1f GB RAM", ncpu, ramGB];
+}
+
+- (id)getHardwareScreenValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    double w = [dict[@"screenWidth"] doubleValue] ?: [UIScreen mainScreen].bounds.size.width;
+    double h = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
+    double s = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
+    return [NSString stringWithFormat:@"%.0f × %.0f (@%.0fx)", w, h, s];
+}
+
+- (id)getSpoofedSerialValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    return dict[@"spoofedSerial"] ?: @"Chưa cấp (Bấm Wipe)";
+}
+
+- (id)getSpoofedWifiMACValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    return dict[@"spoofedWifiMAC"] ?: @"Chưa cấp (Bấm Wipe)";
+}
+
+- (id)getSpoofedIDFVValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *idfv = dict[@"spoofedIDFV"];
+    if (idfv.length > 18) {
+        return [NSString stringWithFormat:@"%@...%@", [idfv substringToIndex:8], [idfv substringFromIndex:idfv.length - 6]];
+    }
+    return idfv ?: @"Chưa cấp";
+}
+
+- (id)getSpoofedProfileIdValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *pid = dict[@"profileId"];
+    if (pid.length > 18) {
+        return [NSString stringWithFormat:@"%@...%@", [pid substringToIndex:8], [pid substringFromIndex:pid.length - 6]];
+    }
+    return pid ?: @"Chưa cấp";
 }
 
 - (void)killZalo:(PSSpecifier *)specifier {

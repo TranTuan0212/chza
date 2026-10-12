@@ -106,6 +106,49 @@ static NSString *getConfigPath(void) {
     return GLOBAL_PREFS_PATH;
 }
 
+static NSString *get_real_hardware_machine(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    struct utsname u;
+    if (uname(&u) == 0 && strlen(u.machine) > 0) {
+        return [NSString stringWithUTF8String:u.machine];
+    }
+    return @"iPhone14,5";
+}
+
+static NSString *get_real_hardware_model(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.model", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    return @"D17AP";
+}
+
+static NSString *get_real_os_version(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("kern.osversion", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    return @"21F90";
+}
+
+static uint64_t get_real_disk_total_size(void) {
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
+    NSNumber *total = attrs[NSFileSystemSize];
+    if (total && [total unsignedLongLongValue] > 0) {
+        return [total unsignedLongLongValue];
+    }
+    return 128000000000ULL;
+}
+
 @implementation ZTSettings
 
 + (instancetype)sharedSettings {
@@ -123,22 +166,22 @@ static NSString *getConfigPath(void) {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
     if (dict) {
         self.enabled = [dict[@"enabled"] boolValue];
-        self.deviceMachine = dict[@"deviceMachine"] ?: @"iPhone14,2";
-        self.deviceModel = dict[@"deviceModel"] ?: @"D63AP";
+        self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
+        self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
         self.deviceName = dict[@"deviceName"] ?: @"iPhone";
-        self.systemVersion = dict[@"systemVersion"] ?: @"16.5";
-        self.kernOsVersion = dict[@"kernOsVersion"] ?: @"20F66";
-        self.ncpu = [dict[@"ncpu"] unsignedIntValue] ?: 6;
-        self.memsize = [dict[@"memsize"] unsignedLongLongValue] ?: 6442450944ULL;
-        self.screenWidth = [dict[@"screenWidth"] doubleValue] ?: 390.0;
-        self.screenHeight = [dict[@"screenHeight"] doubleValue] ?: 844.0;
-        self.screenScale = [dict[@"screenScale"] doubleValue] ?: 3.0;
+        self.systemVersion = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+        self.kernOsVersion = dict[@"kernOsVersion"] ?: get_real_os_version();
+        self.ncpu = [dict[@"ncpu"] unsignedIntValue] ?: (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
+        self.memsize = [dict[@"memsize"] unsignedLongLongValue] ?: [[NSProcessInfo processInfo] physicalMemory];
+        self.screenWidth = [dict[@"screenWidth"] doubleValue] ?: [UIScreen mainScreen].bounds.size.width;
+        self.screenHeight = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
+        self.screenScale = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: [[NSUUID UUID] UUIDString];
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: [[NSUUID UUID] UUIDString];
         self.profileId = dict[@"profileId"] ?: [[NSUUID UUID] UUIDString];
-        self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
+        self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: get_real_disk_total_size();
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
         self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
         self.lastWipedIDFV = dict[@"lastWipedIDFV"] ?: @"";
@@ -256,32 +299,8 @@ NSString *generate_random_mac(void) {
     return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
 }
 
-static NSString *get_real_hardware_machine(void) {
-    char buf[64] = {0};
-    size_t size = sizeof(buf);
-    sysctlbyname("hw.machine", buf, &size, NULL, 0);
-    if (strlen(buf) > 0) {
-        return [NSString stringWithUTF8String:buf];
-    }
-    struct utsname u;
-    if (uname(&u) == 0 && strlen(u.machine) > 0) {
-        return [NSString stringWithUTF8String:u.machine];
-    }
-    return @"iPhone";
-}
-
-static NSString *get_real_hardware_model(void) {
-    char buf[64] = {0};
-    size_t size = sizeof(buf);
-    sysctlbyname("hw.model", buf, &size, NULL, 0);
-    if (strlen(buf) > 0) {
-        return [NSString stringWithUTF8String:buf];
-    }
-    return @"N/A";
-}
-
 - (void)generateNewProfile {
-    // 1. Luôn giữ nguyên Machine và Model thật của máy bạn để khớp màn hình và GPU 100%
+    // 1. Luôn giữ nguyên Machine và Model thật của máy bạn để khớp màn hình, GPU và Metal 100%
     self.deviceMachine = get_real_hardware_machine();
     self.deviceModel = get_real_hardware_model();
 
@@ -296,7 +315,16 @@ static NSString *get_real_hardware_model(void) {
     self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount] ?: 6;
     self.memsize = [[NSProcessInfo processInfo] physicalMemory] ?: 6442450944ULL;
 
-    // 1. Tên thiết bị & Nhà mạng theo Khu Vực (VN / Du Học Sinh Mỹ / Mỹ)
+    // 2. Hệ điều hành iOS thật của máy
+    self.systemVersion = [[UIDevice currentDevice] systemVersion];
+    self.kernOsVersion = get_real_os_version();
+
+    // 3. Dung lượng ổ cứng theo máy thật, ramdom dung lượng trống thực tế hợp lý
+    self.diskTotalSize = get_real_disk_total_size();
+    uint64_t randomUsed = 35000000000ULL + ((uint64_t)arc4random_uniform(45000000)) * 1000ULL;
+    self.diskFreeSize = (self.diskTotalSize > randomUsed) ? (self.diskTotalSize - randomUsed) : (self.diskTotalSize / 2);
+
+    // 4. Tên thiết bị & Nhà mạng theo Khu Vực (VN / Du Học Sinh Mỹ / Mỹ)
     NSString *region = self.regionMode ?: @"VN";
     if ([region isEqualToString:@"US_STUDENT"]) {
         NSArray *userNames = @[
@@ -354,32 +382,7 @@ static NSString *get_real_hardware_model(void) {
         self.carrierCountryCode = @"vn";
     }
 
-    // 2. Phiên bản iOS & Build Number chuẩn Apple tương ứng
-    NSArray *iosProfiles = @[
-        @{@"ver": @"16.6", @"build": @"20G75"},
-        @{@"ver": @"16.6.1", @"build": @"20G81"},
-        @{@"ver": @"16.7.2", @"build": @"20H115"},
-        @{@"ver": @"17.2.1", @"build": @"21C66"},
-        @{@"ver": @"17.4.1", @"build": @"21E236"},
-        @{@"ver": @"17.5.1", @"build": @"21F90"},
-        @{@"ver": @"17.6.1", @"build": @"21G93"},
-        @{@"ver": @"18.0", @"build": @"22A3354"}
-    ];
-    NSDictionary *chosenOS = iosProfiles[arc4random_uniform((uint32_t)iosProfiles.count)];
-    self.systemVersion = chosenOS[@"ver"];
-    self.kernOsVersion = chosenOS[@"build"];
-
-    // 3. Phân khúc dung lượng ổ cứng (128GB hoặc 256GB) kèm dung lượng trống thực tế ngẫu nhiên
-    BOOL is256 = (arc4random_uniform(2) == 1);
-    if (is256) {
-        self.diskTotalSize = 256000000000ULL;
-        self.diskFreeSize = 95000000000ULL + ((uint64_t)arc4random_uniform(90000000)) * 1000ULL;
-    } else {
-        self.diskTotalSize = 128000000000ULL;
-        self.diskFreeSize = 35000000000ULL + ((uint64_t)arc4random_uniform(50000000)) * 1000ULL;
-    }
-
-    // 4. Giả lập uptime từ 8 giờ đến 6 ngày trước
+    // 5. Giả lập uptime từ 8 giờ đến 6 ngày trước
     uint32_t randomOffset = 28800 + (arc4random_uniform(489600));
     self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
     self.bootSessionUUID = [[NSUUID UUID] UUIDString];
