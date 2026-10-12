@@ -807,14 +807,14 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 %hook NSFileManager
 
 - (BOOL)fileExistsAtPath:(NSString *)path {
-    if (is_tweak_active() && path && (is_jailbreak_path([path UTF8String]) || is_sideload_provision_path(path))) {
+    if (path && (is_sideload_provision_path(path) || (is_tweak_active() && is_jailbreak_path([path UTF8String])))) {
         return NO;
     }
     return %orig;
 }
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
-    if (is_tweak_active() && path && (is_jailbreak_path([path UTF8String]) || is_sideload_provision_path(path))) {
+    if (path && (is_sideload_provision_path(path) || (is_tweak_active() && is_jailbreak_path([path UTF8String])))) {
         if (isDirectory) *isDirectory = NO;
         return NO;
     }
@@ -846,14 +846,14 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 %hook NSBundle
 
 - (NSString *)bundleIdentifier {
-    if (self == [NSBundle mainBundle] && is_tweak_active()) {
+    if (self == [NSBundle mainBundle]) {
         return @"vn.com.vng.zingalo";
     }
     return %orig;
 }
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle] && is_tweak_active() && key) {
+    if (self == [NSBundle mainBundle] && key) {
         if ([key isEqualToString:@"CFBundleIdentifier"]) {
             return @"vn.com.vng.zingalo";
         }
@@ -863,7 +863,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 
 - (NSDictionary *)infoDictionary {
     NSDictionary *dict = %orig;
-    if (self == [NSBundle mainBundle] && is_tweak_active() && dict) {
+    if (self == [NSBundle mainBundle] && dict) {
         NSMutableDictionary *mDict = [dict mutableCopy];
         mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
         return mDict;
