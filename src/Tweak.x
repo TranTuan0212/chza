@@ -1864,6 +1864,21 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
+%hook UIViewController
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
+        if ([ZTSettings sharedSettings].showFloatingMenu) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[ZTMenuManager sharedManager] tryAttachFloatingButton];
+            });
+        }
+    }
+}
+
+%end
+
 %hook UIWindow
 
 - (void)makeKeyAndVisible {

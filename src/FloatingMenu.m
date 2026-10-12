@@ -92,21 +92,6 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     }] resume];
 }
 
-#pragma mark - ZTFloatingButton Implementation
-
-@interface ZTFloatingButtonWindow : UIWindow
-@end
-
-@implementation ZTFloatingButtonWindow
-- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
-    ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
-    CGPoint p = [self convertPoint:point toView:btn];
-    return [btn pointInside:p withEvent:event];
-}
-@end
-
-static ZTFloatingButtonWindow *sFloatingWindow = nil;
-
 @implementation ZTFloatingButton {
     CGPoint _startCenter;
     BOOL _isDragging;
@@ -121,24 +106,24 @@ static ZTFloatingButtonWindow *sFloatingWindow = nil;
 }
 
 - (void)setupUI {
-    CGFloat btnSize = 54.0;
+    CGFloat btnSize = 56.0;
     self.frame = CGRectMake(15, 140, btnSize, btnSize);
     self.layer.cornerRadius = btnSize / 2.0;
     self.clipsToBounds = YES;
     self.backgroundColor = [UIColor colorWithRed:0.06 green:0.42 blue:0.95 alpha:0.95]; // Màu xanh Zalo
     self.layer.borderColor = [UIColor whiteColor].CGColor;
-    self.layer.borderWidth = 2.5;
+    self.layer.borderWidth = 3.0;
     
     // Đổ bóng nổi
     self.layer.shadowColor = [UIColor blackColor].CGColor;
     self.layer.shadowOffset = CGSizeMake(0, 3);
-    self.layer.shadowOpacity = 0.5;
-    self.layer.shadowRadius = 5.0;
+    self.layer.shadowOpacity = 0.6;
+    self.layer.shadowRadius = 6.0;
     self.layer.masksToBounds = NO;
     
     [self setTitle:@"⚡ZT" forState:UIControlStateNormal];
     [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     
     // Kéo thả cử chỉ
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -148,55 +133,23 @@ static ZTFloatingButtonWindow *sFloatingWindow = nil;
 }
 
 - (void)attachToWindow:(UIWindow *)window {
+    if (!window) {
+        window = get_active_key_window();
+    }
+    if (!window) return;
+    
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (!sFloatingWindow) {
-            CGRect screenBounds = [UIScreen mainScreen].bounds;
-            if (@available(iOS 13.0, *)) {
-                UIWindowScene *activeScene = nil;
-                for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                        activeScene = (UIWindowScene *)scene;
-                        break;
-                    }
-                }
-                if (!activeScene) {
-                    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                        if ([scene isKindOfClass:[UIWindowScene class]]) {
-                            activeScene = (UIWindowScene *)scene;
-                            break;
-                        }
-                    }
-                }
-                if (activeScene) {
-                    sFloatingWindow = [[ZTFloatingButtonWindow alloc] initWithWindowScene:activeScene];
-                } else {
-                    sFloatingWindow = [[ZTFloatingButtonWindow alloc] initWithFrame:screenBounds];
-                }
-            } else {
-                sFloatingWindow = [[ZTFloatingButtonWindow alloc] initWithFrame:screenBounds];
-            }
-            
-            sFloatingWindow.windowLevel = UIWindowLevelAlert + 1000.0;
-            sFloatingWindow.backgroundColor = [UIColor clearColor];
-            sFloatingWindow.hidden = NO;
-            
-            UIViewController *rootVC = [[UIViewController alloc] init];
-            rootVC.view.backgroundColor = [UIColor clearColor];
-            rootVC.view.userInteractionEnabled = NO;
-            sFloatingWindow.rootViewController = rootVC;
-        }
-        
-        if (self.superview != sFloatingWindow) {
+        if (self.superview != window) {
             [self removeFromSuperview];
-            [sFloatingWindow addSubview:self];
+            [window addSubview:self];
         }
-        [sFloatingWindow bringSubviewToFront:self];
-        sFloatingWindow.hidden = NO;
+        [window bringSubviewToFront:self];
+        self.hidden = NO;
     });
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *container = self.superview ?: sFloatingWindow;
+    UIView *container = self.superview;
     if (!container) return;
     
     CGPoint translation = [pan translationInView:container];
@@ -230,17 +183,13 @@ static ZTFloatingButtonWindow *sFloatingWindow = nil;
 
 - (void)show {
     self.hidden = NO;
-    if (sFloatingWindow) {
-        sFloatingWindow.hidden = NO;
-        [sFloatingWindow bringSubviewToFront:self];
+    if (self.superview) {
+        [self.superview bringSubviewToFront:self];
     }
 }
 
 - (void)hide {
     self.hidden = YES;
-    if (sFloatingWindow) {
-        sFloatingWindow.hidden = YES;
-    }
 }
 
 @end
