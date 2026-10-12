@@ -25,7 +25,12 @@
 #import "FloatingMenu.h"
 
 static inline BOOL is_tweak_active(void) {
-    return [ZTSettings sharedSettings].enabled && [[ZTSecurityManager sharedManager] isLicenseValid];
+    static __thread BOOL s_in_active_check = NO;
+    if (s_in_active_check) return NO;
+    s_in_active_check = YES;
+    BOOL active = [ZTSettings sharedSettings].enabled && [[ZTSecurityManager sharedManager] isLicenseValid];
+    s_in_active_check = NO;
+    return active;
 }
 
 static inline BOOL is_original_zalo_app(void) {
@@ -106,10 +111,16 @@ static NSString *getConfigPath(void) {
     return GLOBAL_PREFS_PATH;
 }
 
+static int (*orig_sysctlbyname)(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) = NULL;
+
 static NSString *get_real_hardware_machine(void) {
     char buf[64] = {0};
     size_t size = sizeof(buf);
-    sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    if (orig_sysctlbyname) {
+        orig_sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    } else {
+        sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    }
     if (strlen(buf) > 0) {
         return [NSString stringWithUTF8String:buf];
     }
@@ -123,7 +134,11 @@ static NSString *get_real_hardware_machine(void) {
 static NSString *get_real_hardware_model(void) {
     char buf[64] = {0};
     size_t size = sizeof(buf);
-    sysctlbyname("hw.model", buf, &size, NULL, 0);
+    if (orig_sysctlbyname) {
+        orig_sysctlbyname("hw.model", buf, &size, NULL, 0);
+    } else {
+        sysctlbyname("hw.model", buf, &size, NULL, 0);
+    }
     if (strlen(buf) > 0) {
         return [NSString stringWithUTF8String:buf];
     }
@@ -133,7 +148,11 @@ static NSString *get_real_hardware_model(void) {
 static NSString *get_real_os_version(void) {
     char buf[64] = {0};
     size_t size = sizeof(buf);
-    sysctlbyname("kern.osversion", buf, &size, NULL, 0);
+    if (orig_sysctlbyname) {
+        orig_sysctlbyname("kern.osversion", buf, &size, NULL, 0);
+    } else {
+        sysctlbyname("kern.osversion", buf, &size, NULL, 0);
+    }
     if (strlen(buf) > 0) {
         return [NSString stringWithUTF8String:buf];
     }
@@ -467,10 +486,10 @@ static void logAudit(NSString *category, NSString *detail) {
 // 1. TẦNG C API: sysctl, sysctlbyname & uname HOOKING
 // ==========================================
 
-static int (*orig_sysctl)(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
+static int (*orig_sysctl)(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) = NULL;
 static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     if (!name || namelen < 2 || !is_tweak_active()) {
-        return orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+        return orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : sysctl(name, namelen, oldp, oldlenp, newp, newlen);
     }
 
     ZTSettings *settings = [ZTSettings sharedSettings];
@@ -556,10 +575,9 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
     return orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
 }
 
-static int (*orig_sysctlbyname)(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen);
 static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     if (!name || !is_tweak_active()) {
-        return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
+        return orig_sysctlbyname ? orig_sysctlbyname(name, oldp, oldlenp, newp, newlen) : sysctlbyname(name, oldp, oldlenp, newp, newlen);
     }
 
     logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"sysctlbyname('%s')", name]);
@@ -1026,73 +1044,7 @@ static BOOL is_jailbreak_path(const char *path) {
     return NO;
 }
 
-static int (*orig_access)(const char *path, int mode);
-static int my_access(const char *path, int mode) {
-    if (!path) return -1;
-    if (is_system_caller(__builtin_return_address(0), NULL)) {
-        return orig_access(path, mode);
-    }
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
-        errno = ENOENT;
-        return -1;
-    }
-    return orig_access(path, mode);
-}
 
-static int (*orig_stat)(const char *path, struct stat *buf);
-static int my_stat(const char *path, struct stat *buf) {
-    if (!path) return -1;
-    if (is_system_caller(__builtin_return_address(0), NULL)) {
-        return orig_stat(path, buf);
-    }
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
-        errno = ENOENT;
-        return -1;
-    }
-    return orig_stat(path, buf);
-}
-
-static int (*orig_lstat)(const char *path, struct stat *buf);
-static int my_lstat(const char *path, struct stat *buf) {
-    if (!path) return -1;
-    if (is_system_caller(__builtin_return_address(0), NULL)) {
-        return orig_lstat(path, buf);
-    }
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
-        errno = ENOENT;
-        return -1;
-    }
-    return orig_lstat(path, buf);
-}
-
-static FILE *(*orig_fopen)(const char *path, const char *mode);
-static FILE *my_fopen(const char *path, const char *mode) {
-    if (!path) return NULL;
-    if (is_system_caller(__builtin_return_address(0), NULL)) {
-        return orig_fopen(path, mode);
-    }
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        errno = ENOENT;
-        return NULL;
-    }
-    return orig_fopen(path, mode);
-}
-
-static char *(*orig_getenv)(const char *name);
-static char *my_getenv(const char *name) {
-    if (name) {
-        logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"getenv('%s')", name]);
-    }
-    if (is_tweak_active() && name) {
-        if (strcmp(name, "DYLD_INSERT_LIBRARIES") == 0) {
-            return NULL;
-        }
-    }
-    return orig_getenv(name);
-}
 
 // Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
 static CFPropertyListRef (*orig_CFPreferencesCopyAppValue)(CFStringRef key, CFStringRef applicationID);
@@ -1189,24 +1141,7 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
     return 0;
 }
 
-// Ẩn dylib của jailbreak / tweak trong RAM khi Zalo duyệt _dyld_get_image_name
-static const char *(*orig_dyld_get_image_name)(uint32_t image_index);
-static const char *my_dyld_get_image_name(uint32_t image_index) {
-    const char *name = orig_dyld_get_image_name ? orig_dyld_get_image_name(image_index) : _dyld_get_image_name(image_index);
-    if (!name || !is_tweak_active()) return name;
 
-    if (strstr(name, "Zalotweak") ||
-        strstr(name, "ElleKit") ||
-        strstr(name, "MobileSubstrate") ||
-        strstr(name, "libhooker") ||
-        strstr(name, "SubstrateLoader") ||
-        strstr(name, "CydiaSubstrate") ||
-        strstr(name, "TweakInject") ||
-        strstr(name, "frida")) {
-        return "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
-    }
-    return name;
-}
 
 // Giả lập dung lượng ổ cứng ở tầng POSIX C (statfs, fstatfs)
 static int (*orig_statfs)(const char *path, struct statfs *buf);
@@ -1259,9 +1194,9 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
 // ==========================================
 // HOOK MOBILEGESTALT (MGCOPYANSWER) & HARDWARE RADAR
 // ==========================================
-static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property);
+static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property) = NULL;
 static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
-    if (!property || CFGetTypeID(property) != CFStringGetTypeID()) {
+    if (!property || CFGetTypeID(property) != CFStringGetTypeID() || !is_tweak_active()) {
         return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
     }
     NSString *prop = (__bridge NSString *)property;
@@ -1270,7 +1205,7 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
     // Ghi nhận radar toàn bộ truy vấn MobileGestalt phần cứng của Zalo
     logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer('%@')", prop]);
 
-    if (is_tweak_active()) {
+    if (YES) {
         if ([prop isEqualToString:@"SerialNumber"]) {
             logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"SerialNumber -> [ĐÃ FAKE] %@", settings.spoofedSerial]);
             return settings.spoofedSerial ? (__bridge_retained CFTypeRef)[settings.spoofedSerial copy] : orig_MGCopyAnswer(property);
@@ -1910,7 +1845,13 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
 %ctor {
     @autoreleasepool {
-        [[ZTSettings sharedSettings] loadSettings];
+        // 1. Kích hoạt toàn bộ hook Objective-C của Logos
+        %init;
+
+        // 2. Khởi tạo toàn bộ dữ liệu cấu hình và xác thực bản quyền TRƯỚC KHI cài đặt hook C
+        // Đảm bảo dispatch_once hoàn tất sạch sẽ, không bị deadlock
+        [ZTSettings sharedSettings];
+        [[ZTSecurityManager sharedManager] isLicenseValid];
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -1921,7 +1862,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             CFNotificationSuspensionBehaviorCoalesce
         );
 
-        // Hook C POSIX API
+        // 3. Cài đặt các hook C an toàn
         MSHookFunction((void *)sysctl, (void *)my_sysctl, (void **)&orig_sysctl);
         MSHookFunction((void *)sysctlbyname, (void *)my_sysctlbyname, (void **)&orig_sysctlbyname);
         MSHookFunction((void *)uname, (void *)my_uname, (void **)&orig_uname);
@@ -1934,13 +1875,6 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         if (cdFunc) {
             MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
-
-        // Hook Anti-Jailbreak File & Dylib Checks
-        MSHookFunction((void *)fopen, (void *)my_fopen, (void **)&orig_fopen);
-        MSHookFunction((void *)access, (void *)my_access, (void **)&orig_access);
-        MSHookFunction((void *)stat, (void *)my_stat, (void **)&orig_stat);
-        MSHookFunction((void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
-        MSHookFunction((void *)getenv, (void *)my_getenv, (void **)&orig_getenv);
 
         // Hook CoreFoundation Preferences (App Groups Redirection)
         MSHookFunction((void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
@@ -1961,13 +1895,6 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
         // Hook getifaddrs (Lọc bỏ interface VPN, tap, tun, utun)
         MSHookFunction((void *)getifaddrs, (void *)my_getifaddrs, (void **)&orig_getifaddrs);
-
-        // Hook _dyld_get_image_name (Che giấu dylib tweak/jailbreak)
-        void *dyldImgFunc = dlsym(RTLD_DEFAULT, "_dyld_get_image_name");
-        if (!dyldImgFunc) dyldImgFunc = (void *)_dyld_get_image_name;
-        if (dyldImgFunc) {
-            MSHookFunction(dyldImgFunc, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
-        }
 
         // Hook MobileGestalt MGCopyAnswer (Radar bắt toàn bộ điểm check phần cứng của Zalo)
         void *mgFunc = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
