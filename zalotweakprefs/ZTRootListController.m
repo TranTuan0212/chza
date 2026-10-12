@@ -64,6 +64,21 @@ static NSString *generate_random_mac_prefs(void) {
     return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
 }
 
+static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
+    NSURL *url = [NSURL URLWithString:@"https://api.ipify.org"];
+    NSURLRequest *req = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:3.5];
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        NSString *ipStr = nil;
+        if (data) {
+            ipStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            ipStr = [ipStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(ipStr ?: @"Không xác định");
+        });
+    }] resume];
+}
+
 @interface LSApplicationProxy : NSObject
 + (instancetype)applicationProxyForIdentifier:(NSString *)identifier;
 - (NSURL *)containerURL;
@@ -453,6 +468,12 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     // 5. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
     NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
 
+    NSString *oldIDFV = dict[@"spoofedIDFV"];
+    if (oldIDFV && oldIDFV.length > 0) {
+        dict[@"lastWipedIDFV"] = oldIDFV;
+    }
+    dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
+
     NSString *newIDFV = [[NSUUID UUID] UUIDString];
     NSString *newProfileId = [[NSUUID UUID] UUIDString];
     uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
@@ -501,6 +522,15 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
     save_dict_to_all_locations(dict);
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+
+    // Truy vấn và lưu IP hiện tại để đối chiếu checklist
+    fetch_public_ip_prefs(^(NSString *ip) {
+        if (ip.length > 0 && ![ip isEqualToString:@"Không xác định"]) {
+            NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
+            d[@"lastWipedIP"] = ip;
+            save_dict_to_all_locations(d);
+        }
+    });
 
     // Cập nhật giao diện Settings
     [self reloadSpecifiers];
@@ -707,12 +737,136 @@ static NSString *findAuditLogPath(void) {
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+#pragma mark - Diagnostic Checklist Actions
+
+- (void)checkCleanlinessAction:(PSSpecifier *)specifier {
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra..."
+                                                                     message:@"Đang truy vấn IP mạng công khai và rà soát độ sạch của hệ thống..."
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+    [self presentViewController:loading animated:YES completion:^{
+        fetch_public_ip_prefs(^(NSString *currentIP) {
+            [loading dismissViewControllerAnimated:YES completion:^{
+                [self renderDiagnosticReportWithIP:currentIP];
+            }];
+        });
+    }];
+}
+
+- (void)renderDiagnosticReportWithIP:(NSString *)currentIP {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    
+    NSString *lastIP = dict[@"lastWipedIP"] ?: @"";
+    NSString *lastIDFV = dict[@"lastWipedIDFV"] ?: @"";
+    NSString *currentIDFV = dict[@"spoofedIDFV"] ?: @"";
+    NSString *machine = dict[@"deviceMachine"] ?: get_prefs_real_machine();
+    NSString *model = dict[@"deviceModel"] ?: get_prefs_real_model();
+    NSString *serial = dict[@"spoofedSerial"] ?: @"";
+    NSString *mac = dict[@"spoofedWifiMAC"] ?: @"";
+    
+    BOOL isSameIP = (lastIP.length > 0 && [currentIP isEqualToString:lastIP]);
+    BOOL isDifferentIP = (lastIP.length > 0 && ![currentIP isEqualToString:lastIP]);
+    
+    NSString *ipStatus = @"";
+    if (isSameIP) {
+        ipStatus = @"⚠️ TRÙNG IP LẦN WIPE TRƯỚC! (Cần gạt Airplane Mode)";
+    } else if (isDifferentIP) {
+        ipStatus = @"✅ ĐÃ ĐỔI IP MỚI";
+    } else {
+        ipStatus = @"✅ IP HIỆN TẠI HỢP LỆ";
+    }
+    
+    BOOL isDuplicateIDFV = (lastIDFV.length > 0 && [currentIDFV isEqualToString:lastIDFV]);
+    NSString *idfvStatus = isDuplicateIDFV ? @"❌ TRÙNG LẶP IDFV CŨ (Cần Wipe lại)" : @"✅ MỚI TINH";
+    
+    BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
+    NSString *licStatus = isLicensed ? @"✅ HỢP LỆ (BẢN QUYỀN MÁY)" : @"❌ CHƯA KÍCH HOẠT";
+    
+    // Kiểm tra dung lượng thư mục Sandbox Zalo
+    uint64_t sandboxTotalBytes = 0;
+    NSArray *zaloContainers = get_zalo_data_container_paths();
+    for (NSString *container in zaloContainers) {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSArray *subpaths = [fm subpathsAtPath:container];
+        for (NSString *sub in subpaths) {
+            NSString *lower = [sub lowercaseString];
+            if ([lower hasSuffix:@".adbk"] || [lower containsString:@"appsmanager"]) continue;
+            NSDictionary *attrs = [fm attributesOfItemAtPath:[container stringByAppendingPathComponent:sub] error:nil];
+            sandboxTotalBytes += [attrs fileSize];
+        }
+    }
+    double sandboxMB = (double)sandboxTotalBytes / (1024.0 * 1024.0);
+    
+    NSMutableString *report = [NSMutableString string];
+    if (!isSameIP && !isDuplicateIDFV && isLicensed) {
+        [report appendString:@"🟢 ĐẠT CHUẨN AN TOÀN TUYỆT ĐỐI (SẴN SÀNG REG ACC)\n\n"];
+    } else {
+        [report appendString:@"🔴 PHÁT HIỆN CẢNH BÁO TRƯỚC KHI REG ACC:\n\n"];
+    }
+    
+    [report appendFormat:@"• Địa chỉ IP mạng: %@ (%@)\n", currentIP, ipStatus];
+    if (lastIP.length > 0) {
+        [report appendFormat:@"• IP lần Wipe trước: %@\n", lastIP];
+    }
+    [report appendFormat:@"• IDFV: %@... (%@)\n", [currentIDFV substringToIndex:MIN((NSUInteger)8, currentIDFV.length)], idfvStatus];
+    [report appendFormat:@"• Bản Quyền Tweak: %@\n", licStatus];
+    [report appendFormat:@"• Dòng Máy Thật: %@ (%@)\n", machine, model];
+    [report appendFormat:@"• Serial Number Ảo: %@\n", serial.length > 0 ? serial : @"Chưa cấp"];
+    [report appendFormat:@"• MAC Wi-Fi Ảo: %@\n", mac.length > 0 ? mac : @"Chưa cấp"];
+    [report appendFormat:@"• Dữ Liệu Sandbox Còn Lại: %.2f MB\n", sandboxMB];
+    
+    if (isSameIP) {
+        [report appendString:@"\n⚠️ LƯU Ý BẮT BUỘC: Bạn chưa đổi IP mạng 4G. Hãy vuốt Control Center, bật Chế Độ Máy Bay trong 5 giây rồi tắt đi, sau đó kiểm tra lại!"];
+    }
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 Báo Cáo Kiểm Tra Độ Sạch"
+                                                                   message:report
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+static NSString *findHarPath(void) {
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:doc]) {
+            return doc;
+        }
+    }
+    for (NSString *zaloData in get_zalo_data_container_paths()) {
+        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
+            return zaloDoc;
+        }
+    }
+    return @"/var/mobile/Library/Preferences/ZaloTraffic.har";
+}
+
+- (void)exportHarAction:(PSSpecifier *)specifier {
+    NSString *harPath = findHarPath();
+    if (![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Có Dữ Liệu HAR"
+                                                                       message:@"Chưa có gói tin mạng HTTP/HTTPS nào được ghi lại.\n\nVui lòng đảm bảo bạn đã: \n1. Bật công tắc 'Bật Soi Log (Audit & HAR Mode)' ở trên\n2. Mở ứng dụng Zalo lên hoạt động trong 10-20 giây để tweak ghi nhận lưu lượng mạng."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
+    NSURL *fileURL = [NSURL fileURLWithPath:harPath];
+    UIActivityViewController *activityVC = [[UIActivityViewController alloc] initWithActivityItems:@[fileURL] applicationActivities:nil];
+    [self presentViewController:activityVC animated:YES completion:nil];
+}
+
 - (void)clearAuditLogAction:(PSSpecifier *)specifier {
     NSString *logPath = findAuditLogPath();
     [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
 
+    NSString *harPath = findHarPath();
+    [[NSFileManager defaultManager] removeItemAtPath:harPath error:nil];
+
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Đã Xóa Sạch"
-                                                                   message:@"Toàn bộ lịch sử nhật ký kiểm toán ZaloAudit.log đã được xóa."
+                                                                   message:@"Toàn bộ lịch sử nhật ký kiểm toán (ZaloAudit.log) và gói tin mạng (ZaloTraffic.har) đã được xóa."
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];

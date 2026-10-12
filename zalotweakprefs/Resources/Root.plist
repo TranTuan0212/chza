@@ -200,6 +200,14 @@
             <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
+            <string>🔍 Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)</string>
+            <key>action</key>
+            <string>checkCleanlinessAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
             <string>⚡ Tắt Nhanh Ứng Dụng Zalo (Kill App)</string>
             <key>action</key>
             <string>killZalo:</string>
@@ -248,9 +256,9 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
-            <string>KIỂM TOÁN &amp; THEO DÕI HÀNH VI ZALO (AUDIT LOG)</string>
+            <string>KIỂM TOÁN &amp; THEO DÕI HÀNH VI (AUDIT LOG &amp; NETWORK HAR)</string>
             <key>footerText</key>
-            <string>Bật chức năng này để ghi lại chính xác mọi thông số phần cứng, file hệ thống và Keychain mà Zalo bí mật đọc.</string>
+            <string>Bật chức năng này để ghi lại nhật ký truy vấn hệ thống (ZaloAudit.log) và toàn bộ gói tin mạng HTTP/HTTPS (ZaloTraffic.har chuẩn HAR 1.2 cho Proxyman/Charles).</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -262,7 +270,7 @@
             <key>key</key>
             <string>enableAuditLog</string>
             <key>label</key>
-            <string>Bật Soi Log (Audit Mode)</string>
+            <string>Bật Soi Log (Audit &amp; HAR Mode)</string>
             <key>PostNotification</key>
             <string>com.sonhu.zalotweak/settingschanged</string>
         </dict>
@@ -270,7 +278,7 @@
             <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
-            <string>📄 Xem / Xuất Nhật Ký Zalo Đã Đọc</string>
+            <string>📄 Xem / Xuất Nhật Ký ZaloAudit.log</string>
             <key>action</key>
             <string>viewAuditLogAction:</string>
         </dict>
@@ -278,7 +286,15 @@
             <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
-            <string>🗑️ Xóa Trắng File Log</string>
+            <string>🌐 Xem / Xuất File Mạng ZaloTraffic.har</string>
+            <key>action</key>
+            <string>exportHarAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>🗑️ Xóa Trắng Toàn Bộ Log &amp; HAR</string>
             <key>action</key>
             <string>clearAuditLogAction:</string>
         </dict>
