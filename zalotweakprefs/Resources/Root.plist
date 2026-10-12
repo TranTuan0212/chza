@@ -9,6 +9,8 @@
             <string>PSGroupCell</string>
             <key>label</key>
             <string>TRẠNG THÁI</string>
+            <key>footerText</key>
+            <string>Mặc định TẮT nút nổi đối với Zalo gốc (quản lý trực tiếp trong Cài đặt iPhone này). Bật công tắc nếu bạn muốn có thêm nút tròn điều khiển nhanh bên trong app Zalo.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -21,6 +23,20 @@
             <string>enabled</string>
             <key>label</key>
             <string>Bật Fake Info Zalo</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <false/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>showFloatingMenu</string>
+            <key>label</key>
+            <string>Hiện Nút Nổi Trong App Zalo</string>
             <key>PostNotification</key>
             <string>com.sonhu.zalotweak/settingschanged</string>
         </dict>

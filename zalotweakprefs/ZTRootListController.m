@@ -52,6 +52,10 @@ static void kill_all_zalo_processes(void);
         dict[@"enabled"] = @(YES);
         needSave = YES;
     }
+    if (!dict[@"showFloatingMenu"]) {
+        dict[@"showFloatingMenu"] = @(NO);
+        needSave = YES;
+    }
     if (!dict[@"deviceMachine"]) {
         dict[@"deviceMachine"] = @"iPhone14,2";
         [self syncHardwareSpecsForMachine:@"iPhone14,2" inDict:dict];

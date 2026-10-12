@@ -35,6 +35,7 @@
 @property (nonatomic, strong) NSString *spoofedSerial;      // Serial Number (vd: "F17X892JK9L")
 @property (nonatomic, strong) NSString *spoofedWifiMAC;     // Wi-Fi MAC Address
 @property (nonatomic, strong) NSString *spoofedBluetoothMAC;// Bluetooth MAC Address
+@property (nonatomic, assign) BOOL showFloatingMenu;        // Hiện nút nổi trong app (Mặc định NO cho Zalo gốc, YES cho Clone)
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

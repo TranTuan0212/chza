@@ -149,6 +149,12 @@ static NSString *getConfigPath(void) {
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
+        if (dict[@"showFloatingMenu"]) {
+            self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+        } else {
+            // Mặc định: Zalo gốc từ App Store (DEB) TẮT nút nổi (dùng Cài đặt Settings). Clone/Sideload BẬT nút nổi.
+            self.showFloatingMenu = !is_original_zalo_app();
+        }
 
         if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {
             if (self.spoofedSerial.length == 0) {
@@ -204,6 +210,7 @@ static NSString *getConfigPath(void) {
     dict[@"batteryLevel"] = @(self.batteryLevel);
     dict[@"batteryState"] = @(self.batteryState);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
+    dict[@"showFloatingMenu"] = @(self.showFloatingMenu);
     if (self.spoofedSerial) dict[@"spoofedSerial"] = self.spoofedSerial;
     if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
     if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;
@@ -1976,6 +1983,14 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     [[ZTSettings sharedSettings] loadSettings];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([ZTSettings sharedSettings].showFloatingMenu) {
+            [[ZTMenuManager sharedManager] setupInAppMenu];
+            [[ZTFloatingButton sharedButton] show];
+        } else {
+            [[ZTFloatingButton sharedButton] hide];
+        }
+    });
 }
 
 %ctor {
@@ -2099,8 +2114,10 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
               [ZTSettings sharedSettings].spoofedIDFV,
               [ZTSettings sharedSettings].diskTotalSize / (1000000000ULL));
 
-        // Khởi tạo In-App Floating Menu (Hỗ trợ Zalo Clone / Sideload không cần Jailbreak)
-        [[ZTMenuManager sharedManager] setupInAppMenu];
+        // Khởi tạo In-App Floating Menu (Chỉ hiện khi là Zalo Clone/Sideload hoặc người dùng bật trong Cài đặt)
+        if ([ZTSettings sharedSettings].showFloatingMenu) {
+            [[ZTMenuManager sharedManager] setupInAppMenu];
+        }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu
         if ([ZTSettings sharedSettings].enableAuditLog) {
