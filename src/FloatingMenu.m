@@ -752,8 +752,9 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 
     // 6. ĐỐI CHIẾU THỰC TẾ: So sánh IP mạng ngoài
     NSString *ipOld = (s.lastWipedIP.length > 0) ? s.lastWipedIP : @"Chưa lưu";
-    BOOL isDifferentIP = (s.lastWipedIP.length > 0 && ![currentIP isEqualToString:s.lastWipedIP]);
-    BOOL isSameIP = (s.lastWipedIP.length > 0 && [currentIP isEqualToString:s.lastWipedIP]);
+    BOOL hasWipedHistory = (s.lastWipedTimestamp > 0 && s.lastWipedIP.length > 0);
+    BOOL isDifferentIP = (hasWipedHistory && ![currentIP isEqualToString:s.lastWipedIP]);
+    BOOL isSameIP = (hasWipedHistory && [currentIP isEqualToString:s.lastWipedIP]);
     
     NSString *ipStatus = @"";
     if (isSameIP) {
@@ -761,10 +762,10 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     } else if (isDifferentIP) {
         ipStatus = @"Đã đổi IP mới ✅";
     } else {
-        ipStatus = @"IP ban đầu ✅";
+        ipStatus = @"IP hợp lệ ✅";
     }
 
-    if (s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+    if (!hasWipedHistory && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         s.lastWipedIP = currentIP;
         [s saveSettings];
     }

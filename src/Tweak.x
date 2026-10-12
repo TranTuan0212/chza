@@ -1225,6 +1225,64 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
 }
 
 // ==========================================
+// HOOK POSIX open & openat: Chuyển hướng LevelDB KVCore/Device về Sandbox an toàn
+// ==========================================
+static NSString *get_kvcore_sandbox_base_path(void) {
+    NSString *home = NSHomeDirectory();
+    if (!home) return nil;
+    NSString *appSupport = [home stringByAppendingPathComponent:@"Library/Application Support"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:[appSupport stringByAppendingPathComponent:@"KVCore/Device"]
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    return appSupport;
+}
+
+static int (*orig_open)(const char *path, int oflag, ...);
+static int my_open(const char *path, int oflag, ...) {
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list args;
+        va_start(args, oflag);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+    }
+
+    if (path && strncmp(path, "KVCore/", 7) == 0) {
+        NSString *base = get_kvcore_sandbox_base_path();
+        if (base) {
+            NSString *rel = [NSString stringWithUTF8String:path];
+            NSString *absPath = [base stringByAppendingPathComponent:rel];
+            logAudit(@"LEVELDB-C", [NSString stringWithFormat:@"open('%s') -> [BẺ HƯỚNG SANDBOX] %@", path, absPath]);
+            return orig_open ? orig_open([absPath UTF8String], oflag, mode) : open([absPath UTF8String], oflag, mode);
+        }
+    }
+
+    return orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
+}
+
+static int (*orig_openat)(int fd, const char *path, int oflag, ...);
+static int my_openat(int fd, const char *path, int oflag, ...) {
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list args;
+        va_start(args, oflag);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+    }
+
+    if (path && (fd == AT_FDCWD || fd >= 0) && strncmp(path, "KVCore/", 7) == 0) {
+        NSString *base = get_kvcore_sandbox_base_path();
+        if (base) {
+            NSString *rel = [NSString stringWithUTF8String:path];
+            NSString *absPath = [base stringByAppendingPathComponent:rel];
+            logAudit(@"LEVELDB-C", [NSString stringWithFormat:@"openat('%s') -> [BẺ HƯỚNG SANDBOX] %@", path, absPath]);
+            return orig_openat ? orig_openat(AT_FDCWD, [absPath UTF8String], oflag, mode) : openat(AT_FDCWD, [absPath UTF8String], oflag, mode);
+        }
+    }
+
+    return orig_openat ? orig_openat(fd, path, oflag, mode) : openat(fd, path, oflag, mode);
+}
+
+// ==========================================
 // HOOK MOBILEGESTALT (MGCOPYANSWER) & HARDWARE RADAR
 // ==========================================
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property) = NULL;
@@ -1439,8 +1497,18 @@ static BOOL s_in_bundle_hook = NO;
         if (isOrig) {
             return %orig;
         }
-        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
-            return %orig;
+        // Cho phép cả app Zalo và module chẩn đoán ZaloTweak nhìn thấy vn.com.vng.zingalo
+        void *retAddr0 = __builtin_return_address(0);
+        void *retAddr1 = __builtin_return_address(1);
+        Dl_info info;
+        if (dladdr(retAddr0, &info) && info.dli_fname) {
+            const char *fname = info.dli_fname;
+            // Chỉ bypass cho các daemon hệ thống Apple core khi cần đăng ký quyền hệ thống
+            if (strstr(fname, "UserNotifications") != NULL ||
+                strstr(fname, "CoreTelephony") != NULL ||
+                strstr(fname, "Security") != NULL) {
+                return %orig;
+            }
         }
         logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
@@ -1978,6 +2046,10 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         if (cdFunc) {
             universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
+
+        // Hook POSIX open & openat (Bẻ hướng LevelDB KVCore/Device về Sandbox an toàn)
+        universal_hook_c_function("open", (void *)open, (void *)my_open, (void **)&orig_open);
+        universal_hook_c_function("openat", (void *)openat, (void *)my_openat, (void **)&orig_openat);
 
         // Hook CoreFoundation Preferences (App Groups Redirection)
         universal_hook_c_function("CFPreferencesCopyAppValue", (void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
