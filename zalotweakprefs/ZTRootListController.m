@@ -12,6 +12,7 @@
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
     return @[
+        @"vn.com.vng.zingalo",
         @"cn.com.vng.zingalo",
         @"com.zing.zalo",
         @"com.vng.zalo"
