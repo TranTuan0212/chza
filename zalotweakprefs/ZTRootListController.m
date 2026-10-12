@@ -15,7 +15,9 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
         @"vn.com.vng.zingalo",
         @"cn.com.vng.zingalo",
         @"com.zing.zalo",
-        @"com.vng.zalo"
+        @"com.vng.zalo",
+        @"vn.com.vng.zingalo.clone",
+        @"com.vng.zalo.clone"
     ];
 }
 
@@ -221,11 +223,12 @@ static void wipe_directory_contents(NSString *dirPath) {
         if ([item hasPrefix:@".com.apple.mobile_container_manager"]) {
             continue;
         }
-        // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk CỦA APPS MANAGER VÀ CÁC FOLDER BACKUP
+        // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk CỦA APPS MANAGER VÀ FILE AUDIT LOG
         NSString *lower = [item lowercaseString];
         if ([lower hasSuffix:@".adbk"] ||
             [lower containsString:@"appsmanager"] ||
-            [lower containsString:@"adbk"]) {
+            [lower containsString:@"adbk"] ||
+            [lower isEqualToString:@"zaloaudit.log"]) {
             continue;
         }
         NSString *fullPath = [dirPath stringByAppendingPathComponent:item];

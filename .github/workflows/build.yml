@@ -32,14 +32,23 @@ jobs:
           mkdir -p output
           mv packages/*.deb output/ZaloTweak_roothide.deb
 
-      - name: Build Rootless DEB
+      - name: Build Rootless DEB & Extract Dylib
         run: |
           make clean
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
           mv packages/*.deb output/ZaloTweak_rootless.deb
+          
+          # Trích xuất dylib để chích vào Zalo Clone IPA
+          find .theos/ -name "Zalotweak.dylib" -exec cp {} output/ \; 2>/dev/null || true
+          if [ ! -f output/Zalotweak.dylib ]; then
+            dpkg-deb -x output/ZaloTweak_rootless.deb /tmp/deb_extracted
+            find /tmp/deb_extracted -name "Zalotweak.dylib" -exec cp {} output/ \; 2>/dev/null || true
+          fi
 
-      - name: Upload DEB Artifacts
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ZaloTweak-DEB-Packages
-          path: output/*.deb
+          name: ZaloTweak-Packages
+          path: |
+            output/*.deb
+            output/*.dylib

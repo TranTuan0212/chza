@@ -17,6 +17,7 @@
 #import <substrate.h>
 #import "Config.h"
 #import "SecurityManager.h"
+#import "FloatingMenu.h"
 
 static inline BOOL is_tweak_active(void) {
     return [ZTSettings sharedSettings].enabled && [[ZTSecurityManager sharedManager] isLicenseValid];
@@ -796,17 +797,24 @@ static int my_statfs(const char *path, struct statfs *buf) {
     return ret;
 }
 
+static inline BOOL is_sideload_provision_path(NSString *path) {
+    if (!path) return NO;
+    NSString *lower = [path lowercaseString];
+    return [lower containsString:@"embedded.mobileprovision"] ||
+           [lower containsString:@"embedded.provisionprofile"];
+}
+
 %hook NSFileManager
 
 - (BOOL)fileExistsAtPath:(NSString *)path {
-    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
+    if (is_tweak_active() && path && (is_jailbreak_path([path UTF8String]) || is_sideload_provision_path(path))) {
         return NO;
     }
     return %orig;
 }
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
-    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
+    if (is_tweak_active() && path && (is_jailbreak_path([path UTF8String]) || is_sideload_provision_path(path))) {
         if (isDirectory) *isDirectory = NO;
         return NO;
     }
@@ -827,6 +835,40 @@ static int my_statfs(const char *path, struct statfs *buf) {
         fakeAttrs[NSFileSystemFreeSize] = @(settings.diskFreeSize);
     }
     return fakeAttrs;
+}
+
+%end
+
+// ==========================================
+// HOOK NSBundle: ĐẢM BẢO ZALO CLONE ĐƯỢC NHẬN DIỆN LÀ BẢN GỐC APP STORE
+// ==========================================
+
+%hook NSBundle
+
+- (NSString *)bundleIdentifier {
+    if (self == [NSBundle mainBundle] && is_tweak_active()) {
+        return @"vn.com.vng.zingalo";
+    }
+    return %orig;
+}
+
+- (id)objectForInfoDictionaryKey:(NSString *)key {
+    if (self == [NSBundle mainBundle] && is_tweak_active() && key) {
+        if ([key isEqualToString:@"CFBundleIdentifier"]) {
+            return @"vn.com.vng.zingalo";
+        }
+    }
+    return %orig;
+}
+
+- (NSDictionary *)infoDictionary {
+    NSDictionary *dict = %orig;
+    if (self == [NSBundle mainBundle] && is_tweak_active() && dict) {
+        NSMutableDictionary *mDict = [dict mutableCopy];
+        mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
+        return mDict;
+    }
+    return dict;
 }
 
 %end
@@ -911,5 +953,19 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
               [ZTSettings sharedSettings].screenScale,
               [ZTSettings sharedSettings].spoofedIDFV,
               [ZTSettings sharedSettings].diskTotalSize / (1000000000ULL));
+
+        // Khởi tạo In-App Floating Menu (Hỗ trợ Zalo Clone / Sideload không cần Jailbreak)
+        [[ZTMenuManager sharedManager] setupInAppMenu];
+
+        // Ghi nhận dòng kiểm toán khởi động ban đầu
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            logAudit(@"SYSTEM-INIT", [NSString stringWithFormat:@"Khởi động ZaloTweak v1.0 | Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Bản quyền: %@",
+                      [ZTSettings sharedSettings].deviceMachine,
+                      [ZTSettings sharedSettings].screenWidth,
+                      [ZTSettings sharedSettings].screenHeight,
+                      [ZTSettings sharedSettings].screenScale,
+                      [ZTSettings sharedSettings].spoofedIDFV,
+                      [[ZTSecurityManager sharedManager] getLicenseStatusText]]);
+        }
     }
 }
