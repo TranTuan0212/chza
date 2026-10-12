@@ -258,11 +258,14 @@ static uint64_t get_real_disk_total_size(void) {
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
             self.showFloatingMenu = NO;
-        } else if (dict[@"showFloatingMenu"]) {
-            self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
             // Mặc định luôn BẬT nút nổi để người dùng có icon điều khiển và fake máy (dù là JB hay Tiêm IPA)
-            self.showFloatingMenu = YES;
+            // Nếu người dùng chủ động tắt trong cài đặt thì mới tắt
+            if (dict[@"showFloatingMenu"] != nil) {
+                self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+            } else {
+                self.showFloatingMenu = YES;
+            }
         }
 
         if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {
