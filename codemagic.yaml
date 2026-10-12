@@ -4,14 +4,14 @@ workflows:
     max_build_duration: 15
     instance_type: mac_mini_m2
     environment:
-      xcode: 26.5
+      xcode: 26.4
       vars:
         THEOS: /Users/builder/theos
     scripts:
       - name: Setup Theos, ldid and iOS SDK
         script: |
           echo "==> Cai dat cong cu ky ldid..."
-          brew install ldid
+          which ldid || env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
           echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
           git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
@@ -40,14 +40,14 @@ workflows:
     max_build_duration: 15
     instance_type: mac_mini_m2
     environment:
-      xcode: 26.5
+      xcode: 26.4
       vars:
         THEOS: /Users/builder/theos
     scripts:
       - name: Setup Theos, ldid and iOS SDK
         script: |
           echo "==> Cai dat cong cu ky ldid..."
-          brew install ldid
+          which ldid || env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
           echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
           rm -rf $THEOS
           git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
