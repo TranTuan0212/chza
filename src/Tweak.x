@@ -1977,9 +1977,24 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
-// ==========================================
-// CONSTRUCTOR: KHỞI TẠO VÀ HOOK CÁC HÀM C
-// ==========================================
+static NSString *get_runtime_environment_desc(void) {
+    Dl_info info;
+    if (dladdr((const void *)settingsChangedCallback, &info) && info.dli_fname) {
+        NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
+        NSString *dname = [dpath lastPathComponent] ?: @"Zalotweak.dylib";
+        if ([dpath containsString:@"/jb-"] || [dpath containsString:@"roothide"]) {
+            return [NSString stringWithFormat:@"🛡️ Roothide (DEB) [%@]", dname];
+        } else if ([dpath containsString:@"/var/jb/"] || [dpath containsString:@"/var/jb"]) {
+            return [NSString stringWithFormat:@"⚡ Rootless (DEB) [%@]", dname];
+        } else if ([dpath containsString:@"/Library/MobileSubstrate/"] || [dpath containsString:@"/usr/lib/TweakInject/"]) {
+            return [NSString stringWithFormat:@"👑 Rootful (DEB) [%@]", dname];
+        } else if ([dpath containsString:@".app/"]) {
+            return [NSString stringWithFormat:@"📱 Sideload / Clone [%@]", dname];
+        }
+        return [NSString stringWithFormat:@"🔌 Custom Dylib [%@]", dname];
+    }
+    return @"❓ Không xác định";
+}
 
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     [[ZTSettings sharedSettings] loadSettings];
@@ -2114,6 +2129,16 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
               [ZTSettings sharedSettings].spoofedIDFV,
               [ZTSettings sharedSettings].diskTotalSize / (1000000000ULL));
 
+        NSString *envDesc = get_runtime_environment_desc();
+        NSLog(@"[ZaloTweak] 🚀 Môi trường: %@", envDesc);
+
+        // Lưu thông tin môi trường vào cấu hình để mục Cài đặt Settings hiển thị
+        NSString *cfgPath = getConfigPath();
+        NSMutableDictionary *cfgDict = [NSMutableDictionary dictionaryWithContentsOfFile:cfgPath] ?: [NSMutableDictionary dictionary];
+        cfgDict[@"runtimeEnvironment"] = envDesc;
+        [cfgDict writeToFile:cfgPath atomically:YES];
+        [cfgDict writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+
         // Khởi tạo In-App Floating Menu (Chỉ hiện khi là Zalo Clone/Sideload hoặc người dùng bật trong Cài đặt)
         if ([ZTSettings sharedSettings].showFloatingMenu) {
             [[ZTMenuManager sharedManager] setupInAppMenu];
@@ -2121,7 +2146,9 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"SYSTEM-INIT", [NSString stringWithFormat:@"Khởi động ZaloTweak v1.0 | Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Bản quyền: %@",
+            logAudit(@"SYSTEM-INIT", [NSString stringWithFormat:@"Khởi động ZaloTweak v1.0 | Môi trường: %@ | App: %@ | Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Bản quyền: %@",
+                      envDesc,
+                      [[NSBundle mainBundle] bundleIdentifier],
                       [ZTSettings sharedSettings].deviceMachine,
                       [ZTSettings sharedSettings].screenWidth,
                       [ZTSettings sharedSettings].screenHeight,

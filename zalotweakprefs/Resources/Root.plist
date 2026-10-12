@@ -40,6 +40,14 @@
             <key>PostNotification</key>
             <string>com.sonhu.zalotweak/settingschanged</string>
         </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>Môi Trường</string>
+            <key>get</key>
+            <string>getRuntimeEnvironmentDisplayValue:</string>
+        </dict>
 
         <dict>
             <key>cell</key>

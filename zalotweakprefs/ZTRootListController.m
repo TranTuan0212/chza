@@ -8,6 +8,7 @@
 #import <sys/stat.h>
 #import <string.h>
 #import <stdlib.h>
+#import <dlfcn.h>
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
@@ -519,6 +520,28 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 }
 
 #pragma mark - DRM License Actions
+
+- (id)getRuntimeEnvironmentDisplayValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *envFromApp = dict[@"runtimeEnvironment"];
+    if (envFromApp && envFromApp.length > 0) {
+        return envFromApp;
+    }
+    
+    // Nếu Zalo chưa mở, tự phát hiện môi trường nạp của chính PreferenceBundle
+    Dl_info info;
+    if (dladdr((const void *)save_dict_to_all_locations, &info) && info.dli_fname) {
+        NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
+        if ([dpath containsString:@"/jb-"] || [dpath containsString:@"roothide"]) {
+            return @"🛡️ Roothide (DEB)";
+        } else if ([dpath containsString:@"/var/jb/"] || [dpath containsString:@"/var/jb"]) {
+            return @"⚡ Rootless (DEB)";
+        } else if ([dpath containsString:@"/Library/PreferenceBundles/"]) {
+            return @"👑 Rootful (DEB)";
+        }
+    }
+    return @"🟢 Hoạt động (Chờ Zalo khởi động)";
+}
 
 - (id)getRealHardwareUDIDValue:(PSSpecifier *)specifier {
     return [[ZTSecurityManager sharedManager] getRealHardwareUDID];
