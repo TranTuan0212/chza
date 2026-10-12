@@ -1979,7 +1979,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 static NSString *get_runtime_environment_desc(void) {
     Dl_info info;
-    if (dladdr((const void *)settingsChangedCallback, &info) && info.dli_fname) {
+    if (dladdr((const void *)get_runtime_environment_desc, &info) && info.dli_fname) {
         NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
         NSString *dname = [dpath lastPathComponent] ?: @"Zalotweak.dylib";
         if ([dpath containsString:@"/jb-"] || [dpath containsString:@"roothide"]) {
