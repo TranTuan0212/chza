@@ -850,6 +850,33 @@ static int my_open(const char *path, int oflag, ...) {
     return orig_open(safePath, oflag);
 }
 
+static int (*orig_openat)(int fd, const char *path, int oflag, ...);
+static int my_openat(int fd, const char *path, int oflag, ...) {
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
+        errno = ENOENT;
+        return -1;
+    }
+    mode_t mode = 0;
+    if (oflag & O_CREAT) {
+        va_list args;
+        va_start(args, oflag);
+        mode = (mode_t)va_arg(args, int);
+        va_end(args);
+
+        if (safePath) {
+            NSString *safeStr = [NSString stringWithUTF8String:safePath];
+            NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
+            if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
+                [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+        }
+        return orig_openat ? orig_openat(fd, safePath, oflag, mode) : -1;
+    }
+    return orig_openat ? orig_openat(fd, safePath, oflag) : -1;
+}
+
 static FILE *(*orig_fopen)(const char *path, const char *mode);
 static FILE *my_fopen(const char *path, const char *mode) {
     char pbuf[1024];
@@ -1288,19 +1315,46 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
-        // Đảm bảo thư mục lưu trữ cốt lõi KVCore, KVCore/Device và IsolatedAppGroups luôn tồn tại sẵn trong Sandbox
+        // Đổi Current Working Directory (CWD) sang Sandbox Library/Application Support
+        // để mọi đường dẫn tương đối của LevelDB C++ ("KVCore/Device/...") tự động trỏ đúng vào Sandbox
         NSString *homeDir = NSHomeDirectory();
         if (homeDir) {
-            NSString *kvCoreDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/KVCore"];
+            NSString *appSupportDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support"];
+            [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir withIntermediateDirectories:YES attributes:nil error:nil];
+            chdir([appSupportDir UTF8String]);
+
+            NSString *kvCoreDir = [appSupportDir stringByAppendingPathComponent:@"KVCore"];
             [[NSFileManager defaultManager] createDirectoryAtPath:kvCoreDir withIntermediateDirectories:YES attributes:nil error:nil];
             NSString *kvDeviceDir = [kvCoreDir stringByAppendingPathComponent:@"Device"];
             [[NSFileManager defaultManager] createDirectoryAtPath:kvDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
-            NSString *isoGroupsDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/IsolatedAppGroups"];
+            NSString *isoGroupsDir = [appSupportDir stringByAppendingPathComponent:@"IsolatedAppGroups"];
             [[NSFileManager defaultManager] createDirectoryAtPath:isoGroupsDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+            // Tạo Symlinks dự phòng để dù tìm ở Home hay Documents đều trỏ về KVCore
+            NSString *homeKV = [homeDir stringByAppendingPathComponent:@"KVCore"];
+            if (![[NSFileManager defaultManager] fileExistsAtPath:homeKV]) {
+                symlink([kvCoreDir UTF8String], [homeKV UTF8String]);
+            }
+            NSString *docKV = [homeDir stringByAppendingPathComponent:@"Documents/KVCore"];
+            if (![[NSFileManager defaultManager] fileExistsAtPath:docKV]) {
+                symlink([kvCoreDir UTF8String], [docKV UTF8String]);
+            }
         }
 
         // Hook Anti-Jailbreak File & Dylib Checks
         MSHookFunction((void *)open, (void *)my_open, (void **)&orig_open);
+        void *openatPtr = dlsym(RTLD_DEFAULT, "openat");
+        if (openatPtr) {
+            MSHookFunction(openatPtr, (void *)my_openat, (void **)&orig_openat);
+        }
+        void *openNocancelPtr = dlsym(RTLD_DEFAULT, "open$NOCANCEL");
+        if (openNocancelPtr) {
+            MSHookFunction(openNocancelPtr, (void *)my_open, NULL);
+        }
+        void *openatNocancelPtr = dlsym(RTLD_DEFAULT, "openat$NOCANCEL");
+        if (openatNocancelPtr) {
+            MSHookFunction(openatNocancelPtr, (void *)my_openat, NULL);
+        }
         MSHookFunction((void *)fopen, (void *)my_fopen, (void **)&orig_fopen);
         MSHookFunction((void *)access, (void *)my_access, (void **)&orig_access);
         MSHookFunction((void *)stat, (void *)my_stat, (void **)&orig_stat);

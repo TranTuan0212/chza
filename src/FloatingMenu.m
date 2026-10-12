@@ -3,6 +3,9 @@
 #import "SecurityManager.h"
 #import <objc/runtime.h>
 #import <Security/Security.h>
+#import <sys/sysctl.h>
+#import <fcntl.h>
+#import <unistd.h>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -608,7 +611,12 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     uint64_t sandboxBytes = get_directory_size(docDir) + get_directory_size(cacheDir);
     double sandboxKB = (double)sandboxBytes / 1024.0;
 
-    // 1. Đọc TRỰC TIẾP TỪ HỆ THỐNG RUNTIME (Xác thực thật, không dùng chuỗi tĩnh)
+    // 1. Đọc TRỰC TIẾP TỪ HỆ THỐNG RUNTIME QUA HÀM C & OBJECTIVE-C (Xác thực thật 100%)
+    char liveMachineBuf[64] = {0};
+    size_t mlen = sizeof(liveMachineBuf);
+    sysctlbyname("hw.machine", liveMachineBuf, &mlen, NULL, 0);
+    NSString *liveMachineStr = [NSString stringWithUTF8String:liveMachineBuf];
+
     NSString *liveBundle = [[NSBundle mainBundle] bundleIdentifier];
     NSString *liveIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
     
@@ -664,20 +672,28 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         [s saveSettings];
     }
 
-    // 7. Kiểm tra tính toàn vẹn cơ sở dữ liệu nội bộ (LevelDB & App Group Storage)
-    NSString *kvCoreDevice = [home stringByAppendingPathComponent:@"Library/Application Support/KVCore/Device"];
-    BOOL kvDeviceDirExists = [[NSFileManager defaultManager] fileExistsAtPath:kvCoreDevice];
-    NSString *testLockFile = [kvCoreDevice stringByAppendingPathComponent:@"_zt_test_lock.tmp"];
-    BOOL leveldbWritable = NO;
-    if (kvDeviceDirExists) {
-        NSError *testErr = nil;
-        [@"1" writeToFile:testLockFile atomically:YES encoding:NSUTF8StringEncoding error:&testErr];
-        if (!testErr && [[NSFileManager defaultManager] fileExistsAtPath:testLockFile]) {
-            leveldbWritable = YES;
-            [[NSFileManager defaultManager] removeItemAtPath:testLockFile error:nil];
-        }
+    // 7. KIỂM TRA THỰC TẾ BẰNG HÀM C POSIX (Chính xác cách LevelDB C++ gọi mở file)
+    // a. Gọi hàm C open() với ĐƯỜNG DẪN TƯƠNG ĐỐI
+    int fd_rel = open("KVCore/Device/_zt_rel_test.tmp", O_RDWR | O_CREAT, 0644);
+    BOOL leveldbRelWritable = NO;
+    if (fd_rel >= 0) {
+        char testData[] = "ZT_LOCK_OK";
+        write(fd_rel, testData, sizeof(testData));
+        close(fd_rel);
+        leveldbRelWritable = YES;
+        unlink("KVCore/Device/_zt_rel_test.tmp");
     }
 
+    // b. Gọi hàm C openat() với AT_FDCWD và ĐƯỜNG DẪN TƯƠNG ĐỐI
+    int fd_at = openat(AT_FDCWD, "KVCore/Device/_zt_at_test.tmp", O_RDWR | O_CREAT, 0644);
+    BOOL leveldbAtWritable = NO;
+    if (fd_at >= 0) {
+        close(fd_at);
+        leveldbAtWritable = YES;
+        unlink("KVCore/Device/_zt_at_test.tmp");
+    }
+
+    // c. Gọi hàm hệ thống NSUserDefaults với SuiteName
     BOOL appGroupWorking = NO;
     @try {
         NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
@@ -695,26 +711,27 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         appGroupWorking = NO;
     }
 
-    BOOL allStorageHealthy = (leveldbWritable && appGroupWorking);
+    BOOL allStorageHealthy = (leveldbRelWritable && leveldbAtWritable && appGroupWorking);
 
     // 8. Kết luận toàn diện
     NSString *conclusion = @"";
     if (isSameIP) {
         conclusion = @"🔴 CẢNH BÁO: TRÙNG ĐỊA CHỈ IP 4G CŨ!\nVui lòng BẬT rồi TẮT Chế Độ Máy Bay (Airplane Mode) để nhà mạng đổi địa chỉ IP mới trước khi bấm Tạo Tài Khoản.";
     } else if (!allStorageHealthy) {
-        conclusion = @"⚠️ CẢNH BÁO: KHO LƯU TRỮ CHƯA HOÀN HẢO!\nLevelDB hoặc App Group chưa ghi đọc được. Vui lòng bấm [2️⃣] Deep Wipe một lần nữa.";
+        conclusion = @"⚠️ CẢNH BÁO: LỖI KHO LƯU TRỮ CƠ SỞ DỮ LIỆU C++!\nLevelDB (hàm C open/openat) chưa ghi được qua đường dẫn tương đối. Vui lòng bấm [2️⃣] Deep Wipe.";
     } else {
-        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(IDFV mới, IDFA ẩn, LevelDB/KVCore thông suốt, App Group an toàn, IP 4G mới tinh)";
+        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(C POSIX sysctl/open/openat thông suốt, IDFV mới, IDFA ẩn, App Group an toàn, IP 4G mới)";
     }
 
     NSString *report = [NSString stringWithFormat:
         @"═══════════════════════════\n"
-        @"1. XÁC THỰC ĐỊNH DANH (LIVE RUNTIME):\n"
-        @" • Bundle ID   : %@ (%@)\n"
+        @"1. XÁC THỰC ĐỊNH DANH (LIVE C & RUNTIME):\n"
+        @" • Machine (C)  : %@ (%@)\n"
+        @" • Bundle ID    : %@ (%@)\n"
         @" • IDFV Hiện Tại: %@... (%@)\n"
         @" • IDFV Trước Đó: %@...\n"
         @" • IDFA Quảng Cáo: %@...\n"
-        @" • App Tracking: Denied (Từ chối theo dõi ✅)\n\n"
+        @" • App Tracking : Denied (Từ chối theo dõi ✅)\n\n"
         @"2. ĐỊA CHỈ IP 4G (INTERNET CELLULAR):\n"
         @" • IP Lần Này   : %@ (%@)\n"
         @" • IP Trước Đó  : %@\n\n"
@@ -725,11 +742,13 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         @" • Rác / Cache  : %.1f KB (%@)\n"
         @" • Sideload     : %@\n"
         @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n\n"
-        @"5. TÍNH TOÀN VẸN CƠ SỞ DỮ LIỆU (DATABASE):\n"
-        @" • LevelDB/KVCore: %@\n"
-        @" • App Groups   : %@\n"
+        @"5. THỰC THI C++ LEVELDB (GỌI HÀM C TRỰC TIẾP):\n"
+        @" • open(tương đối)  : %@\n"
+        @" • openat(tương đối): %@\n"
+        @" • App Groups Suite : %@\n"
         @"═══════════════════════════\n"
         @"👉 KẾT LUẬN:\n%@",
+        liveMachineStr, ([liveMachineStr isEqualToString:s.deviceMachine] ? @"Đã Fake thành công ✅" : @"Máy thật ⚠️"),
         liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi"),
         idfvShort, idfvStatus,
         idfvOld,
@@ -740,7 +759,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         uptimeHours,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
         (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn"),
-        (leveldbWritable ? @"Đã sẵn sàng (Ghi/Đọc tốt) ✅" : @"Chưa tạo thư mục ❌"),
+        (leveldbRelWritable ? @"C open() tương đối THÀNH CÔNG ✅" : @"Lỗi mở file C ❌"),
+        (leveldbAtWritable ? @"C openat() tương đối THÀNH CÔNG ✅" : @"Lỗi mở openat ❌"),
         (appGroupWorking ? @"Đã chuyển hướng Sandbox an toàn ✅" : @"Lỗi truy cập ❌"),
         conclusion];
 
