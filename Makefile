@@ -9,7 +9,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = Zalotweak
 
 Zalotweak_FILES = src/Tweak.x src/SecurityManager.m src/FloatingMenu.m
-Zalotweak_CFLAGS = -fobjc-arc -Isrc
+Zalotweak_CFLAGS = -fobjc-arc -Isrc -Wno-deprecated-declarations -Wno-error
 Zalotweak_FRAMEWORKS = UIKit Foundation Security SystemConfiguration
 Zalotweak_LIBRARIES = substrate
 

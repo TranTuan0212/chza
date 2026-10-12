@@ -4,36 +4,47 @@
 #import <objc/runtime.h>
 #import <Security/Security.h>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 // Đường dẫn file Audit Log trong Documents của Sandbox Zalo
 static inline NSString *get_inapp_audit_log_path(void) {
     NSString *home = NSHomeDirectory();
     return [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
 }
 
-// Hàm hỗ trợ tìm UIViewController cao nhất đang hiển thị
-static UIViewController *get_top_view_controller(void) {
-    UIWindow *keyWin = nil;
+// Hàm hỗ trợ tìm UIWindow đang hoạt động
+static UIWindow *get_active_key_window(void) {
     if (@available(iOS 13.0, *)) {
-        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *w in scene.windows) {
-                    if (w.isKeyWindow) {
-                        keyWin = w;
-                        break;
-                    }
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                UIWindowScene *winScene = (UIWindowScene *)scene;
+                for (UIWindow *w in winScene.windows) {
+                    if (w.isKeyWindow) return w;
                 }
+                if (winScene.windows.count > 0) return winScene.windows.firstObject;
             }
-            if (keyWin) break;
+        }
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *winScene = (UIWindowScene *)scene;
+                for (UIWindow *w in winScene.windows) {
+                    if (w.isKeyWindow) return w;
+                }
+                if (winScene.windows.count > 0) return winScene.windows.firstObject;
+            }
         }
     }
-    if (!keyWin) {
-        keyWin = [UIApplication sharedApplication].keyWindow;
+    UIWindow *w = [UIApplication sharedApplication].keyWindow;
+    if (!w && [UIApplication sharedApplication].windows.count > 0) {
+        w = [UIApplication sharedApplication].windows.firstObject;
     }
-    if (!keyWin) {
-        NSArray *windows = [UIApplication sharedApplication].windows;
-        if (windows.count > 0) keyWin = windows[0];
-    }
-    
+    return w;
+}
+
+// Hàm hỗ trợ tìm UIViewController cao nhất đang hiển thị
+static UIViewController *get_top_view_controller(void) {
+    UIWindow *keyWin = get_active_key_window();
     UIViewController *topVC = keyWin.rootViewController;
     while (topVC.presentedViewController) {
         topVC = topVC.presentedViewController;
@@ -101,7 +112,7 @@ static UIViewController *get_top_view_controller(void) {
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIWindow *win = self.superview ? (UIWindow *)self.superview : [UIApplication sharedApplication].keyWindow;
+    UIWindow *win = self.superview ? (UIWindow *)self.superview : get_active_key_window();
     if (!win) return;
     
     CGPoint translation = [pan translationInView:win];
@@ -171,11 +182,7 @@ static UIViewController *get_top_view_controller(void) {
 }
 
 - (void)tryAttachFloatingButton {
-    UIWindow *win = [UIApplication sharedApplication].keyWindow;
-    if (!win) {
-        NSArray *windows = [UIApplication sharedApplication].windows;
-        if (windows.count > 0) win = windows[0];
-    }
+    UIWindow *win = get_active_key_window();
     if (win) {
         [[ZTFloatingButton sharedButton] attachToWindow:win];
         [[ZTFloatingButton sharedButton] show];
@@ -533,3 +540,5 @@ static UIViewController *get_top_view_controller(void) {
 }
 
 @end
+
+#pragma clang diagnostic pop
