@@ -364,6 +364,13 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     for (NSString *groupPath in groupContainers) {
         if (!is_valid_zalo_sandbox_path(groupPath)) continue;
         wipe_directory_contents(groupPath);
+
+        // Tái tạo khung thư mục rỗng chuẩn bên trong App Group để NSUserDefaults và SQLite của Zalo không bị crash
+        NSFileManager *fm = [NSFileManager defaultManager];
+        NSString *grpLib = [groupPath stringByAppendingPathComponent:@"Library"];
+        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
     // 4. Xóa sạch Clipboard hệ thống để tránh tracking token

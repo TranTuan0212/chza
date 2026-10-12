@@ -767,26 +767,6 @@ static char *my_getenv(const char *name) {
     return orig_getenv(name);
 }
 
-// Ẩn các dylib của jailbreak và tweak trong RAM
-static const char *(*orig_dyld_get_image_name)(uint32_t image_index);
-static const char *my_dyld_get_image_name(uint32_t image_index) {
-    const char *name = orig_dyld_get_image_name(image_index);
-    if (is_tweak_active() && name) {
-        if (is_jailbreak_path(name) ||
-            strstr(name, "Zalotweak") != NULL ||
-            strstr(name, "ElleKit") != NULL ||
-            strstr(name, "MobileSubstrate") != NULL ||
-            strstr(name, "libhooker") != NULL ||
-            strstr(name, "substitute") != NULL ||
-            strstr(name, "TweakInject") != NULL ||
-            strstr(name, "PreferenceLoader") != NULL ||
-            strstr(name, "dopamine") != NULL ||
-            strstr(name, "roothide") != NULL) {
-            return "/System/Library/Frameworks/Foundation.framework/Foundation";
-        }
-    }
-    return name;
-}
 
 // Ẩn BSSID của trạm phát WiFi (tránh phát hiện chung router)
 static CFDictionaryRef (*orig_CNCopyCurrentNetworkInfo)(CFStringRef interfaceName);
@@ -879,84 +859,8 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
     [[ZTSettings sharedSettings] loadSettings];
 }
 
-static void cleanDirectoryPreservingAdbk(NSString *dirPath) {
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:dirPath]) return;
-
-    NSError *err = nil;
-    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:&err];
-    if (err || !items) return;
-
-    for (NSString *item in items) {
-        if ([item hasPrefix:@".com.apple.mobile_container_manager"]) continue;
-        NSString *lower = [item lowercaseString];
-        if ([lower hasSuffix:@".adbk"] || [lower containsString:@"appsmanager"] || [lower containsString:@"adbk"]) {
-            continue;
-        }
-        if ([item isEqualToString:@"com.sonhu.zalotweak.plist"]) continue;
-        NSString *subPath = [dirPath stringByAppendingPathComponent:item];
-        [fm removeItemAtPath:subPath error:nil];
-    }
-}
-
-static void performInAppSelfWipeIfNeeded(void) {
-    NSString *cpath = getConfigPath();
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:cpath];
-    if (![dict[@"wipePending"] boolValue]) {
-        return;
-    }
-
-    NSLog(@"[ZaloTweak] ⚠️ Phát hiện lệnh wipePending -> Tiến hành tự động Deep Wipe sạch bóng từ bên trong!");
-
-    // 1. Xóa sạch mọi mục Keychain thuộc về Zalo
-    NSArray *secClasses = @[
-        (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecClassInternetPassword,
-        (__bridge id)kSecClassCertificate,
-        (__bridge id)kSecClassKey,
-        (__bridge id)kSecClassIdentity
-    ];
-    for (id secClass in secClasses) {
-        NSDictionary *query = @{(__bridge id)kSecClass: secClass};
-        SecItemDelete((__bridge CFDictionaryRef)query);
-    }
-
-    // 2. Dọn sạch các thư mục Sandbox trong Home Directory (BẢO VỆ TUYỆT ĐỐI FILE .adbk)
-    NSString *home = NSHomeDirectory();
-    if (home) {
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Documents"]);
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"tmp"]);
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Caches"]);
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Application Support"]);
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/WebKit"]);
-        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Cookies"]);
-
-        // Xóa sạch các file plist của Zalo để Zalo reset về màn hình chọn ngôn ngữ ban đầu
-        NSString *prefDir = [home stringByAppendingPathComponent:@"Library/Preferences"];
-        NSArray *prefs = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:prefDir error:nil];
-        for (NSString *p in prefs) {
-            if ([p hasPrefix:@"vn.com.vng.zingalo"] || [p hasPrefix:@"cn.com.vng.zingalo"] || [p hasPrefix:@"com.zing.zalo"] || [p hasPrefix:@"com.vng.zalo"]) {
-                [[NSFileManager defaultManager] removeItemAtPath:[prefDir stringByAppendingPathComponent:p] error:nil];
-            }
-        }
-    }
-
-    // 3. Reset cờ wipePending = NO để những lần mở app sau không bị wipe lại
-    NSMutableDictionary *mdict = [NSMutableDictionary dictionaryWithContentsOfFile:cpath] ?: [NSMutableDictionary dictionary];
-    mdict[@"wipePending"] = @(NO);
-    [mdict writeToFile:cpath atomically:YES];
-    if (home) {
-        NSString *localPref = [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
-        [mdict writeToFile:localPref atomically:YES];
-        NSString *localDoc = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.plist"];
-        [mdict writeToFile:localDoc atomically:YES];
-    }
-    NSLog(@"[ZaloTweak] 🟢 In-App Deep Wipe hoàn tất. Zalo sẽ bắt đầu như cài đặt mới tinh.");
-}
-
 %ctor {
     @autoreleasepool {
-        performInAppSelfWipeIfNeeded();
         [[ZTSettings sharedSettings] loadSettings];
 
         CFNotificationCenterAddObserver(
@@ -981,7 +885,6 @@ static void performInAppSelfWipeIfNeeded(void) {
         MSHookFunction((void *)stat, (void *)my_stat, (void **)&orig_stat);
         MSHookFunction((void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         MSHookFunction((void *)getenv, (void *)my_getenv, (void **)&orig_getenv);
-        MSHookFunction((void *)_dyld_get_image_name, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
 
         // Hook Security Framework (Keychain Isolation)
         MSHookFunction((void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
