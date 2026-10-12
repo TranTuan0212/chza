@@ -19,10 +19,22 @@
 #import <stdarg.h>
 #import <stdio.h>
 #import <dlfcn.h>
-#import <substrate.h>
+#import "fishhook.h"
 #import "Config.h"
 #import "SecurityManager.h"
 #import "FloatingMenu.h"
+
+static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
+
+static inline void universal_hook_c_function(const char *name, void *symbol, void *replace, void **result) {
+    if (dynamic_MSHookFunction && symbol) {
+        dynamic_MSHookFunction(symbol, replace, result);
+    }
+    if (name) {
+        struct rebinding r = { name, replace, result };
+        rebind_symbols(&r, 1);
+    }
+}
 
 static inline BOOL is_tweak_active(void) {
     static __thread BOOL s_in_active_check = NO;
@@ -1906,44 +1918,46 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             CFNotificationSuspensionBehaviorCoalesce
         );
 
-        // 3. Cài đặt các hook C an toàn
-        MSHookFunction((void *)sysctl, (void *)my_sysctl, (void **)&orig_sysctl);
-        MSHookFunction((void *)sysctlbyname, (void *)my_sysctlbyname, (void **)&orig_sysctlbyname);
-        MSHookFunction((void *)uname, (void *)my_uname, (void **)&orig_uname);
-        MSHookFunction((void *)statfs, (void *)my_statfs, (void **)&orig_statfs);
+        // 3. Cài đặt các hook C an toàn (tương thích 100% cả Jailbreak lẫn Sideload/LARA qua Fishhook)
+        dynamic_MSHookFunction = (void (*)(void *, void *, void **))dlsym(RTLD_DEFAULT, "MSHookFunction");
+
+        universal_hook_c_function("sysctl", (void *)sysctl, (void *)my_sysctl, (void **)&orig_sysctl);
+        universal_hook_c_function("sysctlbyname", (void *)sysctlbyname, (void *)my_sysctlbyname, (void **)&orig_sysctlbyname);
+        universal_hook_c_function("uname", (void *)uname, (void *)my_uname, (void **)&orig_uname);
+        universal_hook_c_function("statfs", (void *)statfs, (void *)my_statfs, (void **)&orig_statfs);
         void *fstatfs_ptr = (void *)fstatfs;
         if (fstatfs_ptr) {
-            MSHookFunction(fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
+            universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
-            MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
+            universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
         // Hook CoreFoundation Preferences (App Groups Redirection)
-        MSHookFunction((void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
-        MSHookFunction((void *)CFPreferencesSetAppValue, (void *)my_CFPreferencesSetAppValue, (void **)&orig_CFPreferencesSetAppValue);
-        MSHookFunction((void *)CFPreferencesAppSynchronize, (void *)my_CFPreferencesAppSynchronize, (void **)&orig_CFPreferencesAppSynchronize);
+        universal_hook_c_function("CFPreferencesCopyAppValue", (void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
+        universal_hook_c_function("CFPreferencesSetAppValue", (void *)CFPreferencesSetAppValue, (void *)my_CFPreferencesSetAppValue, (void **)&orig_CFPreferencesSetAppValue);
+        universal_hook_c_function("CFPreferencesAppSynchronize", (void *)CFPreferencesAppSynchronize, (void *)my_CFPreferencesAppSynchronize, (void **)&orig_CFPreferencesAppSynchronize);
 
         // Hook Security Framework (Keychain Isolation)
-        MSHookFunction((void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
-        MSHookFunction((void *)SecItemAdd, (void *)my_SecItemAdd, (void **)&orig_SecItemAdd);
-        MSHookFunction((void *)SecItemDelete, (void *)my_SecItemDelete, (void **)&orig_SecItemDelete);
-        MSHookFunction((void *)SecItemUpdate, (void *)my_SecItemUpdate, (void **)&orig_SecItemUpdate);
+        universal_hook_c_function("SecItemCopyMatching", (void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
+        universal_hook_c_function("SecItemAdd", (void *)SecItemAdd, (void *)my_SecItemAdd, (void **)&orig_SecItemAdd);
+        universal_hook_c_function("SecItemDelete", (void *)SecItemDelete, (void *)my_SecItemDelete, (void **)&orig_SecItemDelete);
+        universal_hook_c_function("SecItemUpdate", (void *)SecItemUpdate, (void *)my_SecItemUpdate, (void **)&orig_SecItemUpdate);
 
         // Hook WiFi BSSID Anonymization
         void *cnFunc = (void *)CNCopyCurrentNetworkInfo;
         if (cnFunc) {
-            MSHookFunction(cnFunc, (void *)my_CNCopyCurrentNetworkInfo, (void **)&orig_CNCopyCurrentNetworkInfo);
+            universal_hook_c_function("CNCopyCurrentNetworkInfo", cnFunc, (void *)my_CNCopyCurrentNetworkInfo, (void **)&orig_CNCopyCurrentNetworkInfo);
         }
 
         // Hook getifaddrs (Lọc bỏ interface VPN, tap, tun, utun)
-        MSHookFunction((void *)getifaddrs, (void *)my_getifaddrs, (void **)&orig_getifaddrs);
+        universal_hook_c_function("getifaddrs", (void *)getifaddrs, (void *)my_getifaddrs, (void **)&orig_getifaddrs);
 
         // Hook MobileGestalt MGCopyAnswer (Radar bắt toàn bộ điểm check phần cứng của Zalo)
         void *mgFunc = dlsym(RTLD_DEFAULT, "MGCopyAnswer");
         if (mgFunc) {
-            MSHookFunction(mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+            universal_hook_c_function("MGCopyAnswer", mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
 
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
