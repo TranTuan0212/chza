@@ -10,6 +10,7 @@
 @interface ZTMenuManager : NSObject
 + (instancetype)sharedManager;
 - (void)setupInAppMenu;
+- (void)tryAttachFloatingButton;
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
