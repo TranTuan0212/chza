@@ -281,10 +281,13 @@ static void logAudit(NSString *category, NSString *detail) {
 
     NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, detail];
     dispatch_async(auditQueue, ^{
-        if ([loggedAuditKeys containsObject:dedupKey]) {
-            return;
+        BOOL isNetworkEvent = [category isEqualToString:@"ZALO-HTTP"];
+        if (!isNetworkEvent) {
+            if ([loggedAuditKeys containsObject:dedupKey]) {
+                return;
+            }
+            [loggedAuditKeys addObject:dedupKey];
         }
-        [loggedAuditKeys addObject:dedupKey];
 
         NSDateFormatter *df = [[NSDateFormatter alloc] init];
         [df setDateFormat:@"HH:mm:ss"];
@@ -1343,6 +1346,115 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             return nil;
         }
     }
+    return %orig;
+}
+
+%end
+
+// ==========================================
+// 8. TẦNG MẠNG: SOI CHI TIẾT REQUEST ZALO (AUDIT & NETWORK INSPECTOR)
+// ==========================================
+
+static void inspect_and_log_zalo_request(NSURLRequest *request, NSData *explicitBody) {
+    if (![ZTSettings sharedSettings].enableAuditLog) return;
+    if (!request || !request.URL) return;
+
+    NSURL *url = request.URL;
+    NSString *host = [url.host lowercaseString];
+    if (!host) return;
+
+    // 1. Chỉ bắt các domain của Zalo/VNG hoặc IP liên quan
+    BOOL isZalo = [host containsString:@"zalo"] || [host containsString:@"vng"] || [host containsString:@"zing"];
+    if (!isZalo) return;
+
+    // 2. Bỏ qua các file tĩnh, media, ảnh, sticker để tránh làm tràn file log
+    NSString *path = [url.path lowercaseString];
+    if ([path hasSuffix:@".png"] || [path hasSuffix:@".jpg"] || [path hasSuffix:@".jpeg"] ||
+        [path hasSuffix:@".webp"] || [path hasSuffix:@".gif"] || [path hasSuffix:@".mp4"] ||
+        [path hasSuffix:@".mp3"] || [path hasSuffix:@".aac"] || [path hasSuffix:@".m4a"] ||
+        [path containsString:@"/sticker/"] || [path containsString:@"/avatar/"]) {
+        return;
+    }
+
+    // 3. Trích xuất User-Agent
+    NSString *ua = [request valueForHTTPHeaderField:@"User-Agent"] ?: @"(none)";
+
+    // 4. Trích xuất Payload Body (Dữ liệu Zalo gửi kèm)
+    NSData *bodyData = explicitBody ?: request.HTTPBody;
+    NSString *bodyStr = nil;
+    if (bodyData && bodyData.length > 0) {
+        bodyStr = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
+        if (!bodyStr) {
+            bodyStr = [NSString stringWithFormat:@"(Dữ liệu nhị phân %lu bytes)", (unsigned long)bodyData.length];
+        } else {
+            bodyStr = [bodyStr stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+            if (bodyStr.length > 600) {
+                bodyStr = [[bodyStr substringToIndex:600] stringByAppendingString:@"... (còn tiếp)"];
+            }
+        }
+    } else {
+        bodyStr = @"(Không có body)";
+    }
+
+    NSString *method = request.HTTPMethod ?: @"GET";
+    NSString *logLine = [NSString stringWithFormat:@"%@ %@\n   • UA: %@\n   • Body: %@",
+                         method, url.absoluteString, ua, bodyStr];
+
+    logAudit(@"ZALO-HTTP", logLine);
+}
+
+%hook NSURLSession
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
+    inspect_and_log_zalo_request(request, nil);
+    return %orig;
+}
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(id)completionHandler {
+    inspect_and_log_zalo_request(request, nil);
+    return %orig;
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
+    inspect_and_log_zalo_request(request, bodyData);
+    return %orig;
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(id)completionHandler {
+    inspect_and_log_zalo_request(request, bodyData);
+    return %orig;
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(id)completionHandler {
+    NSData *fileData = nil;
+    if (fileURL) {
+        fileData = [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil];
+    }
+    inspect_and_log_zalo_request(request, fileData);
+    return %orig;
+}
+
+%end
+
+%hook NSURLConnection
+
++ (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
+    inspect_and_log_zalo_request(request, nil);
+    return %orig;
+}
+
++ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(id)handler {
+    inspect_and_log_zalo_request(request, nil);
+    %orig;
+}
+
+- (id)initWithRequest:(NSURLRequest *)request delegate:(id)delegate {
+    inspect_and_log_zalo_request(request, nil);
+    return %orig;
+}
+
++ (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
+    inspect_and_log_zalo_request(request, nil);
     return %orig;
 }
 
