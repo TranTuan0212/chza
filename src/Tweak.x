@@ -1462,6 +1462,9 @@ static BOOL s_in_bundle_hook = NO;
 %hook NSUserDefaults
 
 - (instancetype)initWithSuiteName:(NSString *)suitename {
+    if (is_original_zalo_app()) {
+        return %orig;
+    }
     if (suitename && ([suitename containsString:@"zingalo"] || [suitename containsString:@"zalo"] || [suitename containsString:@"vng"])) {
         logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"Điều hướng SuiteName '%@' vào Sandbox an toàn", suitename]);
         NSString *safeSuite = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", suitename];
