@@ -32,12 +32,38 @@ static inline BOOL is_original_zalo_app(void) {
     static BOOL sIsOriginal = NO;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        NSString *bid = [[NSBundle mainBundle] bundleIdentifier];
+        NSString *infoPath = [[NSBundle mainBundle] pathForResource:@"Info" ofType:@"plist"];
+        NSDictionary *info = infoPath ? [NSDictionary dictionaryWithContentsOfFile:infoPath] : nil;
+        NSString *bid = info ? info[@"CFBundleIdentifier"] : [[NSBundle mainBundle] bundleIdentifier];
         if (!bid || [bid isEqualToString:@"vn.com.vng.zingalo"] || [bid isEqualToString:@"com.vng.zalo"] || [bid isEqualToString:@"com.zing.zalo"]) {
             sIsOriginal = YES;
         }
     });
     return sIsOriginal;
+}
+
+static inline BOOL is_system_caller(void *addr0, void *addr1) {
+    void *addrs[2] = {addr0, addr1};
+    for (int i = 0; i < 2; i++) {
+        if (!addrs[i]) continue;
+        Dl_info info;
+        if (dladdr(addrs[i], &info) && info.dli_fname) {
+            const char *fname = info.dli_fname;
+            if (strstr(fname, "/System/Library/") != NULL ||
+                strstr(fname, "/usr/lib/") != NULL ||
+                strstr(fname, "CFNetwork") != NULL ||
+                strstr(fname, "Network") != NULL ||
+                strstr(fname, "libnetwork") != NULL ||
+                strstr(fname, "CoreTelephony") != NULL ||
+                strstr(fname, "UserNotifications") != NULL ||
+                strstr(fname, "CoreFoundation") != NULL ||
+                strstr(fname, "Security") != NULL ||
+                strstr(fname, "SystemConfiguration") != NULL) {
+                return YES;
+            }
+        }
+    }
+    return NO;
 }
 
 #define GLOBAL_PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
@@ -1218,6 +1244,14 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
         return ret;
     }
 
+    // TUYỆT ĐỐI BẢO VỆ TẦNG MẠNG HỆ THỐNG: Nếu caller là Network.framework, CFNetwork, libsystem:
+    // giữ nguyên toàn bộ interface (kể cả utun) để socket không bị lỗi EINVAL 22 / Status -1000!
+    if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+        return 0;
+    }
+
+    logAudit(@"VPN-CHECK", @"Zalo quét getifaddrs tìm giao diện VPN -> [ĐÃ ẨN TUN/UTUN]");
+
     struct ifaddrs *prev = NULL;
     struct ifaddrs *curr = *ifap;
     while (curr) {
@@ -1521,16 +1555,11 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 - (NSString *)bundleIdentifier {
     if (self == [NSBundle mainBundle]) {
-        void *retAddr = __builtin_return_address(0);
-        Dl_info info;
-        if (dladdr(retAddr, &info) && info.dli_fname) {
-            const char *fname = info.dli_fname;
-            if (strstr(fname, "/System/Library/") != NULL ||
-                strstr(fname, "/usr/lib/") != NULL ||
-                strstr(fname, "UserNotifications") != NULL ||
-                strstr(fname, "CoreFoundation") != NULL) {
-                return %orig;
-            }
+        if (is_original_zalo_app()) {
+            return %orig;
+        }
+        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+            return %orig;
         }
         logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
@@ -1540,16 +1569,11 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
     if (self == [NSBundle mainBundle] && key && [key isEqualToString:@"CFBundleIdentifier"]) {
-        void *retAddr = __builtin_return_address(0);
-        Dl_info info;
-        if (dladdr(retAddr, &info) && info.dli_fname) {
-            const char *fname = info.dli_fname;
-            if (strstr(fname, "/System/Library/") != NULL ||
-                strstr(fname, "/usr/lib/") != NULL ||
-                strstr(fname, "UserNotifications") != NULL ||
-                strstr(fname, "CoreFoundation") != NULL) {
-                return %orig;
-            }
+        if (is_original_zalo_app()) {
+            return %orig;
+        }
+        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+            return %orig;
         }
         logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
