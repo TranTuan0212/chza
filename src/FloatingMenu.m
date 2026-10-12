@@ -140,8 +140,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     if (self.superview != window) {
         [self removeFromSuperview];
         [window addSubview:self];
-        [window bringSubviewToFront:self];
     }
+    [window bringSubviewToFront:self];
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
@@ -202,9 +202,12 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)setupInAppMenu {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        [self tryAttachFloatingButton];
-    });
+    // Thử attach nút ngay lập tức và retry mỗi 0.5s đến 1.0s trong 10 giây đầu khởi động
+    for (int i = 1; i <= 10; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self tryAttachFloatingButton];
+        });
+    }
     
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(tryAttachFloatingButton)
@@ -213,6 +216,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)tryAttachFloatingButton {
+    if (![ZTSettings sharedSettings].showFloatingMenu) return;
+    
     UIWindow *win = get_active_key_window();
     if (win) {
         [[ZTFloatingButton sharedButton] attachToWindow:win];

@@ -261,13 +261,8 @@ static uint64_t get_real_disk_total_size(void) {
         } else if (dict[@"showFloatingMenu"]) {
             self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
-            // Nếu chạy trên máy Jailbreak có Preferences hệ thống: Zalo gốc TẮT nút nổi (dùng mục Cài đặt).
-            // Nếu chạy dạng Tiêm DEB/Sideload (không có PreferenceLoader) hoặc Zalo Clone: Luôn BẬT nút nổi để có menu điều khiển.
-            if (!has_system_preferenceloader()) {
-                self.showFloatingMenu = YES;
-            } else {
-                self.showFloatingMenu = !is_original_zalo_app();
-            }
+            // Mặc định luôn BẬT nút nổi để người dùng có icon điều khiển và fake máy (dù là JB hay Tiêm IPA)
+            self.showFloatingMenu = YES;
         }
 
         if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {
@@ -1862,6 +1857,34 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 + (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
     record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
+}
+
+%hook UIWindow
+
+- (void)makeKeyAndVisible {
+    %orig;
+    if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
+        if ([ZTSettings sharedSettings].showFloatingMenu) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[ZTMenuManager sharedManager] tryAttachFloatingButton];
+            });
+        }
+    }
+}
+
+%end
+
+%hook UIResponder
+
+- (void)motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event {
+    if (motion == UIEventSubtypeMotionShake) {
+        if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [[ZTMenuManager sharedManager] presentMainMenuFrom:nil];
+            });
+        }
+    }
+    %orig;
 }
 
 %end
