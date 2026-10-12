@@ -762,45 +762,71 @@ static BOOL is_jailbreak_path(const char *path) {
     return NO;
 }
 
+static inline const char *redirect_kvcore_cpath(const char *path, char *buffer, size_t buf_len) {
+    if (!path || buf_len == 0) return path;
+    const char *p = path;
+    if (p[0] == '/') p++;
+    if (strncmp(p, "KVCore", 6) == 0 && (p[6] == '\0' || p[6] == '/')) {
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *sub = [NSString stringWithUTF8String:p + 6];
+            NSString *safe = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/KVCore%@", sub]];
+            const char *safeC = [safe UTF8String];
+            strncpy(buffer, safeC, buf_len - 1);
+            buffer[buf_len - 1] = '\0';
+            return buffer;
+        }
+    }
+    return path;
+}
+
 static int (*orig_access)(const char *path, int mode);
 static int my_access(const char *path, int mode) {
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
         errno = ENOENT;
         return -1;
     }
-    if (path && (strstr(path, "Library") || strstr(path, "Applications") || strstr(path, "var") || strstr(path, "etc") || strstr(path, "bin"))) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [CHO PHÉP]", path]);
+    if (safePath && (strstr(safePath, "Library") || strstr(safePath, "Applications") || strstr(safePath, "var") || strstr(safePath, "etc") || strstr(safePath, "bin"))) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [CHO PHÉP]", safePath]);
     }
-    return orig_access(path, mode);
+    return orig_access(safePath, mode);
 }
 
 static int (*orig_stat)(const char *path, struct stat *buf);
 static int my_stat(const char *path, struct stat *buf) {
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
         errno = ENOENT;
         return -1;
     }
-    if (path && (strstr(path, "Library") || strstr(path, "Applications") || strstr(path, "var") || strstr(path, "etc") || strstr(path, "bin"))) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [CHO PHÉP]", path]);
+    if (safePath && (strstr(safePath, "Library") || strstr(safePath, "Applications") || strstr(safePath, "var") || strstr(safePath, "etc") || strstr(safePath, "bin"))) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [CHO PHÉP]", safePath]);
     }
-    return orig_stat(path, buf);
+    return orig_stat(safePath, buf);
 }
 
 static int (*orig_lstat)(const char *path, struct stat *buf);
 static int my_lstat(const char *path, struct stat *buf) {
-    if (is_tweak_active() && is_jailbreak_path(path)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
         errno = ENOENT;
         return -1;
     }
-    return orig_lstat(path, buf);
+    return orig_lstat(safePath, buf);
 }
 
 static int (*orig_open)(const char *path, int oflag, ...);
 static int my_open(const char *path, int oflag, ...) {
-    if (is_tweak_active() && is_jailbreak_path(path)) {
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
         errno = ENOENT;
         return -1;
     }
@@ -810,17 +836,27 @@ static int my_open(const char *path, int oflag, ...) {
         va_start(args, oflag);
         mode = (mode_t)va_arg(args, int);
         va_end(args);
+        return orig_open(safePath, oflag, mode);
     }
-    return orig_open(path, oflag, mode);
+    return orig_open(safePath, oflag);
 }
 
 static FILE *(*orig_fopen)(const char *path, const char *mode);
 static FILE *my_fopen(const char *path, const char *mode) {
-    if (is_tweak_active() && is_jailbreak_path(path)) {
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    if (is_tweak_active() && is_jailbreak_path(safePath)) {
         errno = ENOENT;
         return NULL;
     }
-    return orig_fopen(path, mode);
+    return orig_fopen(safePath, mode);
+}
+
+static int (*orig_mkdir)(const char *path, mode_t mode);
+static int my_mkdir(const char *path, mode_t mode) {
+    char pbuf[1024];
+    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
+    return orig_mkdir(safePath, mode);
 }
 
 static char *(*orig_getenv)(const char *name);
@@ -899,30 +935,85 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
            [lower containsString:@"embedded.provisionprofile"];
 }
 
+static inline NSString *redirect_kvcore_nsstring(NSString *path) {
+    if (!path || path.length == 0) return path;
+    NSString *trimmed = [path hasPrefix:@"/"] ? [path substringFromIndex:1] : path;
+    if ([trimmed isEqualToString:@"KVCore"] || [trimmed hasPrefix:@"KVCore/"]) {
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *sub = [trimmed substringFromIndex:6];
+            return [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/KVCore%@", sub]];
+        }
+    }
+    // Chống lỗi lưu đường dẫn tương đối (relative path) làm hỏng quyền Sandbox
+    if (![path hasPrefix:@"/"] && ![path containsString:@":"]) {
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            return [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/%@", path]];
+        }
+    }
+    return path;
+}
+
 %hook NSFileManager
 
-- (BOOL)fileExistsAtPath:(NSString *)path {
-    if (path && is_sideload_provision_path(path)) {
-        logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
-        return NO;
+- (BOOL)createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error {
+    if (path) {
+        NSString *safePath = redirect_kvcore_nsstring(path);
+        if (![safePath isEqualToString:path]) {
+            logAudit(@"KVCORE-FIX", [NSString stringWithFormat:@"Điều hướng tạo thư mục an toàn: '%@' -> '%@'", path, safePath]);
+            return %orig(safePath, createIntermediates, attributes, error);
+        }
     }
-    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
-        logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
-        return NO;
+    return %orig;
+}
+
+- (BOOL)createDirectoryAtURL:(NSURL *)url withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error {
+    if (url && [url isFileURL]) {
+        NSString *path = [url path];
+        NSString *safePath = redirect_kvcore_nsstring(path);
+        if (![safePath isEqualToString:path]) {
+            logAudit(@"KVCORE-FIX", [NSString stringWithFormat:@"Điều hướng tạo thư mục URL an toàn: '%@' -> '%@'", path, safePath]);
+            return %orig([NSURL fileURLWithPath:safePath isDirectory:YES], createIntermediates, attributes, error);
+        }
+    }
+    return %orig;
+}
+
+- (BOOL)fileExistsAtPath:(NSString *)path {
+    if (path) {
+        NSString *safePath = redirect_kvcore_nsstring(path);
+        if (![safePath isEqualToString:path]) {
+            return %orig(safePath);
+        }
+        if (is_sideload_provision_path(path)) {
+            logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+            return NO;
+        }
+        if (is_tweak_active() && is_jailbreak_path([path UTF8String])) {
+            logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+            return NO;
+        }
     }
     return %orig;
 }
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
-    if (path && is_sideload_provision_path(path)) {
-        if (isDirectory) *isDirectory = NO;
-        logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
-        return NO;
-    }
-    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
-        if (isDirectory) *isDirectory = NO;
-        logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
-        return NO;
+    if (path) {
+        NSString *safePath = redirect_kvcore_nsstring(path);
+        if (![safePath isEqualToString:path]) {
+            return %orig(safePath, isDirectory);
+        }
+        if (is_sideload_provision_path(path)) {
+            if (isDirectory) *isDirectory = NO;
+            logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+            return NO;
+        }
+        if (is_tweak_active() && is_jailbreak_path([path UTF8String])) {
+            if (isDirectory) *isDirectory = NO;
+            logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+            return NO;
+        }
     }
     return %orig;
 }
@@ -953,7 +1044,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
             [[NSFileManager defaultManager] createDirectoryAtPath:isolatedGroup withIntermediateDirectories:YES attributes:nil error:nil];
             [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
             [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
-            return [NSURL fileURLWithPath:isolatedGroup];
+            return [NSURL fileURLWithPath:isolatedGroup isDirectory:YES];
         }
     }
     return %orig;
@@ -985,6 +1076,17 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 
 - (NSString *)bundleIdentifier {
     if (self == [NSBundle mainBundle]) {
+        void *retAddr = __builtin_return_address(0);
+        Dl_info info;
+        if (dladdr(retAddr, &info) && info.dli_fname) {
+            const char *fname = info.dli_fname;
+            if (strstr(fname, "/System/Library/") != NULL ||
+                strstr(fname, "/usr/lib/") != NULL ||
+                strstr(fname, "UserNotifications") != NULL ||
+                strstr(fname, "CoreFoundation") != NULL) {
+                return %orig;
+            }
+        }
         logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
     }
@@ -992,11 +1094,20 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 }
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle] && key) {
-        if ([key isEqualToString:@"CFBundleIdentifier"]) {
-            logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-            return @"vn.com.vng.zingalo";
+    if (self == [NSBundle mainBundle] && key && [key isEqualToString:@"CFBundleIdentifier"]) {
+        void *retAddr = __builtin_return_address(0);
+        Dl_info info;
+        if (dladdr(retAddr, &info) && info.dli_fname) {
+            const char *fname = info.dli_fname;
+            if (strstr(fname, "/System/Library/") != NULL ||
+                strstr(fname, "/usr/lib/") != NULL ||
+                strstr(fname, "UserNotifications") != NULL ||
+                strstr(fname, "CoreFoundation") != NULL) {
+                return %orig;
+            }
         }
+        logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+        return @"vn.com.vng.zingalo";
     }
     return %orig;
 }
@@ -1004,6 +1115,17 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 - (NSDictionary *)infoDictionary {
     NSDictionary *dict = %orig;
     if (self == [NSBundle mainBundle] && dict) {
+        void *retAddr = __builtin_return_address(0);
+        Dl_info info;
+        if (dladdr(retAddr, &info) && info.dli_fname) {
+            const char *fname = info.dli_fname;
+            if (strstr(fname, "/System/Library/") != NULL ||
+                strstr(fname, "/usr/lib/") != NULL ||
+                strstr(fname, "UserNotifications") != NULL ||
+                strstr(fname, "CoreFoundation") != NULL) {
+                return dict;
+            }
+        }
         NSMutableDictionary *mDict = [dict mutableCopy];
         mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
         return mDict;
@@ -1092,12 +1214,22 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
+        // Đảm bảo thư mục lưu trữ cốt lõi KVCore và IsolatedAppGroups luôn tồn tại sẵn trong Sandbox
+        NSString *homeDir = NSHomeDirectory();
+        if (homeDir) {
+            NSString *kvCoreDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/KVCore"];
+            [[NSFileManager defaultManager] createDirectoryAtPath:kvCoreDir withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *isoGroupsDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/IsolatedAppGroups"];
+            [[NSFileManager defaultManager] createDirectoryAtPath:isoGroupsDir withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+
         // Hook Anti-Jailbreak File & Dylib Checks
         MSHookFunction((void *)open, (void *)my_open, (void **)&orig_open);
         MSHookFunction((void *)fopen, (void *)my_fopen, (void **)&orig_fopen);
         MSHookFunction((void *)access, (void *)my_access, (void **)&orig_access);
         MSHookFunction((void *)stat, (void *)my_stat, (void **)&orig_stat);
         MSHookFunction((void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
+        MSHookFunction((void *)mkdir, (void *)my_mkdir, (void **)&orig_mkdir);
         MSHookFunction((void *)getenv, (void *)my_getenv, (void **)&orig_getenv);
 
         // Hook Security Framework (Keychain Isolation)
