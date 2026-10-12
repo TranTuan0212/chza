@@ -194,6 +194,9 @@ static NSMutableSet *loggedAuditKeys = nil;
 static dispatch_queue_t auditQueue = nil;
 
 static void logAudit(NSString *category, NSString *detail) {
+    // 1. Luôn in trực tiếp ra System Console để soi trực tiếp trên 3uTools Device Console
+    NSLog(@"[ZaloAudit] [%@] %@", category, detail);
+
     if (![ZTSettings sharedSettings].enableAuditLog) return;
 
     static dispatch_once_t onceToken;
@@ -470,10 +473,13 @@ static int my_uname(struct utsname *buf) {
 
 - (NSUUID *)identifierForVendor {
     if (!is_tweak_active()) {
-        return %orig;
+        NSUUID *origUUID = %orig;
+        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [CHƯA KÍCH HOẠT KEY - TRẢ VỀ IDFV THẬT] %@", [origUUID UUIDString]]);
+        return origUUID;
     }
     NSString *fake = [ZTSettings sharedSettings].spoofedIDFV;
     if (fake && fake.length > 0) {
+        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [ĐÃ FAKE IDFV MỚI] %@", fake]);
         NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
         if (uuid) return uuid;
     }
@@ -821,15 +827,26 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 %hook NSFileManager
 
 - (BOOL)fileExistsAtPath:(NSString *)path {
-    if (path && (is_sideload_provision_path(path) || (is_tweak_active() && is_jailbreak_path([path UTF8String])))) {
+    if (path && is_sideload_provision_path(path)) {
+        logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+        return NO;
+    }
+    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
+        logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
         return NO;
     }
     return %orig;
 }
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
-    if (path && (is_sideload_provision_path(path) || (is_tweak_active() && is_jailbreak_path([path UTF8String])))) {
+    if (path && is_sideload_provision_path(path)) {
         if (isDirectory) *isDirectory = NO;
+        logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
+        return NO;
+    }
+    if (is_tweak_active() && path && is_jailbreak_path([path UTF8String])) {
+        if (isDirectory) *isDirectory = NO;
+        logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo quét file Jailbreak '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
         return NO;
     }
     return %orig;
@@ -854,6 +871,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 // Cách ly hoàn toàn Shared App Groups: Chuyển hướng về thư mục riêng trong Sandbox Zalo Clone
 - (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     if (groupIdentifier && ([groupIdentifier containsString:@"zalo"] || [groupIdentifier containsString:@"zingalo"] || [groupIdentifier containsString:@"vng"])) {
+        logAudit(@"APP-GROUP", [NSString stringWithFormat:@"Zalo truy vấn App Group '%@' -> [ĐÃ CÁCH LY VỀ THƯ MỤC RIÊNG]", groupIdentifier]);
         NSString *home = NSHomeDirectory();
         if (home) {
             NSString *isolatedGroup = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/IsolatedAppGroups/%@", groupIdentifier]];
@@ -871,9 +889,11 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
     if (path) {
         NSString *lower = [path lowercaseString];
         if ([lower containsString:@"/containers/data/application"] && ![lower containsString:[NSHomeDirectory() lowercaseString]]) {
+            logAudit(@"SCAN-CONTAINER", [NSString stringWithFormat:@"Zalo quét thư mục container '%@' -> [ĐÃ CHẶN - TRẢ VỀ RỖNG]", path]);
             return @[];
         }
         if ([lower containsString:@"/containers/shared/appgroup"]) {
+            logAudit(@"SCAN-GROUP", [NSString stringWithFormat:@"Zalo quét danh mục App Group '%@' -> [ĐÃ CHẶN - TRẢ VỀ RỖNG]", path]);
             return @[];
         }
     }
@@ -890,6 +910,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 
 - (NSString *)bundleIdentifier {
     if (self == [NSBundle mainBundle]) {
+        logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
     }
     return %orig;
@@ -898,6 +919,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 - (id)objectForInfoDictionaryKey:(NSString *)key {
     if (self == [NSBundle mainBundle] && key) {
         if ([key isEqualToString:@"CFBundleIdentifier"]) {
+            logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
             return @"vn.com.vng.zingalo";
         }
     }
@@ -927,7 +949,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
             [scheme isEqualToString:@"zbra"] ||
             [scheme isEqualToString:@"filza"] ||
             [scheme isEqualToString:@"undecimus"]) {
-            logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CHẶN - TRẢ VỀ NO]", [url absoluteString]]);
+            logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CHẶN JAILBREAK - TRẢ VỀ NO]", [url absoluteString]]);
             return NO;
         }
         // 2. Cách ly tuyệt đối: Chặn phát hiện các app Zalo khác trên máy
@@ -936,7 +958,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
             [scheme isEqualToString:@"vng"] ||
             [scheme hasPrefix:@"vng-"] ||
             [scheme isEqualToString:@"vngconnect"]) {
-            logAudit(@"INTER-APP-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CÁCH LY - TRẢ VỀ NO]", [url absoluteString]]);
+            logAudit(@"INTER-APP-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CÁCH LY CHẶN DÒ TÌM APP ZALO KHÁC - TRẢ VỀ NO]", [url absoluteString]]);
             return NO;
         }
     }
@@ -951,6 +973,7 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
     if (pasteboardName) {
         NSString *lower = [pasteboardName lowercaseString];
         if ([lower containsString:@"zalo"] || [lower containsString:@"zingalo"] || [lower containsString:@"vng"]) {
+            logAudit(@"PASTEBOARD", [NSString stringWithFormat:@"Zalo truy vấn pasteboard '%@' -> [ĐÃ CÁCH LY CHẶN ĐỌC]", pasteboardName]);
             return nil;
         }
     }
