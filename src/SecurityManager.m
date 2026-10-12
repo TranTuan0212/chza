@@ -106,6 +106,14 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     NSString *path = [self getLicenseFilePath];
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
     if (!dict) {
+        // Fallback đọc từ Documents nếu Preferences bị tác động
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *backupPath = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"];
+            dict = [NSDictionary dictionaryWithContentsOfFile:backupPath];
+        }
+    }
+    if (!dict) {
         self.isLicenseActive = NO;
         return;
     }
@@ -163,6 +171,14 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     NSString *path = [self getLicenseFilePath];
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
     [dict writeToFile:path atomically:YES];
+
+    // Lưu thêm 1 bản dự phòng trong Documents để tuyệt đối không bị mất key khi dọn dẹp
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        NSString *backupPath = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:[backupPath stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        [dict writeToFile:backupPath atomically:YES];
+    }
 
     [self loadCachedLicense];
 }

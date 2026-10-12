@@ -37,6 +37,8 @@ static NSString *getConfigPath(void) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:containerDoc]) {
             return containerDoc;
         }
+        // Khi file chưa tồn tại (lần đầu chạy), luôn tạo trong Sandbox Library/Preferences
+        return containerPref;
     }
 
     NSString *groupBase = @"/var/mobile/Containers/Shared/AppGroup";
@@ -472,16 +474,17 @@ static int my_uname(struct utsname *buf) {
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
+    // Luôn ưu tiên trả về IDFV spoofed của profile để Zalo tuyệt đối không bao giờ tóm được IDFV thật của máy!
+    NSString *fake = [ZTSettings sharedSettings].spoofedIDFV;
+    if (fake && fake.length > 0) {
+        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [ĐÃ FAKE IDFV AN TOÀN] %@", fake]);
+        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
+        if (uuid) return uuid;
+    }
     if (!is_tweak_active()) {
         NSUUID *origUUID = %orig;
         logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [CHƯA KÍCH HOẠT KEY - TRẢ VỀ IDFV THẬT] %@", [origUUID UUIDString]]);
         return origUUID;
-    }
-    NSString *fake = [ZTSettings sharedSettings].spoofedIDFV;
-    if (fake && fake.length > 0) {
-        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [ĐÃ FAKE IDFV MỚI] %@", fake]);
-        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
-        if (uuid) return uuid;
     }
     return %orig;
 }

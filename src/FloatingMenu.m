@@ -227,11 +227,21 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     
     ZTSettings *settings = [ZTSettings sharedSettings];
     BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
-    NSString *licStatus = isLicensed ? @"🟢 Bản Quyền Hợp Lệ" : @"❌ Chưa Kích Hoạt Key";
     
-    NSString *title = @"⚡ ZALOTWEAK CONTROL CENTER";
-    NSString *message = [NSString stringWithFormat:@"Trạng Thái: %@\nThiết Bị: %@ | IDFV: %@...",
-                         licStatus,
+    NSString *title = @"⚡ ZALOTWEAK - MENU ĐIỀU KHIỂN";
+    NSString *guidance;
+    if (!isLicensed) {
+        guidance = @"⚠️ BƯỚC CẦN LÀM ĐẦU TIÊN: Bấm [1️⃣] để KÍCH HOẠT KEY!\nSau đó mới tiến hành Deep Wipe và Reg Acc.";
+    } else {
+        guidance = @"📋 QUY TRÌNH TẠO ACC CHUẨN (LÀM THEO THỨ TỰ):\n"
+                   @"▶️ Bước 1: Bấm [2️⃣ Deep Wipe Sạch & Đổi Máy] (App tự thoát)\n"
+                   @"▶️ Bước 2: Bật rồi tắt Chế Độ Máy Bay (đổi IP 4G mới)\n"
+                   @"▶️ Bước 3: Mở lại Zalo -> Bấm [3️⃣ Kiểm Tra Độ Sạch]\n"
+                   @"▶️ Bước 4: Thấy tick xanh 🟢 -> Tiến hành Reg Acc an toàn!";
+    }
+    
+    NSString *message = [NSString stringWithFormat:@"%@\n\n📱 Thiết Bị Giả Lập: %@ | IDFV: %@...",
+                         guidance,
                          settings.deviceMachine,
                          [settings.spoofedIDFV substringToIndex:MIN((NSUInteger)8, settings.spoofedIDFV.length)]];
     
@@ -239,54 +249,43 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    // 0. Kiểm Tra Độ Sạch Trước Khi Reg Acc (Bảng Đối Chiếu)
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🔍 Kiểm Tra Độ Sạch Trước Khi Reg"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        [self showPreRegDiagnosticFrom:top];
-    }]];
-    
-    // 1. Bản Quyền & Kích Hoạt Key
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🛡️ Bản Quyền (DRM Supabase)"
+    // Nút 1: Bản Quyền
+    NSString *licButtonTitle = isLicensed ? @"🛡️ [1️⃣] Quản Lý Bản Quyền (🟢 ĐÃ KÍCH HOẠT)" : @"🛡️ [1️⃣] KÍCH HOẠT BẢN QUYỀN (BẮT BUỘC TRƯỚC)";
+    [sheet addAction:[UIAlertAction actionWithTitle:licButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
         [self showLicenseMenuFrom:top];
     }]];
     
-    // 2. Wipe Sạch Dữ Liệu Clone (Deep Wipe)
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🧹 Deep Wipe Sạch Dữ Liệu Clone"
+    // Nút 2: Deep Wipe & Cấp Máy Mới
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🧹 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Tự đóng app)"
                                              style:UIAlertActionStyleDestructive
                                            handler:^(UIAlertAction *action) {
         [self confirmDeepWipeFrom:top];
     }]];
     
-    // 3. Xem Cấu Hình Giả Lập
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📱 Xem Thông Số Thiết Bị Giả Lập"
+    // Nút 3: Kiểm Tra Độ Sạch Trước Khi Reg
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🔍 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self showPreRegDiagnosticFrom:top];
+    }]];
+    
+    // Nút 4: Xem Cấu Hình Giả Lập
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📱 [4️⃣] Xem Thông Số Máy Giả Lập Đang Dùng"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
         [self showHardwareSpecsFrom:top];
     }]];
     
-    // 4. Random Cấu Hình Mới
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🎲 Đổi Danh Tính Mới (Random Specs)"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        [settings generateNewProfile];
-        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"🎉 Đã Đổi Thiết Bị Mới"
-                                                                      message:[NSString stringWithFormat:@"Đã cấp danh tính phần cứng mới:\n\n- IDFV: %@\n- Profile Keychain: Mới tinh\n- Uptime & Dung lượng: Ngẫu nhiên", settings.spoofedIDFV]
-                                                               preferredStyle:UIAlertControllerStyleAlert];
-        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:done animated:YES completion:nil];
-    }]];
-    
-    // 5. Nhật Ký Kiểm Toán (Audit Log)
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📋 Nhật Ký Kiểm Toán (Audit Log)"
+    // Nút 5: Nhật Ký Kiểm Toán (Audit Log)
+    [sheet addAction:[UIAlertAction actionWithTitle:@"📋 [5️⃣] Nhật Ký Kiểm Toán (Audit Log Console)"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
         [self showAuditLogMenuFrom:top];
     }]];
     
-    // 6. Ẩn Nút Nổi
+    // Nút 6: Ẩn Nút Nổi
     [sheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Này"
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
@@ -469,16 +468,18 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)confirmDeepWipeFrom:(UIViewController *)top {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ XÁC NHẬN WIPE SẠCH DỮ LIỆU"
-                                                                   message:@"Hành động này sẽ:\n"
-                                                                           @"1. Xóa sạch mọi tài khoản, token đăng nhập, cơ sở dữ liệu chat của bản Zalo Clone này.\n"
-                                                                           @"2. Sinh IDFV mới, Uptime mới, và phân vùng Keychain mới 100%.\n"
-                                                                           @"3. BẢO VỆ TUYỆT ĐỐI các file backup .adbk của Apps Manager và file ZaloAudit.log.\n"
-                                                                           @"4. Tự động đóng ứng dụng để Zalo khởi động lại như một chiếc máy mới tinh.\n\n"
-                                                                           @"Bạn có chắc chắn muốn thực hiện?"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ XÁC NHẬN DEEP WIPE SẠCH DỮ LIỆU"
+                                                                   message:@"Hành động này sẽ thực hiện tự động:\n"
+                                                                           @"1. Xóa sạch mọi tài khoản, token đăng nhập, cache, cookies của clone này.\n"
+                                                                           @"2. Cấp IDFV mới tinh, Uptime mới & phân vùng Keychain mới 100%.\n"
+                                                                           @"3. BẢO TỒN NGUYÊN VẸN BẢN QUYỀN (Không bao giờ bị mất Key).\n"
+                                                                           @"4. BẢO VỆ TUYỆT ĐỐI các file backup .adbk của Apps Manager.\n\n"
+                                                                           @"👉 QUY TRÌNH SAU KHI APP TỰ ĐÓNG:\n"
+                                                                           @"• BẬT RỒI TẮT Chế Độ Máy Bay (để xoay IP 4G mới).\n"
+                                                                           @"• Mở lại Zalo -> Bấm [3️⃣ Kiểm Tra Độ Sạch] trước khi Reg Acc!"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"Wipe Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"🧹 Wipe Sạch & Đổi Máy Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [self performInAppDeepWipe];
     }]];
     
@@ -506,17 +507,17 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         SecItemDelete((__bridge CFDictionaryRef)query);
     }
     
-    // Hàm xóa nội bộ có bảo vệ .adbk và ZaloAudit.log
+    // Hàm xóa nội bộ có bảo vệ .adbk, ZaloAudit.log và tất cả cấu hình/bản quyền tweak
     void (^wipeDirSafely)(NSString *) = ^(NSString *dirPath) {
         NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
         for (NSString *item in items) {
             NSString *lower = [item lowercaseString];
-            // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk VÀ FILE AUDIT LOG
+            // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk, FILE AUDIT LOG VÀ TẤT CẢ FILE CẤU HÌNH/KEY CỦA TWEAK
             if ([lower hasSuffix:@".adbk"] ||
                 [lower containsString:@"appsmanager"] ||
                 [lower containsString:@"adbk"] ||
                 [lower isEqualToString:@"zaloaudit.log"] ||
-                [lower isEqualToString:@"com.sonhu.zalotweak.plist"]) {
+                [lower containsString:@"com.sonhu.zalotweak"]) {
                 continue;
             }
             NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
