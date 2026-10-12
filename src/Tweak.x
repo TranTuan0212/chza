@@ -58,7 +58,12 @@ static inline BOOL is_system_caller(void *addr0, void *addr1) {
                 strstr(fname, "UserNotifications") != NULL ||
                 strstr(fname, "CoreFoundation") != NULL ||
                 strstr(fname, "Security") != NULL ||
-                strstr(fname, "SystemConfiguration") != NULL) {
+                strstr(fname, "SystemConfiguration") != NULL ||
+                strstr(fname, "Substrate") != NULL ||
+                strstr(fname, "ellekit") != NULL ||
+                strstr(fname, "ElleKit") != NULL ||
+                strstr(fname, "roothide") != NULL ||
+                strstr(fname, "Zalotweak") != NULL) {
                 return YES;
             }
         }
@@ -994,18 +999,10 @@ static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
 static BOOL is_jailbreak_path(const char *path) {
     if (!path) return NO;
     static const char *jb_indicators[] = {
-        "/var/jb",
-        "/private/var/jb",
-        "/var/binpack",
-        "/basebin",
-        "jbroot",
-        "dopamine",
-        "roothide",
         "/Applications/Sileo.app",
         "/Applications/Zebra.app",
         "/Applications/Cydia.app",
         "/Applications/Filza.app",
-        "/Library/MobileSubstrate",
         "/usr/sbin/sshd",
         "/usr/bin/ssh",
         "/bin/sh",
@@ -1013,15 +1010,7 @@ static BOOL is_jailbreak_path(const char *path) {
         "/etc/apt",
         "/private/var/lib/apt",
         "/private/var/stash",
-        "/Library/PreferenceBundles",
-        "/Library/PreferenceLoader",
-        "/usr/lib/libsubstitute.dylib",
-        "/usr/lib/substrate",
-        "/usr/lib/TweakInject",
-        "/usr/lib/libhooker.dylib",
-        "/usr/lib/ellekit",
-        "MobileSubstrate",
-        "ElleKit",
+        "MobileSubstrate.dylib",
         "test_jb",
         "jailbreak.txt",
         NULL
@@ -1034,151 +1023,59 @@ static BOOL is_jailbreak_path(const char *path) {
     return NO;
 }
 
-static inline const char *redirect_kvcore_cpath(const char *path, char *buffer, size_t buf_len) {
-    if (!path || buf_len == 0) return path;
-    const char *p = path;
-    if (p[0] == '/') p++;
-    if (strncmp(p, "KVCore", 6) == 0 && (p[6] == '\0' || p[6] == '/')) {
-        NSString *home = NSHomeDirectory();
-        if (home) {
-            NSString *sub = [NSString stringWithUTF8String:p + 6];
-            NSString *safe = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/KVCore%@", sub]];
-            const char *safeC = [safe UTF8String];
-            strncpy(buffer, safeC, buf_len - 1);
-            buffer[buf_len - 1] = '\0';
-            return buffer;
-        }
-    }
-    return path;
-}
-
 static int (*orig_access)(const char *path, int mode);
 static int my_access(const char *path, int mode) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
+    if (!path) return -1;
+    if (is_system_caller(__builtin_return_address(0), NULL)) {
+        return orig_access(path, mode);
+    }
+    if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
     }
-    if (safePath && (strstr(safePath, "Library") || strstr(safePath, "Applications") || strstr(safePath, "var") || strstr(safePath, "etc") || strstr(safePath, "bin"))) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"access('%s') -> [CHO PHÉP]", safePath]);
-    }
-    return orig_access(safePath, mode);
+    return orig_access(path, mode);
 }
 
 static int (*orig_stat)(const char *path, struct stat *buf);
 static int my_stat(const char *path, struct stat *buf) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
+    if (!path) return -1;
+    if (is_system_caller(__builtin_return_address(0), NULL)) {
+        return orig_stat(path, buf);
+    }
+    if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
     }
-    if (safePath && (strstr(safePath, "Library") || strstr(safePath, "Applications") || strstr(safePath, "var") || strstr(safePath, "etc") || strstr(safePath, "bin"))) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"stat('%s') -> [CHO PHÉP]", safePath]);
-    }
-    return orig_stat(safePath, buf);
+    return orig_stat(path, buf);
 }
 
 static int (*orig_lstat)(const char *path, struct stat *buf);
 static int my_lstat(const char *path, struct stat *buf) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
-        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", safePath]);
+    if (!path) return -1;
+    if (is_system_caller(__builtin_return_address(0), NULL)) {
+        return orig_lstat(path, buf);
+    }
+    if (is_tweak_active() && is_jailbreak_path(path)) {
+        logAudit(@"FILE-CHECK", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ CHẶN - BÁO KHÔNG TỒN TẠI]", path]);
         errno = ENOENT;
         return -1;
     }
-    return orig_lstat(safePath, buf);
-}
-
-static int (*orig_open)(const char *path, int oflag, ...);
-static int my_open(const char *path, int oflag, ...) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
-        errno = ENOENT;
-        return -1;
-    }
-    mode_t mode = 0;
-    if (oflag & O_CREAT) {
-        va_list args;
-        va_start(args, oflag);
-        mode = (mode_t)va_arg(args, int);
-        va_end(args);
-
-        // Tự động tạo thư mục cha đệ quy để LevelDB / SQLite / MMKV không bao giờ bị lỗi ENOENT
-        if (safePath) {
-            NSString *safeStr = [NSString stringWithUTF8String:safePath];
-            NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
-            if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
-                [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
-            }
-        }
-        return orig_open(safePath, oflag, mode);
-    }
-    return orig_open(safePath, oflag);
-}
-
-static int (*orig_openat)(int fd, const char *path, int oflag, ...);
-static int my_openat(int fd, const char *path, int oflag, ...) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
-        errno = ENOENT;
-        return -1;
-    }
-    mode_t mode = 0;
-    if (oflag & O_CREAT) {
-        va_list args;
-        va_start(args, oflag);
-        mode = (mode_t)va_arg(args, int);
-        va_end(args);
-
-        if (safePath) {
-            NSString *safeStr = [NSString stringWithUTF8String:safePath];
-            NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
-            if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
-                [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
-            }
-        }
-        return orig_openat ? orig_openat(fd, safePath, oflag, mode) : -1;
-    }
-    return orig_openat ? orig_openat(fd, safePath, oflag) : -1;
+    return orig_lstat(path, buf);
 }
 
 static FILE *(*orig_fopen)(const char *path, const char *mode);
 static FILE *my_fopen(const char *path, const char *mode) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (is_tweak_active() && is_jailbreak_path(safePath)) {
+    if (!path) return NULL;
+    if (is_system_caller(__builtin_return_address(0), NULL)) {
+        return orig_fopen(path, mode);
+    }
+    if (is_tweak_active() && is_jailbreak_path(path)) {
         errno = ENOENT;
         return NULL;
     }
-    if (mode && (strchr(mode, 'w') || strchr(mode, 'a')) && safePath) {
-        NSString *safeStr = [NSString stringWithUTF8String:safePath];
-        NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
-        if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
-            [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
-        }
-    }
-    return orig_fopen(safePath, mode);
-}
-
-static int (*orig_mkdir)(const char *path, mode_t mode);
-static int my_mkdir(const char *path, mode_t mode) {
-    char pbuf[1024];
-    const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    if (safePath) {
-        NSString *safeStr = [NSString stringWithUTF8String:safePath];
-        if (![[NSFileManager defaultManager] fileExistsAtPath:safeStr]) {
-            [[NSFileManager defaultManager] createDirectoryAtPath:safeStr withIntermediateDirectories:YES attributes:nil error:nil];
-            return 0;
-        }
-    }
-    return orig_mkdir ? orig_mkdir(safePath, mode) : 0;
+    return orig_fopen(path, mode);
 }
 
 static char *(*orig_getenv)(const char *name);
@@ -2035,51 +1932,11 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
-        // Đổi Current Working Directory (CWD) sang Sandbox Library/Application Support
-        // để mọi đường dẫn tương đối của LevelDB C++ ("KVCore/Device/...") tự động trỏ đúng vào Sandbox
-        NSString *homeDir = NSHomeDirectory();
-        if (homeDir) {
-            NSString *appSupportDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support"];
-            [[NSFileManager defaultManager] createDirectoryAtPath:appSupportDir withIntermediateDirectories:YES attributes:nil error:nil];
-            chdir([appSupportDir UTF8String]);
-
-            NSString *kvCoreDir = [appSupportDir stringByAppendingPathComponent:@"KVCore"];
-            [[NSFileManager defaultManager] createDirectoryAtPath:kvCoreDir withIntermediateDirectories:YES attributes:nil error:nil];
-            NSString *kvDeviceDir = [kvCoreDir stringByAppendingPathComponent:@"Device"];
-            [[NSFileManager defaultManager] createDirectoryAtPath:kvDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
-            NSString *isoGroupsDir = [appSupportDir stringByAppendingPathComponent:@"IsolatedAppGroups"];
-            [[NSFileManager defaultManager] createDirectoryAtPath:isoGroupsDir withIntermediateDirectories:YES attributes:nil error:nil];
-
-            // Tạo Symlinks dự phòng để dù tìm ở Home hay Documents đều trỏ về KVCore
-            NSString *homeKV = [homeDir stringByAppendingPathComponent:@"KVCore"];
-            if (![[NSFileManager defaultManager] fileExistsAtPath:homeKV]) {
-                symlink([kvCoreDir UTF8String], [homeKV UTF8String]);
-            }
-            NSString *docKV = [homeDir stringByAppendingPathComponent:@"Documents/KVCore"];
-            if (![[NSFileManager defaultManager] fileExistsAtPath:docKV]) {
-                symlink([kvCoreDir UTF8String], [docKV UTF8String]);
-            }
-        }
-
         // Hook Anti-Jailbreak File & Dylib Checks
-        MSHookFunction((void *)open, (void *)my_open, (void **)&orig_open);
-        void *openatPtr = dlsym(RTLD_DEFAULT, "openat");
-        if (openatPtr) {
-            MSHookFunction(openatPtr, (void *)my_openat, (void **)&orig_openat);
-        }
-        void *openNocancelPtr = dlsym(RTLD_DEFAULT, "open$NOCANCEL");
-        if (openNocancelPtr) {
-            MSHookFunction(openNocancelPtr, (void *)my_open, NULL);
-        }
-        void *openatNocancelPtr = dlsym(RTLD_DEFAULT, "openat$NOCANCEL");
-        if (openatNocancelPtr) {
-            MSHookFunction(openatNocancelPtr, (void *)my_openat, NULL);
-        }
         MSHookFunction((void *)fopen, (void *)my_fopen, (void **)&orig_fopen);
         MSHookFunction((void *)access, (void *)my_access, (void **)&orig_access);
         MSHookFunction((void *)stat, (void *)my_stat, (void **)&orig_stat);
         MSHookFunction((void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
-        MSHookFunction((void *)mkdir, (void *)my_mkdir, (void **)&orig_mkdir);
         MSHookFunction((void *)getenv, (void *)my_getenv, (void **)&orig_getenv);
 
         // Hook CoreFoundation Preferences (App Groups Redirection)
