@@ -52,6 +52,25 @@ static inline BOOL is_original_zalo_app(void) {
     return NO;
 }
 
+static inline BOOL has_system_preferenceloader(void) {
+    static int s_has_pl = -1;
+    if (s_has_pl != -1) return (s_has_pl == 1);
+    const char *paths[] = {
+        "/Library/PreferenceLoader/Preferences",
+        "/var/jb/Library/PreferenceLoader/Preferences",
+        "/var/jb/usr/lib",
+        NULL
+    };
+    for (int i = 0; paths[i] != NULL; i++) {
+        if (access(paths[i], F_OK) == 0) {
+            s_has_pl = 1;
+            return YES;
+        }
+    }
+    s_has_pl = 0;
+    return NO;
+}
+
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
     void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
@@ -221,14 +240,20 @@ static uint64_t get_real_disk_total_size(void) {
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
+
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
             self.showFloatingMenu = NO;
         } else if (dict[@"showFloatingMenu"]) {
             self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
-            // Mặc định: Zalo gốc từ App Store (DEB) TẮT nút nổi (dùng Cài đặt Settings). Clone/Sideload BẬT nút nổi.
-            self.showFloatingMenu = !is_original_zalo_app();
+            // Nếu chạy trên máy Jailbreak có Preferences hệ thống: Zalo gốc TẮT nút nổi (dùng mục Cài đặt).
+            // Nếu chạy dạng Tiêm DEB/Sideload (không có PreferenceLoader) hoặc Zalo Clone: Luôn BẬT nút nổi để có menu điều khiển.
+            if (!has_system_preferenceloader()) {
+                self.showFloatingMenu = YES;
+            } else {
+                self.showFloatingMenu = !is_original_zalo_app();
+            }
         }
 
         if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {

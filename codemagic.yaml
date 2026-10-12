@@ -1,4 +1,47 @@
 workflows:
+  build-rootless:
+    name: Build ZaloTweak (Rootless & Sideload DEB)
+    max_build_duration: 15
+    instance_type: mac_mini_m2
+    environment:
+      xcode: 26.4
+      vars:
+        THEOS: /Users/builder/theos
+    scripts:
+      - name: Setup Theos, ldid and iOS SDK
+        script: |
+          echo "==> Cai dat cong cu ky ldid..."
+          which ldid || env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
+          echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
+          rm -rf $THEOS
+          git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
+          echo "==> Dang cai dat iOS 16.5 SDK..."
+          mkdir -p $THEOS/sdks
+          if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz -o /tmp/iPhoneOS16.5.sdk.tar.xz && [ -s /tmp/iPhoneOS16.5.sdk.tar.xz ]; then
+            tar -xf /tmp/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks
+            rm -f /tmp/iPhoneOS16.5.sdk.tar.xz
+          else
+            echo "==> curl that bai hoac 504 timeout, dang clone truc tiep tu repository theos/sdks..."
+            rm -rf $THEOS/sdks
+            git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
+          fi
+      - name: Build Rootless DEB
+        script: |
+          echo "==> Bien dich ban Rootless (Tuong thich ca Dopamine JB va tiem Sideloadly)..."
+          make clean
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
+          find .theos/ -name "Zalotweak.dylib" -exec cp {} packages/ \; 2>/dev/null || true
+          if [ -f packages/Zalotweak.dylib ]; then
+            echo "==> Chuan hoa rpath cho Zalotweak.dylib..."
+            install_name_tool -change "/var/jb/usr/lib/libsubstrate.dylib" "@rpath/CydiaSubstrate.framework/CydiaSubstrate" packages/Zalotweak.dylib 2>/dev/null || true
+            install_name_tool -change "/usr/lib/libsubstrate.dylib" "@rpath/CydiaSubstrate.framework/CydiaSubstrate" packages/Zalotweak.dylib 2>/dev/null || true
+            install_name_tool -add_rpath "@executable_path/Frameworks" packages/Zalotweak.dylib 2>/dev/null || true
+            install_name_tool -add_rpath "@loader_path/Frameworks" packages/Zalotweak.dylib 2>/dev/null || true
+          fi
+    artifacts:
+      - packages/*.deb
+      - packages/*.dylib
+
   build-roothide:
     name: Build ZaloTweak (Roothide)
     max_build_duration: 15
@@ -30,42 +73,6 @@ workflows:
           echo "==> Bien dich ban Roothide..."
           make clean
           make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1
-          find .theos/ -name "Zalotweak.dylib" -exec cp {} packages/ \; 2>/dev/null || true
-    artifacts:
-      - packages/*.deb
-      - packages/*.dylib
-
-  build-rootless:
-    name: Build ZaloTweak (Rootless)
-    max_build_duration: 15
-    instance_type: mac_mini_m2
-    environment:
-      xcode: 26.4
-      vars:
-        THEOS: /Users/builder/theos
-    scripts:
-      - name: Setup Theos, ldid and iOS SDK
-        script: |
-          echo "==> Cai dat cong cu ky ldid..."
-          which ldid || env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
-          echo "==> Dang cai dat Theos ho tro Roothide & Rootless..."
-          rm -rf $THEOS
-          git clone --depth=1 --recursive --shallow-submodules https://github.com/roothide/theos.git $THEOS
-          echo "==> Dang cai dat iOS 16.5 SDK..."
-          mkdir -p $THEOS/sdks
-          if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.5.sdk.tar.xz -o /tmp/iPhoneOS16.5.sdk.tar.xz && [ -s /tmp/iPhoneOS16.5.sdk.tar.xz ]; then
-            tar -xf /tmp/iPhoneOS16.5.sdk.tar.xz -C $THEOS/sdks
-            rm -f /tmp/iPhoneOS16.5.sdk.tar.xz
-          else
-            echo "==> curl that bai hoac 504 timeout, dang clone truc tiep tu repository theos/sdks..."
-            rm -rf $THEOS/sdks
-            git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
-          fi
-      - name: Build Rootless DEB
-        script: |
-          echo "==> Bien dich ban Rootless..."
-          make clean
-          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
           find .theos/ -name "Zalotweak.dylib" -exec cp {} packages/ \; 2>/dev/null || true
     artifacts:
       - packages/*.deb

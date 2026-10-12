@@ -1,8 +1,8 @@
 TARGET := iphone:clang:16.5:15.0
 ARCHS := arm64 arm64e
 
-# Hỗ trợ Roothide & Rootless
-THEOS_PACKAGE_SCHEME ?= roothide
+# Hỗ trợ Roothide & Rootless (Mặc định Rootless để tương thích tiêm Sideloadly)
+THEOS_PACKAGE_SCHEME ?= rootless
 
 include $(THEOS)/makefiles/common.mk
 
