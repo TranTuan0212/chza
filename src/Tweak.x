@@ -935,7 +935,7 @@ static void performInAppSelfWipeIfNeeded(void) {
         NSString *prefDir = [home stringByAppendingPathComponent:@"Library/Preferences"];
         NSArray *prefs = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:prefDir error:nil];
         for (NSString *p in prefs) {
-            if ([p hasPrefix:@"com.zing.zalo"] || [p hasPrefix:@"com.vng.zalo"]) {
+            if ([p hasPrefix:@"cn.com.vng.zingalo"] || [p hasPrefix:@"com.zing.zalo"] || [p hasPrefix:@"com.vng.zalo"]) {
                 [[NSFileManager defaultManager] removeItemAtPath:[prefDir stringByAppendingPathComponent:p] error:nil];
             }
         }

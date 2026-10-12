@@ -10,8 +10,13 @@
 #import <stdlib.h>
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
-#define ZALO_BUNDLE_ID @"com.zing.zalo"
-#define ZALO_BUNDLE_ID_ALT @"com.vng.zalo"
+static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
+    return @[
+        @"cn.com.vng.zingalo",
+        @"com.zing.zalo",
+        @"com.vng.zalo"
+    ];
+}
 
 static void save_dict_to_all_locations(NSDictionary *dict);
 static void kill_all_zalo_processes(void);
@@ -150,8 +155,9 @@ static void kill_all_zalo_processes(void) {
             id service = ((id (*)(id, SEL))objc_msgSend)(fbsClass, sharedSel);
             SEL termSel = sel_registerName("terminateApplication:forReason:andReport:withDescription:");
             if (service && [service respondsToSelector:termSel]) {
-                ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, ZALO_BUNDLE_ID, 1, NO, @"ZaloTweak Wipe");
-                ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, ZALO_BUNDLE_ID_ALT, 1, NO, @"ZaloTweak Wipe");
+                for (NSString *bid in get_known_zalo_bundle_ids()) {
+                    ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, bid, 1, NO, @"ZaloTweak Wipe");
+                }
             }
         }
     }
@@ -167,6 +173,7 @@ static void kill_all_zalo_processes(void) {
                 for (int i = 0; i < count; i++) {
                     const char *name = procs[i].kp_proc.p_comm;
                     if (name && (strcasestr(name, "zalo") != NULL ||
+                                 strcasestr(name, "zing") != NULL ||
                                  strcmp(name, "NotificationSer") == 0 ||
                                  strcmp(name, "NotificationCon") == 0)) {
                         kill(procs[i].kp_proc.p_pid, SIGKILL);
@@ -203,17 +210,19 @@ static void wipe_directory_contents(NSString *dirPath) {
     }
 }
 
-static NSString *get_zalo_data_container_path(void) {
+static NSArray<NSString *> *get_zalo_data_container_paths(void) {
+    NSMutableArray *paths = [NSMutableArray array];
     Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
     if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        for (NSString *bid in @[ZALO_BUNDLE_ID, ZALO_BUNDLE_ID_ALT]) {
+        for (NSString *bid in get_known_zalo_bundle_ids()) {
             LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
             if (proxy) {
                 if ([proxy respondsToSelector:@selector(dataContainerURL)] && proxy.dataContainerURL) {
-                    return proxy.dataContainerURL.path;
-                }
-                if ([proxy respondsToSelector:@selector(containerURL)] && proxy.containerURL) {
-                    return proxy.containerURL.path;
+                    NSString *p = proxy.dataContainerURL.path;
+                    if (p && ![paths containsObject:p]) [paths addObject:p];
+                } else if ([proxy respondsToSelector:@selector(containerURL)] && proxy.containerURL) {
+                    NSString *p = proxy.containerURL.path;
+                    if (p && ![paths containsObject:p]) [paths addObject:p];
                 }
             }
         }
@@ -226,18 +235,21 @@ static NSString *get_zalo_data_container_path(void) {
         NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
         NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
         NSString *ident = meta[@"MCMMetadataIdentifier"];
-        if ([ident isEqualToString:ZALO_BUNDLE_ID] || [ident isEqualToString:ZALO_BUNDLE_ID_ALT]) {
-            return [baseDir stringByAppendingPathComponent:uuid];
+        if (ident && ([ident containsString:@"zalo"] || [ident containsString:@"zingalo"] || [get_known_zalo_bundle_ids() containsObject:ident])) {
+            NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+            if (![paths containsObject:fullP]) {
+                [paths addObject:fullP];
+            }
         }
     }
-    return nil;
+    return paths;
 }
 
 static NSArray<NSString *> *get_zalo_group_container_paths(void) {
     NSMutableArray *paths = [NSMutableArray array];
     Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
     if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        for (NSString *bid in @[ZALO_BUNDLE_ID, ZALO_BUNDLE_ID_ALT]) {
+        for (NSString *bid in get_known_zalo_bundle_ids()) {
             LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
             if (proxy && proxy.groupContainerURLs) {
                 for (NSURL *url in proxy.groupContainerURLs.allValues) {
@@ -270,8 +282,8 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     [dict writeToFile:PREFS_PATH atomically:YES];
     chmod([PREFS_PATH UTF8String], 0644);
 
-    NSString *dataContainer = get_zalo_data_container_path();
-    if (dataContainer) {
+    NSArray *dataContainers = get_zalo_data_container_paths();
+    for (NSString *dataContainer in dataContainers) {
         NSString *prefDir = [dataContainer stringByAppendingPathComponent:@"Library/Preferences"];
         [[NSFileManager defaultManager] createDirectoryAtPath:prefDir withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *p1 = [prefDir stringByAppendingPathComponent:@"com.sonhu.zalotweak.plist"];
@@ -323,9 +335,9 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     // 1. Tắt toàn bộ tiến trình
     kill_all_zalo_processes();
 
-    // 2. Xóa sạch App Data Container (Tất cả thư mục con trong Library, Documents, tmp)
-    NSString *dataContainer = get_zalo_data_container_path();
-    if (dataContainer) {
+    // 2. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
+    NSArray *dataContainers = get_zalo_data_container_paths();
+    for (NSString *dataContainer in dataContainers) {
         wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"]);
         wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"]);
 

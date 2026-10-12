@@ -1,6 +1,12 @@
 {
     Filter = {
         Bundles = (
+            "cn.com.vng.zingalo",
+            "cn.com.vng.zingalo.NotificationService",
+            "cn.com.vng.zingalo.notificationService",
+            "cn.com.vng.zingalo.NotificationContent",
+            "cn.com.vng.zingalo.shareExtension",
+            "cn.com.vng.zingalo.ShareExtension",
             "com.zing.zalo",
             "com.zing.zalo.NotificationService",
             "com.zing.zalo.notificationService",
