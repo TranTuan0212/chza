@@ -879,8 +879,84 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
     [[ZTSettings sharedSettings] loadSettings];
 }
 
+static void cleanDirectoryPreservingAdbk(NSString *dirPath) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:dirPath]) return;
+
+    NSError *err = nil;
+    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:&err];
+    if (err || !items) return;
+
+    for (NSString *item in items) {
+        if ([item hasPrefix:@".com.apple.mobile_container_manager"]) continue;
+        NSString *lower = [item lowercaseString];
+        if ([lower hasSuffix:@".adbk"] || [lower containsString:@"appsmanager"] || [lower containsString:@"adbk"]) {
+            continue;
+        }
+        if ([item isEqualToString:@"com.sonhu.zalotweak.plist"]) continue;
+        NSString *subPath = [dirPath stringByAppendingPathComponent:item];
+        [fm removeItemAtPath:subPath error:nil];
+    }
+}
+
+static void performInAppSelfWipeIfNeeded(void) {
+    NSString *cpath = getConfigPath();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:cpath];
+    if (![dict[@"wipePending"] boolValue]) {
+        return;
+    }
+
+    NSLog(@"[ZaloTweak] ⚠️ Phát hiện lệnh wipePending -> Tiến hành tự động Deep Wipe sạch bóng từ bên trong!");
+
+    // 1. Xóa sạch mọi mục Keychain thuộc về Zalo
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword,
+        (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecClassKey,
+        (__bridge id)kSecClassIdentity
+    ];
+    for (id secClass in secClasses) {
+        NSDictionary *query = @{(__bridge id)kSecClass: secClass};
+        SecItemDelete((__bridge CFDictionaryRef)query);
+    }
+
+    // 2. Dọn sạch các thư mục Sandbox trong Home Directory (BẢO VỆ TUYỆT ĐỐI FILE .adbk)
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Documents"]);
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"tmp"]);
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Caches"]);
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Application Support"]);
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/WebKit"]);
+        cleanDirectoryPreservingAdbk([home stringByAppendingPathComponent:@"Library/Cookies"]);
+
+        // Xóa sạch các file plist của Zalo để Zalo reset về màn hình chọn ngôn ngữ ban đầu
+        NSString *prefDir = [home stringByAppendingPathComponent:@"Library/Preferences"];
+        NSArray *prefs = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:prefDir error:nil];
+        for (NSString *p in prefs) {
+            if ([p hasPrefix:@"com.zing.zalo"] || [p hasPrefix:@"com.vng.zalo"]) {
+                [[NSFileManager defaultManager] removeItemAtPath:[prefDir stringByAppendingPathComponent:p] error:nil];
+            }
+        }
+    }
+
+    // 3. Reset cờ wipePending = NO để những lần mở app sau không bị wipe lại
+    NSMutableDictionary *mdict = [NSMutableDictionary dictionaryWithContentsOfFile:cpath] ?: [NSMutableDictionary dictionary];
+    mdict[@"wipePending"] = @(NO);
+    [mdict writeToFile:cpath atomically:YES];
+    if (home) {
+        NSString *localPref = [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
+        [mdict writeToFile:localPref atomically:YES];
+        NSString *localDoc = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.plist"];
+        [mdict writeToFile:localDoc atomically:YES];
+    }
+    NSLog(@"[ZaloTweak] 🟢 In-App Deep Wipe hoàn tất. Zalo sẽ bắt đầu như cài đặt mới tinh.");
+}
+
 %ctor {
     @autoreleasepool {
+        performInAppSelfWipeIfNeeded();
         [[ZTSettings sharedSettings] loadSettings];
 
         CFNotificationCenterAddObserver(

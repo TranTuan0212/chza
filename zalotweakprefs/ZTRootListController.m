@@ -10,7 +10,8 @@
 #import <stdlib.h>
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
-#define ZALO_BUNDLE_ID @"com.vng.zalo"
+#define ZALO_BUNDLE_ID @"com.zing.zalo"
+#define ZALO_BUNDLE_ID_ALT @"com.vng.zalo"
 
 static void save_dict_to_all_locations(NSDictionary *dict);
 static void kill_all_zalo_processes(void);
@@ -150,6 +151,7 @@ static void kill_all_zalo_processes(void) {
             SEL termSel = sel_registerName("terminateApplication:forReason:andReport:withDescription:");
             if (service && [service respondsToSelector:termSel]) {
                 ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, ZALO_BUNDLE_ID, 1, NO, @"ZaloTweak Wipe");
+                ((void (*)(id, SEL, id, long long, BOOL, id))objc_msgSend)(service, termSel, ZALO_BUNDLE_ID_ALT, 1, NO, @"ZaloTweak Wipe");
             }
         }
     }
@@ -189,6 +191,13 @@ static void wipe_directory_contents(NSString *dirPath) {
         if ([item hasPrefix:@".com.apple.mobile_container_manager"]) {
             continue;
         }
+        // BẢO VỆ TUYỆT ĐỐI FILE BACKUP .adbk CỦA APPS MANAGER VÀ CÁC FOLDER BACKUP
+        NSString *lower = [item lowercaseString];
+        if ([lower hasSuffix:@".adbk"] ||
+            [lower containsString:@"appsmanager"] ||
+            [lower containsString:@"adbk"]) {
+            continue;
+        }
         NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
         [fm removeItemAtPath:fullPath error:nil];
     }
@@ -197,13 +206,15 @@ static void wipe_directory_contents(NSString *dirPath) {
 static NSString *get_zalo_data_container_path(void) {
     Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
     if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:ZALO_BUNDLE_ID];
-        if (proxy) {
-            if ([proxy respondsToSelector:@selector(dataContainerURL)] && proxy.dataContainerURL) {
-                return proxy.dataContainerURL.path;
-            }
-            if ([proxy respondsToSelector:@selector(containerURL)] && proxy.containerURL) {
-                return proxy.containerURL.path;
+        for (NSString *bid in @[ZALO_BUNDLE_ID, ZALO_BUNDLE_ID_ALT]) {
+            LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
+            if (proxy) {
+                if ([proxy respondsToSelector:@selector(dataContainerURL)] && proxy.dataContainerURL) {
+                    return proxy.dataContainerURL.path;
+                }
+                if ([proxy respondsToSelector:@selector(containerURL)] && proxy.containerURL) {
+                    return proxy.containerURL.path;
+                }
             }
         }
     }
@@ -214,7 +225,8 @@ static NSString *get_zalo_data_container_path(void) {
     for (NSString *uuid in subdirs) {
         NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
         NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
-        if ([meta[@"MCMMetadataIdentifier"] isEqualToString:ZALO_BUNDLE_ID]) {
+        NSString *ident = meta[@"MCMMetadataIdentifier"];
+        if ([ident isEqualToString:ZALO_BUNDLE_ID] || [ident isEqualToString:ZALO_BUNDLE_ID_ALT]) {
             return [baseDir stringByAppendingPathComponent:uuid];
         }
     }
@@ -225,12 +237,15 @@ static NSArray<NSString *> *get_zalo_group_container_paths(void) {
     NSMutableArray *paths = [NSMutableArray array];
     Class LSAppProxyClass = NSClassFromString(@"LSApplicationProxy");
     if (LSAppProxyClass && [LSAppProxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:ZALO_BUNDLE_ID];
-        if (proxy && proxy.groupContainerURLs) {
-            for (NSURL *url in proxy.groupContainerURLs.allValues) {
-                if (url.path) [paths addObject:url.path];
+        for (NSString *bid in @[ZALO_BUNDLE_ID, ZALO_BUNDLE_ID_ALT]) {
+            LSApplicationProxy *proxy = [LSAppProxyClass applicationProxyForIdentifier:bid];
+            if (proxy && proxy.groupContainerURLs) {
+                for (NSURL *url in proxy.groupContainerURLs.allValues) {
+                    if (url.path && ![paths containsObject:url.path]) {
+                        [paths addObject:url.path];
+                    }
+                }
             }
-            return paths;
         }
     }
 
@@ -241,8 +256,11 @@ static NSArray<NSString *> *get_zalo_group_container_paths(void) {
         NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
         NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
         NSString *identifier = meta[@"MCMMetadataIdentifier"];
-        if ([identifier containsString:@"zalo"] || [identifier containsString:@"vng"]) {
-            [paths addObject:[baseDir stringByAppendingPathComponent:uuid]];
+        if ([identifier containsString:@"zalo"] || [identifier containsString:@"zing"] || [identifier containsString:@"vng"]) {
+            NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+            if (![paths containsObject:fullP]) {
+                [paths addObject:fullP];
+            }
         }
     }
     return paths;
@@ -354,6 +372,8 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     uint64_t totalDisk = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: 128000000000ULL;
     uint64_t randomUsed = 42000000000ULL + ((uint64_t)arc4random_uniform(25000000)) * 1000ULL;
     dict[@"diskFreeSize"] = @(totalDisk > randomUsed ? (totalDisk - randomUsed) : 60000000000ULL);
+
+    dict[@"wipePending"] = @(YES);
 
     // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
     save_dict_to_all_locations(dict);

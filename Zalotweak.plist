@@ -1,11 +1,15 @@
 {
     Filter = {
         Bundles = (
+            "com.zing.zalo",
+            "com.zing.zalo.NotificationService",
+            "com.zing.zalo.notificationService",
+            "com.zing.zalo.NotificationContent",
+            "com.zing.zalo.shareExtension",
+            "com.zing.zalo.ShareExtension",
             "com.vng.zalo",
             "com.vng.zalo.NotificationService",
-            "com.vng.zalo.NotificationContent",
-            "com.vng.zalo.shareExtension",
-            "com.vng.zalo.ShareExtension"
+            "com.vng.zalo.NotificationContent"
         );
     };
 }
