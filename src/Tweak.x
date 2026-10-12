@@ -836,6 +836,15 @@ static int my_open(const char *path, int oflag, ...) {
         va_start(args, oflag);
         mode = (mode_t)va_arg(args, int);
         va_end(args);
+
+        // Tự động tạo thư mục cha đệ quy để LevelDB / SQLite / MMKV không bao giờ bị lỗi ENOENT
+        if (safePath) {
+            NSString *safeStr = [NSString stringWithUTF8String:safePath];
+            NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
+            if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
+                [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+        }
         return orig_open(safePath, oflag, mode);
     }
     return orig_open(safePath, oflag);
@@ -849,6 +858,13 @@ static FILE *my_fopen(const char *path, const char *mode) {
         errno = ENOENT;
         return NULL;
     }
+    if (mode && (strchr(mode, 'w') || strchr(mode, 'a')) && safePath) {
+        NSString *safeStr = [NSString stringWithUTF8String:safePath];
+        NSString *parentDir = [safeStr stringByDeletingLastPathComponent];
+        if (parentDir && parentDir.length > 0 && ![[NSFileManager defaultManager] fileExistsAtPath:parentDir]) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+    }
     return orig_fopen(safePath, mode);
 }
 
@@ -856,7 +872,14 @@ static int (*orig_mkdir)(const char *path, mode_t mode);
 static int my_mkdir(const char *path, mode_t mode) {
     char pbuf[1024];
     const char *safePath = redirect_kvcore_cpath(path, pbuf, sizeof(pbuf));
-    return orig_mkdir(safePath, mode);
+    if (safePath) {
+        NSString *safeStr = [NSString stringWithUTF8String:safePath];
+        if (![[NSFileManager defaultManager] fileExistsAtPath:safeStr]) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:safeStr withIntermediateDirectories:YES attributes:nil error:nil];
+            return 0;
+        }
+    }
+    return orig_mkdir ? orig_mkdir(safePath, mode) : 0;
 }
 
 static char *(*orig_getenv)(const char *name);
@@ -867,6 +890,44 @@ static char *my_getenv(const char *name) {
         }
     }
     return orig_getenv(name);
+}
+
+// Chuyển hướng CFPreferences App Groups sang container an toàn của clone
+static CFPropertyListRef (*orig_CFPreferencesCopyAppValue)(CFStringRef key, CFStringRef applicationID);
+static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID) {
+    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+        NSString *appID = (__bridge NSString *)applicationID;
+        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
+            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
+            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, (__bridge CFStringRef)safeAppID) : NULL;
+        }
+    }
+    return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, applicationID) : NULL;
+}
+
+static void (*orig_CFPreferencesSetAppValue)(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID);
+static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID) {
+    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+        NSString *appID = (__bridge NSString *)applicationID;
+        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
+            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
+            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, (__bridge CFStringRef)safeAppID);
+            return;
+        }
+    }
+    if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, applicationID);
+}
+
+static Boolean (*orig_CFPreferencesAppSynchronize)(CFStringRef applicationID);
+static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
+    if (applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
+        NSString *appID = (__bridge NSString *)applicationID;
+        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
+            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
+            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize((__bridge CFStringRef)safeAppID) : true;
+        }
+    }
+    return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(applicationID) : true;
 }
 
 
@@ -1135,6 +1196,19 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 %end
 
+%hook NSUserDefaults
+
+- (instancetype)initWithSuiteName:(NSString *)suitename {
+    if (suitename && ([suitename containsString:@"zingalo"] || [suitename containsString:@"zalo"] || [suitename containsString:@"vng"])) {
+        logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"Điều hướng SuiteName '%@' vào Sandbox an toàn", suitename]);
+        NSString *safeSuite = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", suitename];
+        return %orig(safeSuite);
+    }
+    return %orig;
+}
+
+%end
+
 %hook UIApplication
 
 - (BOOL)canOpenURL:(NSURL *)url {
@@ -1214,11 +1288,13 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             MSHookFunction(cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
-        // Đảm bảo thư mục lưu trữ cốt lõi KVCore và IsolatedAppGroups luôn tồn tại sẵn trong Sandbox
+        // Đảm bảo thư mục lưu trữ cốt lõi KVCore, KVCore/Device và IsolatedAppGroups luôn tồn tại sẵn trong Sandbox
         NSString *homeDir = NSHomeDirectory();
         if (homeDir) {
             NSString *kvCoreDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/KVCore"];
             [[NSFileManager defaultManager] createDirectoryAtPath:kvCoreDir withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *kvDeviceDir = [kvCoreDir stringByAppendingPathComponent:@"Device"];
+            [[NSFileManager defaultManager] createDirectoryAtPath:kvDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
             NSString *isoGroupsDir = [homeDir stringByAppendingPathComponent:@"Library/Application Support/IsolatedAppGroups"];
             [[NSFileManager defaultManager] createDirectoryAtPath:isoGroupsDir withIntermediateDirectories:YES attributes:nil error:nil];
         }
@@ -1231,6 +1307,11 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         MSHookFunction((void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         MSHookFunction((void *)mkdir, (void *)my_mkdir, (void **)&orig_mkdir);
         MSHookFunction((void *)getenv, (void *)my_getenv, (void **)&orig_getenv);
+
+        // Hook CoreFoundation Preferences (App Groups Redirection)
+        MSHookFunction((void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
+        MSHookFunction((void *)CFPreferencesSetAppValue, (void *)my_CFPreferencesSetAppValue, (void **)&orig_CFPreferencesSetAppValue);
+        MSHookFunction((void *)CFPreferencesAppSynchronize, (void *)my_CFPreferencesAppSynchronize, (void **)&orig_CFPreferencesAppSynchronize);
 
         // Hook Security Framework (Keychain Isolation)
         MSHookFunction((void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);

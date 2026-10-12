@@ -664,12 +664,47 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         [s saveSettings];
     }
 
-    // 7. Kết luận
+    // 7. Kiểm tra tính toàn vẹn cơ sở dữ liệu nội bộ (LevelDB & App Group Storage)
+    NSString *kvCoreDevice = [home stringByAppendingPathComponent:@"Library/Application Support/KVCore/Device"];
+    BOOL kvDeviceDirExists = [[NSFileManager defaultManager] fileExistsAtPath:kvCoreDevice];
+    NSString *testLockFile = [kvCoreDevice stringByAppendingPathComponent:@"_zt_test_lock.tmp"];
+    BOOL leveldbWritable = NO;
+    if (kvDeviceDirExists) {
+        NSError *testErr = nil;
+        [@"1" writeToFile:testLockFile atomically:YES encoding:NSUTF8StringEncoding error:&testErr];
+        if (!testErr && [[NSFileManager defaultManager] fileExistsAtPath:testLockFile]) {
+            leveldbWritable = YES;
+            [[NSFileManager defaultManager] removeItemAtPath:testLockFile error:nil];
+        }
+    }
+
+    BOOL appGroupWorking = NO;
+    @try {
+        NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
+        if (groupDefaults) {
+            [groupDefaults setObject:@"zt_ok" forKey:@"_zt_diagnostic_check"];
+            [groupDefaults synchronize];
+            NSString *readBack = [groupDefaults stringForKey:@"_zt_diagnostic_check"];
+            if ([readBack isEqualToString:@"zt_ok"]) {
+                appGroupWorking = YES;
+                [groupDefaults removeObjectForKey:@"_zt_diagnostic_check"];
+                [groupDefaults synchronize];
+            }
+        }
+    } @catch (NSException *e) {
+        appGroupWorking = NO;
+    }
+
+    BOOL allStorageHealthy = (leveldbWritable && appGroupWorking);
+
+    // 8. Kết luận toàn diện
     NSString *conclusion = @"";
     if (isSameIP) {
         conclusion = @"🔴 CẢNH BÁO: TRÙNG ĐỊA CHỈ IP 4G CŨ!\nVui lòng BẬT rồi TẮT Chế Độ Máy Bay (Airplane Mode) để nhà mạng đổi địa chỉ IP mới trước khi bấm Tạo Tài Khoản.";
+    } else if (!allStorageHealthy) {
+        conclusion = @"⚠️ CẢNH BÁO: KHO LƯU TRỮ CHƯA HOÀN HẢO!\nLevelDB hoặc App Group chưa ghi đọc được. Vui lòng bấm [2️⃣] Deep Wipe một lần nữa.";
     } else {
-        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(IDFV mới, IDFA bảo vệ, Cache sạch, Bundle ID chuẩn App Store)";
+        conclusion = @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100% ĐỂ REG ACC!\n(IDFV mới, IDFA ẩn, LevelDB/KVCore thông suốt, App Group an toàn, IP 4G mới tinh)";
     }
 
     NSString *report = [NSString stringWithFormat:
@@ -689,7 +724,10 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         @"4. VỆ SINH DỮ LIỆU SANDBOX:\n"
         @" • Rác / Cache  : %.1f KB (%@)\n"
         @" • Sideload     : %@\n"
-        @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n"
+        @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n\n"
+        @"5. TÍNH TOÀN VẸN CƠ SỞ DỮ LIỆU (DATABASE):\n"
+        @" • LevelDB/KVCore: %@\n"
+        @" • App Groups   : %@\n"
         @"═══════════════════════════\n"
         @"👉 KẾT LUẬN:\n%@",
         liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi"),
@@ -702,6 +740,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
         uptimeHours,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
         (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn"),
+        (leveldbWritable ? @"Đã sẵn sàng (Ghi/Đọc tốt) ✅" : @"Chưa tạo thư mục ❌"),
+        (appGroupWorking ? @"Đã chuyển hướng Sandbox an toàn ✅" : @"Lỗi truy cập ❌"),
         conclusion];
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BÁO CÁO XÁC THỰC HỆ THỐNG RUNTIME"
