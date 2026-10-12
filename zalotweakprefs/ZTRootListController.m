@@ -477,8 +477,7 @@ static NSString *findAuditLogPath(void) {
             return doc;
         }
     }
-    NSString *zaloData = get_zalo_data_container_path();
-    if (zaloData) {
+    for (NSString *zaloData in get_zalo_data_container_paths()) {
         NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
         if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
             return zaloDoc;
