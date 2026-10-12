@@ -7,11 +7,9 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/types.h>
 #include <mach/mach.h>
 #include <mach/vm_map.h>
-#include <mach/vm_region.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
@@ -32,10 +30,6 @@ typedef struct nlist nlist_t;
 
 #ifndef SEG_DATA_CONST
 #define SEG_DATA_CONST "__DATA_CONST"
-#endif
-
-#ifndef SEG_AUTH_CONST
-#define SEG_AUTH_CONST "__AUTH_CONST"
 #endif
 
 struct rebindings_entry {
@@ -65,26 +59,6 @@ static int prepend_rebindings(struct rebindings_entry **head,
     return 0;
 }
 
-static vm_prot_t get_protection(void *sectionStart) {
-    mach_port_t task = mach_task_self();
-    vm_size_t size = 0;
-    vm_address_t address = (vm_address_t)sectionStart;
-    memory_object_name_t object;
-#if __LP64__
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    vm_region_basic_info_data_64_t info;
-    kern_return_t kr = vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object);
-#else
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
-    vm_region_basic_info_data_t info;
-    kern_return_t kr = vm_region(task, &address, &size, VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count, &object);
-#endif
-    if (kr != KERN_SUCCESS) {
-        return VM_PROT_READ;
-    }
-    return info.protection;
-}
-
 static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                            section_t *section,
                                            intptr_t slide,
@@ -94,11 +68,16 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
     const bool isDataConst = strcmp(section->segname, SEG_DATA_CONST) == 0;
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
-    vm_prot_t old_protection = 0;
 
     if (isDataConst) {
-        old_protection = get_protection(indirect_symbol_bindings);
-        mprotect(indirect_symbol_bindings, section->size, PROT_READ | PROT_WRITE);
+        kern_return_t err = vm_protect(mach_task_self(),
+                                       (vm_address_t)indirect_symbol_bindings,
+                                       section->size,
+                                       0,
+                                       VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
+        if (err != KERN_SUCCESS) {
+            return;
+        }
     }
 
     for (uint i = 0; i < section->size / sizeof(void *); i++) {
@@ -109,16 +88,18 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
         }
         uint32_t strtab_offset = symtab[symtab_index].n_un.n_strx;
         char *symbol_name = strtab + strtab_offset;
-        bool symbol_name_longer_than_one = symbol_name[0] && symbol_name[1];
+        bool symbol_name_longer_than_one = symbol_name && symbol_name[0] && symbol_name[1];
         struct rebindings_entry *cur = rebindings;
         while (cur) {
             for (uint j = 0; j < cur->rebindings_nel; j++) {
                 if (symbol_name_longer_than_one && strcmp(&symbol_name[1], cur->rebindings[j].name) == 0) {
-                    if (cur->rebindings[j].replaced != NULL &&
+                    if (cur->rebindings[j].replacement != NULL &&
                         indirect_symbol_bindings[i] != cur->rebindings[j].replacement) {
-                        *(cur->rebindings[j].replaced) = indirect_symbol_bindings[i];
+                        if (cur->rebindings[j].replaced != NULL) {
+                            *(cur->rebindings[j].replaced) = indirect_symbol_bindings[i];
+                        }
+                        indirect_symbol_bindings[i] = cur->rebindings[j].replacement;
                     }
-                    indirect_symbol_bindings[i] = cur->rebindings[j].replacement;
                     goto symbol_found;
                 }
             }
@@ -126,21 +107,22 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
         }
     symbol_found:;
     }
-
-    if (isDataConst) {
-        int protection = 0;
-        if (old_protection & VM_PROT_READ) protection |= PROT_READ;
-        if (old_protection & VM_PROT_WRITE) protection |= PROT_WRITE;
-        if (old_protection & VM_PROT_EXECUTE) protection |= PROT_EXEC;
-        mprotect(indirect_symbol_bindings, section->size, protection);
-    }
 }
 
 static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
                                      const struct mach_header *header,
                                      intptr_t slide) {
     Dl_info info;
-    if (dladdr(header, &info) == 0) {
+    if (dladdr(header, &info) == 0 || !info.dli_fname) {
+        return;
+    }
+
+    // Bảo vệ tối thượng chống SIGBUS(10):
+    // BỎ QUA toàn bộ các thư viện hệ thống trong dyld shared cache (/System/Library/ và /usr/lib/).
+    // CHỈ hook vào Zalo App và các Framework nằm trong Sandbox Bundle của App!
+    const char *path = info.dli_fname;
+    if (strstr(path, "/System/Library/") != NULL ||
+        strstr(path, "/usr/lib/") != NULL) {
         return;
     }
 
@@ -178,8 +160,7 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
         cur_seg_cmd = (segment_command_t *)cur;
         if (cur_seg_cmd->cmd == LC_SEGMENT_ARCH_DEPENDENT) {
             if (strcmp(cur_seg_cmd->segname, SEG_DATA) != 0 &&
-                strcmp(cur_seg_cmd->segname, SEG_DATA_CONST) != 0 &&
-                strcmp(cur_seg_cmd->segname, SEG_AUTH_CONST) != 0) {
+                strcmp(cur_seg_cmd->segname, SEG_DATA_CONST) != 0) {
                 continue;
             }
             for (uint j = 0; j < cur_seg_cmd->nsects; j++) {
