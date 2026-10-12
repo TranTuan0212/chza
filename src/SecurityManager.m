@@ -22,10 +22,12 @@
 
 + (instancetype)sharedManager {
     static ZTSecurityManager *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[ZTSecurityManager alloc] init];
-    });
+    if (instance) return instance;
+    static BOOL s_in_init = NO;
+    if (s_in_init) return instance;
+    s_in_init = YES;
+    instance = [[ZTSecurityManager alloc] init];
+    s_in_init = NO;
     return instance;
 }
 

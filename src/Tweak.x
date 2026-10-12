@@ -208,11 +208,13 @@ static uint64_t get_real_disk_total_size(void) {
 
 + (instancetype)sharedSettings {
     static ZTSettings *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[ZTSettings alloc] init];
-        [instance loadSettings];
-    });
+    if (instance) return instance;
+    static BOOL s_initializing = NO;
+    if (s_initializing) return instance;
+    s_initializing = YES;
+    instance = [[ZTSettings alloc] init];
+    [instance loadSettings];
+    s_initializing = NO;
     return instance;
 }
 
@@ -1897,17 +1899,17 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
 %ctor {
     @autoreleasepool {
-        // 1. Kích hoạt toàn bộ hook Objective-C của Logos
-        %init;
-
-        // 2. Khởi tạo toàn bộ dữ liệu cấu hình, bộ nhớ hàng đợi và xác thực bản quyền
-        // Đảm bảo không bị deadlock re-entrant dispatch_once
+        // 1. Khởi tạo toàn bộ dữ liệu cấu hình, bộ nhớ hàng đợi và xác thực bản quyền TRƯỚC KHI BẬT HOOK
+        // Đảm bảo không bị deadlock re-entrant
         loggedAuditKeys = [[NSMutableSet alloc] init];
         auditQueue = dispatch_queue_create("com.sonhu.zalotweak.auditQueue", DISPATCH_QUEUE_SERIAL);
         harQueue = dispatch_queue_create("com.sonhu.zalotweak.harQueue", DISPATCH_QUEUE_SERIAL);
 
         [ZTSettings sharedSettings];
         [[ZTSecurityManager sharedManager] isLicenseValid];
+
+        // 2. Kích hoạt toàn bộ hook Objective-C của Logos sau khi cấu hình đã sẵn sàng
+        %init;
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),

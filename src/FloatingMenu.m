@@ -102,11 +102,9 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 
 + (instancetype)sharedButton {
     static ZTFloatingButton *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [ZTFloatingButton buttonWithType:UIButtonTypeCustom];
-        [instance setupUI];
-    });
+    if (instance) return instance;
+    instance = [ZTFloatingButton buttonWithType:UIButtonTypeCustom];
+    [instance setupUI];
     return instance;
 }
 
@@ -198,10 +196,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 
 + (instancetype)sharedManager {
     static ZTMenuManager *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[ZTMenuManager alloc] init];
-    });
+    if (instance) return instance;
+    instance = [[ZTMenuManager alloc] init];
     return instance;
 }
 
