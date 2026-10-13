@@ -19,6 +19,20 @@
 - (void)tryAttachFloatingButton;
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
+- (void)showProxySettingsFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
 @end
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+UIViewController *ZTGetTopViewController(void);
+void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *errorMessage));
+void ZTAutoCheckProxyAndWarnIfDead(void);
+BOOL ZTParseProxyString(NSString *str, NSString **outHost, uint16_t *outPort, NSString **outUser, NSString **outPass);
+
+#ifdef __cplusplus
+}
+#endif

@@ -143,6 +143,131 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
+            <string>PROXY RIÊNG CHO ZALO (PER-APP PROXY - CẦN KEY)</string>
+            <key>footerText</key>
+            <string>Chỉ áp dụng mạng Proxy riêng cho app Zalo. Toàn bộ ứng dụng khác trên iPhone vẫn dùng mạng bình thường. Tweak tự động kiểm tra và báo động nếu Proxy bị đứt kết nối hoặc hết hạn.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <false/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>proxyEnabled</string>
+            <key>label</key>
+            <string>Bật Proxy Riêng Cho Zalo</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSLinkListCell</string>
+            <key>default</key>
+            <string>HTTP</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>detail</key>
+            <string>PSListItemsController</string>
+            <key>key</key>
+            <string>proxyType</string>
+            <key>label</key>
+            <string>Loại Proxy</string>
+            <key>validTitles</key>
+            <array>
+                <string>HTTP / HTTPS Proxy</string>
+                <string>SOCKS5 Proxy</string>
+            </array>
+            <key>validValues</key>
+            <array>
+                <string>HTTP</string>
+                <string>SOCKS5</string>
+            </array>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>proxyHost</string>
+            <key>label</key>
+            <string>Host / IP</string>
+            <key>placeholder</key>
+            <string>vd: 103.150.12.34</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>proxyPort</string>
+            <key>label</key>
+            <string>Port</string>
+            <key>placeholder</key>
+            <string>vd: 8080</string>
+            <key>keyboard</key>
+            <string>numbers</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>proxyUser</string>
+            <key>label</key>
+            <string>Tài Khoản (Tuỳ Chọn)</string>
+            <key>placeholder</key>
+            <string>Username</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSEditTextCell</string>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>proxyPass</string>
+            <key>label</key>
+            <string>Mật Khẩu (Tuỳ Chọn)</string>
+            <key>placeholder</key>
+            <string>Password</string>
+            <key>isSecure</key>
+            <true/>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>📋 Dán Nhanh Proxy (IP:Port / User:Pass)</string>
+            <key>action</key>
+            <string>quickPasteProxyAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>🔍 Kiểm Tra Kết Nối Proxy (Test IP)</string>
+            <key>action</key>
+            <string>testProxyAction:</string>
+        </dict>
+
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
             <string>PHẦN CỨNG MÁY THẬT (TỰ ĐỘNG NHẬN DIỆN 100%)</string>
             <key>footerText</key>
             <string>Tweak tự động nhận diện chính xác 100% phần cứng máy bạn (Model, iOS, CPU, RAM, Màn hình, Ổ cứng). Mỗi lần Wipe chỉ tạo mới Serial, MAC, IDFV, Uptime và Pin để vượt hoàn toàn hệ thống chống gian lận VNG mà không lệch thông số phần cứng.</string>

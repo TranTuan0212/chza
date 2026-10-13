@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
+#import <CFNetwork/CFNetwork.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
 #import <mach-o/dyld.h>
 #import <sys/sysctl.h>
@@ -41,7 +42,9 @@ static inline BOOL is_tweak_active(void) {
     static __thread BOOL s_in_active_check = NO;
     if (s_in_active_check) return NO;
     s_in_active_check = YES;
-    BOOL active = [ZTSettings sharedSettings].enabled && [[ZTSecurityManager sharedManager] isLicenseValid];
+    // Chỉ fake khi tweak bật VÀ đã từng cấu hình profile (đã có key và đã từng bấm wipe)
+    // Khi hết hạn, profile vẫn được đóng băng giữ nguyên để bảo vệ tài khoản, không rớt về máy thật!
+    BOOL active = [ZTSettings sharedSettings].enabled && [ZTSettings sharedSettings].hasConfiguredProfile;
     s_in_active_check = NO;
     return active;
 }
@@ -238,6 +241,13 @@ static void logAudit(NSString *category, NSString *detail);
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
     if (dict) {
         self.enabled = [dict[@"enabled"] boolValue];
+        self.hasConfiguredProfile = [dict[@"hasConfiguredProfile"] boolValue];
+        self.proxyEnabled = [dict[@"proxyEnabled"] boolValue];
+        self.proxyType = dict[@"proxyType"] ?: @"HTTP";
+        self.proxyHost = dict[@"proxyHost"] ?: @"";
+        self.proxyPort = [dict[@"proxyPort"] unsignedShortValue];
+        self.proxyUser = dict[@"proxyUser"] ?: @"";
+        self.proxyPass = dict[@"proxyPass"] ?: @"";
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
         if (self.needsNewProfile) {
             if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
@@ -302,7 +312,7 @@ static void logAudit(NSString *category, NSString *detail);
             }
         }
 
-        if (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0) {
+        if (self.hasConfiguredProfile && (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0)) {
             if (self.spoofedSerial.length == 0) {
                 extern NSString *generate_random_serial(void);
                 extern NSString *generate_random_mac(void);
@@ -320,17 +330,48 @@ static void logAudit(NSString *category, NSString *detail);
     } else {
         self.enabled = YES;
         self.showFloatingMenu = YES;
+        self.hasConfiguredProfile = NO; // MỚI CÀI ĐẶT: CHƯA CẤU HÌNH -> KHÔNG FAKE MÁY NGAY!
         self.enableAuditLog = NO;
         self.lastWipedIDFV = @"";
         self.lastWipedIP = @"";
         self.lastWipedTimestamp = 0;
         self.regionMode = @"VN";
+        self.proxyEnabled = NO;
+        self.proxyType = @"HTTP";
+        self.proxyHost = @"";
+        self.proxyPort = 0;
+        self.proxyUser = @"";
+        self.proxyPass = @"";
+        self.spoofedSerial = @"";
+        self.spoofedWifiMAC = @"";
+        self.spoofedBluetoothMAC = @"";
+        self.spoofedIDFV = @"";
+        self.profileId = @"";
+        // Giữ 100% thông số máy thật:
+        self.deviceMachine = get_real_hardware_machine();
+        self.deviceModel = get_real_hardware_model();
+        self.deviceName = @"iPhone";
+        self.systemVersion = [[UIDevice currentDevice] systemVersion];
+        self.kernOsVersion = get_real_os_version();
+        self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
+        self.memsize = [[NSProcessInfo processInfo] physicalMemory];
+        CGRect bounds = [UIScreen mainScreen].bounds;
+        self.screenWidth = bounds.size.width;
+        self.screenHeight = bounds.size.height;
+        self.screenScale = [UIScreen mainScreen].scale;
+        self.bootTimeSec = 0;
+        self.bootSessionUUID = @"";
+        self.carrierName = @"Viettel";
+        self.carrierMCC = @"452";
+        self.carrierMNC = @"04";
+        self.carrierCountryCode = @"vn";
+        self.batteryLevel = 0.85f;
+        self.batteryState = 1;
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
             self.showFloatingMenu = NO;
-        } else {
-            [self generateNewProfile];
         }
+        [self saveSettings];
     }
 }
 
@@ -338,6 +379,13 @@ static void logAudit(NSString *category, NSString *detail);
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
     dict[@"enabled"] = @(self.enabled);
     dict[@"enableAuditLog"] = @(self.enableAuditLog);
+    dict[@"hasConfiguredProfile"] = @(self.hasConfiguredProfile);
+    dict[@"proxyEnabled"] = @(self.proxyEnabled);
+    dict[@"proxyType"] = self.proxyType ?: @"HTTP";
+    dict[@"proxyHost"] = self.proxyHost ?: @"";
+    dict[@"proxyPort"] = @(self.proxyPort);
+    dict[@"proxyUser"] = self.proxyUser ?: @"";
+    dict[@"proxyPass"] = self.proxyPass ?: @"";
     dict[@"deviceMachine"] = self.deviceMachine;
     dict[@"deviceModel"] = self.deviceModel;
     dict[@"deviceName"] = self.deviceName;
@@ -395,6 +443,7 @@ NSString *generate_random_mac(void) {
 }
 
 - (void)generateNewProfile {
+    self.hasConfiguredProfile = YES; // Kích hoạt cờ đã cấu hình profile
     // 1. Sinh profile thiết bị từ ngân hàng 25 mẫu iPhone chuẩn phần cứng Apple
     ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN"];
 
@@ -1964,6 +2013,92 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
+static CFDictionaryRef (*orig_CFNetworkCopySystemProxySettings)(void) = NULL;
+static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
+        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+        if ([s.proxyType isEqualToString:@"SOCKS5"]) {
+            NSMutableDictionary *socksDict = [NSMutableDictionary dictionary];
+            socksDict[(NSString *)kCFStreamPropertySOCKSProxyHost] = s.proxyHost;
+            socksDict[(NSString *)kCFStreamPropertySOCKSProxyPort] = @(s.proxyPort);
+            socksDict[(NSString *)kCFStreamPropertySOCKSVersion] = (NSString *)kCFStreamSocketSOCKSVersion5;
+            if (s.proxyUser.length > 0) {
+                socksDict[(NSString *)kCFStreamPropertySOCKSUser] = s.proxyUser;
+                socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
+            }
+            dict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+        } else {
+            dict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
+            dict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
+            dict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
+            dict[(NSString *)kCFNetworkProxiesHTTPSEnable] = @(YES);
+            dict[(NSString *)kCFNetworkProxiesHTTPSProxy] = s.proxyHost;
+            dict[(NSString *)kCFNetworkProxiesHTTPSPort] = @(s.proxyPort);
+            if (s.proxyUser.length > 0) {
+                dict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
+                dict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
+            }
+        }
+        return (__bridge_retained CFDictionaryRef)dict;
+    }
+    return orig_CFNetworkCopySystemProxySettings ? orig_CFNetworkCopySystemProxySettings() : NULL;
+}
+
+%hook NSURLSessionConfiguration
+
+- (NSDictionary *)connectionProxyDictionary {
+    NSDictionary *origDict = %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
+        NSMutableDictionary *proxyDict = origDict ? [origDict mutableCopy] : [NSMutableDictionary dictionary];
+        if ([s.proxyType isEqualToString:@"SOCKS5"]) {
+            NSMutableDictionary *socksDict = [NSMutableDictionary dictionary];
+            socksDict[(NSString *)kCFStreamPropertySOCKSProxyHost] = s.proxyHost;
+            socksDict[(NSString *)kCFStreamPropertySOCKSProxyPort] = @(s.proxyPort);
+            socksDict[(NSString *)kCFStreamPropertySOCKSVersion] = (NSString *)kCFStreamSocketSOCKSVersion5;
+            if (s.proxyUser.length > 0) {
+                socksDict[(NSString *)kCFStreamPropertySOCKSUser] = s.proxyUser;
+                socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
+            }
+            proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+        } else {
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPSEnable] = @(YES);
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPSProxy] = s.proxyHost;
+            proxyDict[(NSString *)kCFNetworkProxiesHTTPSPort] = @(s.proxyPort);
+            if (s.proxyUser.length > 0) {
+                proxyDict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
+                proxyDict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
+            }
+        }
+        return proxyDict;
+    }
+    return origDict;
+}
+
++ (NSURLSessionConfiguration *)defaultSessionConfiguration {
+    NSURLSessionConfiguration *config = %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
+        config.connectionProxyDictionary = [config connectionProxyDictionary];
+    }
+    return config;
+}
+
++ (NSURLSessionConfiguration *)ephemeralSessionConfiguration {
+    NSURLSessionConfiguration *config = %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
+        config.connectionProxyDictionary = [config connectionProxyDictionary];
+    }
+    return config;
+}
+
+%end
+
 %hook NSURLConnection
 
 + (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
@@ -2019,6 +2154,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
             dispatch_async(dispatch_get_main_queue(), ^{
                 [[ZTMenuManager sharedManager] tryAttachFloatingButton];
             });
+        }
+        if ([ZTSettings sharedSettings].proxyEnabled) {
+            ZTAutoCheckProxyAndWarnIfDead();
         }
         if ([ZTSettings sharedSettings].justGeneratedColdBoot) {
             [ZTSettings sharedSettings].justGeneratedColdBoot = NO;
@@ -2177,6 +2315,12 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             universal_hook_c_function("MGCopyAnswer", mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
 
+        // Hook CFNetworkCopySystemProxySettings (Per-App Proxy Zalo)
+        void *cfProxyFunc = dlsym(RTLD_DEFAULT, "CFNetworkCopySystemProxySettings");
+        if (cfProxyFunc) {
+            universal_hook_c_function("CFNetworkCopySystemProxySettings", cfProxyFunc, (void *)hooked_CFNetworkCopySystemProxySettings, (void **)&orig_CFNetworkCopySystemProxySettings);
+        }
+
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
             NSLog(@"[ZaloTweak] ❌ BẢN QUYỀN CHƯA KÍCH HOẠT HOẶC ĐÃ HẾT HẠN! Vui lòng vào Cài đặt để kích hoạt.");
         } else {
@@ -2206,6 +2350,19 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             if ([ZTSettings sharedSettings].showFloatingMenu) {
                 [[ZTMenuManager sharedManager] setupInAppMenu];
             }
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                              object:nil
+                                                               queue:[NSOperationQueue mainQueue]
+                                                          usingBlock:^(NSNotification * _Nonnull note) {
+                if ([ZTSettings sharedSettings].proxyEnabled) {
+                    ZTAutoCheckProxyAndWarnIfDead();
+                }
+            }];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if ([ZTSettings sharedSettings].proxyEnabled) {
+                    ZTAutoCheckProxyAndWarnIfDead();
+                }
+            });
         }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu

@@ -38,6 +38,13 @@
 @property (nonatomic, assign) BOOL showFloatingMenu;        // Hiện nút nổi trong app (Mặc định NO cho Zalo gốc, YES cho Clone)
 @property (nonatomic, assign) BOOL needsNewProfile;         // Đánh dấu yêu cầu sinh profile mới khi Cold-Boot
 @property (nonatomic, assign) BOOL justGeneratedColdBoot;   // Cờ tạm thời: vừa sinh máy mới từ Cold-Boot
+@property (nonatomic, assign) BOOL hasConfiguredProfile;   // Đã từng cấu hình profile hay chưa (Mặc định NO khi mới cài đặt)
+@property (nonatomic, assign) BOOL proxyEnabled;           // Bật/tắt Proxy riêng cho Zalo (Yêu cầu có Key)
+@property (nonatomic, strong) NSString *proxyType;         // @"HTTP" hoặc @"SOCKS5"
+@property (nonatomic, strong) NSString *proxyHost;         // Host / IP của Proxy
+@property (nonatomic, assign) uint16_t proxyPort;          // Cổng Port của Proxy
+@property (nonatomic, strong) NSString *proxyUser;         // Tài khoản Proxy (tuỳ chọn)
+@property (nonatomic, strong) NSString *proxyPass;         // Mật khẩu Proxy (tuỳ chọn)
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;
