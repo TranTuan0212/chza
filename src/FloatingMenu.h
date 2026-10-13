@@ -22,6 +22,7 @@
 - (void)showProxySettingsFrom:(UIViewController *)top;
 - (void)promptEnterNewProxyToUnfreezeFrom:(UIViewController *)top;
 - (void)showAdvancedSettingsFrom:(UIViewController *)top;
+- (void)promptWipeProxySelectorForRegion:(NSString *)targetRegion from:(UIViewController *)presenter;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
 @end
