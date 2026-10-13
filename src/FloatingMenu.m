@@ -645,15 +645,6 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
 
     [presenter presentViewController:advSheet animated:YES completion:nil];
 }
-    
-    // Hỗ trợ iPad popover
-    if (sheet.popoverPresentationController) {
-        sheet.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
-        sheet.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
-    }
-    
-    [top presentViewController:sheet animated:YES completion:nil];
-}
 
 #pragma mark - Proxy Settings
 
@@ -1474,11 +1465,13 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         @" • Machine (C)  : %@ (%@)\n"
         @" • Tên Thiết Bị : %@\n"
         @" • Phiên Bản iOS: %@\n"
+        @" • Bundle ID    : %@ (%@)\n"
         @" • Serial Số Ảo : %@\n"
         @" • Wi-Fi MAC Ảo : %@\n"
         @" • IDFV Hiện Tại: %@... (%@)\n"
         @" • IDFV Trước Đó: %@...\n"
         @" • IDFA Quảng Cáo: %@ (Ẩn danh ✅)\n"
+        @" • Uptime Máy   : %llu giờ hoạt động ✅\n"
         @" • Dung Lượng Trống: %.1f GB / %.1f GB\n\n"
         @"5. VỆ SINH SANDBOX & LEVELDB C++:\n"
         @" • Dữ Liệu Cache: %.1f KB (%@)\n"
@@ -1497,11 +1490,13 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         liveMachineStr, (isMachineSpoofed ? @"Khớp Profile ✅" : @"Chưa khớp ❌"),
         liveDeviceName,
         liveSystemVersion,
+        liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi ❌"),
         s.spoofedSerial ?: @"(Chưa cấp)",
         s.spoofedWifiMAC ?: @"(Chưa cấp)",
         idfvShort, idfvStatus,
         idfvOld,
         (liveIDFA.length > 8 ? [liveIDFA substringToIndex:8] : liveIDFA),
+        uptimeHours,
         freeGB, totalGB,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
         (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn ❌"),
