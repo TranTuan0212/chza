@@ -143,6 +143,14 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                         }
                     }
                 }
+                if (!self.windowScene) {
+                    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+                        if (w != self && w.windowScene) {
+                            self.windowScene = w.windowScene;
+                            break;
+                        }
+                    }
+                }
             }
         }
         self.hidden = NO;
@@ -281,6 +289,13 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                                              selector:@selector(tryAttachFloatingButton)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
+
+    if (@available(iOS 13.0, *)) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(tryAttachFloatingButton)
+                                                     name:UISceneDidActivateNotification
+                                                   object:nil];
+    }
 
     // Nhắc nhở bản quyền nếu chưa kích hoạt hoặc đã hết hạn
     static dispatch_once_t promptToken;

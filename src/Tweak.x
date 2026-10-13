@@ -289,9 +289,13 @@ static void logAudit(NSString *category, NSString *detail);
         if (isAppExtension) {
             self.showFloatingMenu = NO;
         } else {
-            // Mặc định luôn BẬT nút nổi để người dùng có icon điều khiển và fake máy (dù là JB hay Tiêm IPA)
-            // Nếu người dùng chủ động tắt trong cài đặt thì mới tắt
-            if (dict[@"showFloatingMenu"] != nil) {
+            BOOL isJailbreak = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"] ||
+                               [[NSFileManager defaultManager] fileExistsAtPath:@"/Library/MobileSubstrate"] ||
+                               [[NSFileManager defaultManager] fileExistsAtPath:@"/usr/lib/libsubstitute.dylib"];
+            if (!isJailbreak) {
+                // Trên máy Non-JB (Sideload / Clone) không có ứng dụng Cài Đặt iOS nên LUÔN BẬT nút nổi
+                self.showFloatingMenu = YES;
+            } else if (dict[@"showFloatingMenu"] != nil) {
                 self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
             } else {
                 self.showFloatingMenu = YES;
@@ -315,13 +319,16 @@ static void logAudit(NSString *category, NSString *detail);
         }
     } else {
         self.enabled = YES;
+        self.showFloatingMenu = YES;
         self.enableAuditLog = NO;
         self.lastWipedIDFV = @"";
         self.lastWipedIP = @"";
         self.lastWipedTimestamp = 0;
         self.regionMode = @"VN";
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
-        if (!isAppExtension) {
+        if (isAppExtension) {
+            self.showFloatingMenu = NO;
+        } else {
             [self generateNewProfile];
         }
     }

@@ -24,6 +24,7 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
 }
 
 static void save_dict_to_all_locations(NSDictionary *dict);
+static void sync_license_to_all_locations(void);
 static void kill_all_zalo_processes(void);
 
 static NSString *get_prefs_real_machine(void) {
@@ -148,6 +149,7 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
     if (needSave) {
         save_dict_to_all_locations(dict);
     }
+    sync_license_to_all_locations();
 }
 
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
@@ -161,8 +163,18 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
     NSString *key = [specifier propertyForKey:@"key"];
+    if (([key isEqualToString:@"enabled"] || [key isEqualToString:@"regionMode"]) && ![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng hoặc thay đổi cấu hình ZaloTweak."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        [self reloadSpecifiers];
+        return;
+    }
+
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
     dict[key] = value;
 
     if ([key isEqualToString:@"regionMode"]) {
@@ -397,6 +409,47 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     }
 }
 
+static void sync_license_to_all_locations(void) {
+    NSString *mainLicensePath = @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist";
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:mainLicensePath];
+    if (!dict) {
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *alt = [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.license.plist"];
+            dict = [NSDictionary dictionaryWithContentsOfFile:alt];
+            if (!dict) {
+                dict = [NSDictionary dictionaryWithContentsOfFile:[home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"]];
+            }
+        }
+    }
+    if (!dict) return;
+
+    [dict writeToFile:mainLicensePath atomically:YES];
+    chmod([mainLicensePath UTF8String], 0666);
+
+    NSArray *dataContainers = get_zalo_data_container_paths();
+    for (NSString *dataContainer in dataContainers) {
+        NSString *prefDir = [dataContainer stringByAppendingPathComponent:@"Library/Preferences"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:prefDir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *p1 = [prefDir stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+        [dict writeToFile:p1 atomically:YES];
+        chmod([p1 UTF8String], 0666);
+
+        NSString *docDir = [dataContainer stringByAppendingPathComponent:@"Documents"];
+        [[NSFileManager defaultManager] createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *p2 = [docDir stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+        [dict writeToFile:p2 atomically:YES];
+        chmod([p2 UTF8String], 0666);
+    }
+
+    NSArray *groups = get_zalo_group_container_paths();
+    for (NSString *grp in groups) {
+        NSString *p3 = [grp stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+        [dict writeToFile:p3 atomically:YES];
+        chmod([p3 UTF8String], 0666);
+    }
+}
+
 #pragma mark - Actions
 
 - (void)applyAndWipeCleanSequence:(PSSpecifier *)specifier {
@@ -509,6 +562,7 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 
     // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
     save_dict_to_all_locations(dict);
+    sync_license_to_all_locations();
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
 
     // Truy vấn và lưu IP hiện tại để đối chiếu checklist
@@ -524,7 +578,7 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     [self reloadSpecifiers];
 
     // Thông báo hoàn tất
-    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n⚠️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) để đổi IP 4G trước khi mở lại Zalo.", newIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"]];
+    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n⚠️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) để đổi IP 4G trước khi mở lại Zalo.", p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"]];
 
     dispatch_async(dispatch_get_main_queue(), ^{
         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất Tuyệt Đối"
@@ -667,6 +721,9 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 
     [[ZTSecurityManager sharedManager] verifyLicenseWithKey:key completion:^(BOOL success, NSString *message) {
         [loading dismissViewControllerAnimated:YES completion:^{
+            if (success) {
+                sync_license_to_all_locations();
+            }
             UIAlertController *result = [UIAlertController alertControllerWithTitle:success ? @"🎉 Kích Hoạt Thành Công" : @"❌ Kích Hoạt Thất Bại"
                                                                             message:message
                                                                      preferredStyle:UIAlertControllerStyleAlert];
@@ -698,6 +755,15 @@ static NSString *findAuditLogPath(void) {
 }
 
 - (void)viewAuditLogAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi xem nhật ký kiểm toán."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     NSString *logPath = findAuditLogPath();
     NSError *err = nil;
     NSString *content = [NSString stringWithContentsOfFile:logPath encoding:NSUTF8StringEncoding error:&err];
@@ -728,6 +794,15 @@ static NSString *findAuditLogPath(void) {
 #pragma mark - Diagnostic Checklist Actions
 
 - (void)checkCleanlinessAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi kiểm tra độ sạch hệ thống."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra..."
                                                                      message:@"Đang truy vấn IP mạng công khai và rà soát độ sạch của hệ thống..."
                                                               preferredStyle:UIAlertControllerStyleAlert];
@@ -831,6 +906,15 @@ static NSString *findHarPath(void) {
 }
 
 - (void)exportHarAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi xuất file mạng."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     NSString *harPath = findHarPath();
     if (![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Có Dữ Liệu HAR"
@@ -847,6 +931,15 @@ static NSString *findHarPath(void) {
 }
 
 - (void)clearAuditLogAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi thao tác nhật ký."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     NSString *logPath = findAuditLogPath();
     [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
 

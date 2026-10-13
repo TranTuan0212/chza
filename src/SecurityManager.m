@@ -105,16 +105,52 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
 
 // 3. ĐỌC DỮ LIỆU BẢN QUYỀN ĐÃ LƯU TẠI MÁY
 - (void)loadCachedLicense {
+    NSDictionary *dict = nil;
+    NSString *loadedFrom = nil;
+
+    // 1. Thử đọc từ đường dẫn preferences của container hiện tại
     NSString *path = [self getLicenseFilePath];
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+        dict = [NSDictionary dictionaryWithContentsOfFile:path];
+        if (dict) loadedFrom = path;
+    }
+
+    // 2. Fallback đọc từ Documents nếu Preferences bị tác động
     if (!dict) {
-        // Fallback đọc từ Documents nếu Preferences bị tác động
         NSString *home = NSHomeDirectory();
         if (home) {
             NSString *backupPath = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"];
-            dict = [NSDictionary dictionaryWithContentsOfFile:backupPath];
+            if ([[NSFileManager defaultManager] fileExistsAtPath:backupPath]) {
+                dict = [NSDictionary dictionaryWithContentsOfFile:backupPath];
+                if (dict) loadedFrom = backupPath;
+            }
         }
     }
+
+    // 3. Fallback đọc từ Global Preferences (/var/mobile/Library/Preferences/...)
+    if (!dict && [[NSFileManager defaultManager] fileExistsAtPath:LICENSE_STORAGE_PATH]) {
+        dict = [NSDictionary dictionaryWithContentsOfFile:LICENSE_STORAGE_PATH];
+        if (dict) loadedFrom = LICENSE_STORAGE_PATH;
+    }
+
+    // 4. Fallback đọc từ Shared AppGroup của Zalo
+    if (!dict) {
+        NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+        for (NSString *grp in groupNames) {
+            NSURL *grpURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:grp];
+            if (grpURL) {
+                NSString *grpFile = [grpURL.path stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:grpFile]) {
+                    dict = [NSDictionary dictionaryWithContentsOfFile:grpFile];
+                    if (dict) {
+                        loadedFrom = grpFile;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     if (!dict) {
         self.isLicenseActive = NO;
         return;
@@ -157,6 +193,13 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         self.currentLicenseKey = savedKey;
         self.expiryDate = expDate;
         self.lastCheckTime = savedCheck;
+
+        // Nếu file được đọc từ nguồn khác (ví dụ Global hay AppGroup), tự động copy lưu vào container hiện tại để truy xuất nhanh
+        if (loadedFrom && ![loadedFrom isEqualToString:path]) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+            [dict writeToFile:path atomically:YES];
+            chmod([path UTF8String], 0666);
+        }
     } else {
         self.isLicenseActive = NO; // Token bị can thiệp!
     }
@@ -170,16 +213,37 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     dict[@"token"] = token;
     dict[@"last_check"] = @([[NSDate date] timeIntervalSince1970]);
 
+    // 1. Lưu tại getLicenseFilePath
     NSString *path = [self getLicenseFilePath];
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
     [dict writeToFile:path atomically:YES];
+    chmod([path UTF8String], 0666);
 
-    // Lưu thêm 1 bản dự phòng trong Documents để tuyệt đối không bị mất key khi dọn dẹp
+    // 2. Lưu thêm 1 bản dự phòng trong Documents để tuyệt đối không bị mất key khi dọn dẹp
     NSString *home = NSHomeDirectory();
     if (home) {
         NSString *backupPath = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"];
         [[NSFileManager defaultManager] createDirectoryAtPath:[backupPath stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         [dict writeToFile:backupPath atomically:YES];
+        chmod([backupPath UTF8String], 0666);
+    }
+
+    // 3. Nếu có quyền, lưu vào Global Preferences (/var/mobile/Library/Preferences)
+    if (![path isEqualToString:LICENSE_STORAGE_PATH]) {
+        [[NSFileManager defaultManager] createDirectoryAtPath:[LICENSE_STORAGE_PATH stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+        [dict writeToFile:LICENSE_STORAGE_PATH atomically:YES];
+        chmod([LICENSE_STORAGE_PATH UTF8String], 0666);
+    }
+
+    // 4. Lưu vào các Shared AppGroup
+    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    for (NSString *grp in groupNames) {
+        NSURL *grpURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:grp];
+        if (grpURL) {
+            NSString *grpFile = [grpURL.path stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+            [dict writeToFile:grpFile atomically:YES];
+            chmod([grpFile UTF8String], 0666);
+        }
     }
 
     [self loadCachedLicense];
@@ -327,6 +391,22 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
 
     NSString *path = [self getLicenseFilePath];
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        NSString *backupPath = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.license.plist"];
+        [[NSFileManager defaultManager] removeItemAtPath:backupPath error:nil];
+    }
+    [[NSFileManager defaultManager] removeItemAtPath:LICENSE_STORAGE_PATH error:nil];
+
+    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    for (NSString *grp in groupNames) {
+        NSURL *grpURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:grp];
+        if (grpURL) {
+            NSString *grpFile = [grpURL.path stringByAppendingPathComponent:@"com.sonhu.zalotweak.license.plist"];
+            [[NSFileManager defaultManager] removeItemAtPath:grpFile error:nil];
+        }
+    }
 }
 
 @end
