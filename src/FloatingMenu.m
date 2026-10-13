@@ -281,11 +281,54 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
                                              selector:@selector(tryAttachFloatingButton)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
+
+    // Nhắc nhở bản quyền nếu chưa kích hoạt hoặc đã hết hạn
+    static dispatch_once_t promptToken;
+    dispatch_once(&promptToken, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+                UIViewController *top = get_top_view_controller();
+                if (top) {
+                    [self showLicenseRequiredAlertFrom:top featureName:@"Toàn Bộ Tính Năng ZaloTweak"];
+                }
+            }
+        });
+    });
 }
 
 - (void)tryAttachFloatingButton {
     if (![ZTSettings sharedSettings].showFloatingMenu) return;
     [[ZTFloatingWindow sharedWindow] show];
+}
+
+- (void)showLicenseRequiredAlertFrom:(UIViewController *)top featureName:(NSString *)featureName {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    if (!presenter) return;
+    
+    NSString *status = [[ZTSecurityManager sharedManager] getLicenseStatusText];
+    NSString *msg = [NSString stringWithFormat:@"Tính năng [%@] yêu cầu bản quyền kích hoạt hợp lệ.\n\nTrạng thái hiện tại: %@\n\nVui lòng kích hoạt License Key để mở khóa toàn bộ tính năng giả lập và đổi máy.", featureName, status];
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🛡️ YÊU CẦU BẢN QUYỀN"
+                                                                   message:msg
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔑 Nhập License Key" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self promptEnterLicenseKeyFrom:presenter];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Sao Chép UDID Gửi Admin" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        NSString *udid = [[ZTSecurityManager sharedManager] getRealHardwareUDID];
+        [UIPasteboard generalPasteboard].string = udid ?: @"";
+        UIAlertController *copied = [UIAlertController alertControllerWithTitle:@"Đã Sao Chép UDID"
+                                                                        message:[NSString stringWithFormat:@"UDID máy thật:\n%@\n\nHãy gửi mã này cho Admin để nhận License Key.", udid]
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [copied addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [presenter presentViewController:copied animated:YES completion:nil];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+    
+    [presenter presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC {
@@ -298,7 +341,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     NSString *title = @"⚡ ZALOTWEAK - MENU ĐIỀU KHIỂN";
     NSString *guidance;
     if (!isLicensed) {
-        guidance = @"⚠️ BƯỚC CẦN LÀM ĐẦU TIÊN: Bấm [1️⃣] để KÍCH HOẠT KEY!\nSau đó mới tiến hành Deep Wipe và Reg Acc.";
+        guidance = @"⚠️ BƯỚC CẦN LÀM ĐẦU TIÊN: Bấm [1️⃣] để KÍCH HOẠT KEY!\nHiện các tính năng Wipe, Đổi Vùng, Giả Lập ĐANG BỊ KHÓA.";
     } else {
         guidance = @"📋 QUY TRÌNH TẠO ACC CHUẨN (LÀM THEO THỨ TỰ):\n"
                    @"▶️ Bước 1: Bấm [2️⃣ Deep Wipe Sạch & Đổi Máy] (App tự thoát)\n"
@@ -309,8 +352,8 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     
     NSString *message = [NSString stringWithFormat:@"%@\n\n📱 Thiết Bị Giả Lập: %@ | IDFV: %@...",
                          guidance,
-                         settings.deviceMachine,
-                         [settings.spoofedIDFV substringToIndex:MIN((NSUInteger)8, settings.spoofedIDFV.length)]];
+                         isLicensed ? settings.deviceMachine : @"(Chưa kích hoạt - Đang dùng máy thật)",
+                         isLicensed ? [settings.spoofedIDFV substringToIndex:MIN((NSUInteger)8, settings.spoofedIDFV.length)] : @"(Chưa cấp)"];
     
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:title
                                                                    message:message
@@ -325,16 +368,26 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     }]];
     
     // Nút 2: Deep Wipe & Cấp Máy Mới
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🧹 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Tự đóng app)"
+    NSString *wipeButtonTitle = isLicensed ? @"🧹 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Tự đóng app)" : @"🔒 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:wipeButtonTitle
                                              style:UIAlertActionStyleDestructive
                                            handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Deep Wipe & Cấp Máy Mới"];
+            return;
+        }
         [self confirmDeepWipeFrom:top];
     }]];
     
     // Nút 3: Kiểm Tra Độ Sạch Trước Khi Reg
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🔍 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)"
+    NSString *diagButtonTitle = isLicensed ? @"🔍 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)" : @"🔒 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Kiểm Tra Độ Sạch Trước Khi Reg"];
+            return;
+        }
         [self showPreRegDiagnosticFrom:top];
     }]];
     
@@ -349,10 +402,14 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     NSString *currentRegion = settings.regionMode ?: @"VN";
     NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
                            ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)");
-    NSString *regionButtonTitle = [NSString stringWithFormat:@"🌐 [5️⃣] Khu Vực & SIM: %@", regionName];
+    NSString *regionButtonTitle = isLicensed ? [NSString stringWithFormat:@"🌐 [5️⃣] Khu Vực & SIM: %@", regionName] : @"🔒 [5️⃣] Khu Vực & SIM (Cần Key)";
     [sheet addAction:[UIAlertAction actionWithTitle:regionButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Đổi Khu Vực & Nhà Mạng SIM"];
+            return;
+        }
         [self showRegionSelectionMenuFrom:top];
     }]];
     
@@ -446,6 +503,20 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)showHardwareSpecsFrom:(UIViewController *)top {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        NSString *status = [[ZTSecurityManager sharedManager] getLicenseStatusText];
+        NSString *warnMsg = [NSString stringWithFormat:@"⚠️ TRẠNG THÁI: %@\n\nToàn bộ cơ chế Giả Lập Thiết Bị ĐANG BỊ TẮT. Zalo hiện đang đọc trực tiếp thông số PHẦN CỨNG THẬT của máy bạn!\n\nVui lòng kích hoạt License Key để mở khóa giả lập thiết bị.", status];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"📱 Thông Số Máy (CHƯA KÍCH HOẠT)"
+                                                                       message:warnMsg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"🔑 Nhập License Key" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+            [self promptEnterLicenseKeyFrom:top];
+        }]];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+        [top presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+
     ZTSettings *s = [ZTSettings sharedSettings];
     uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
     uint64_t uptimeHours = (nowSec > s.bootTimeSec) ? ((nowSec - s.bootTimeSec) / 3600) : 0;
@@ -521,6 +592,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)showRegionSelectionMenuFrom:(UIViewController *)top {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        [self showLicenseRequiredAlertFrom:top featureName:@"Đổi Khu Vực & Nhà Mạng SIM"];
+        return;
+    }
+
     ZTSettings *s = [ZTSettings sharedSettings];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 Chọn Khu Vực & Nhà Mạng SIM"
                                                                    message:@"Tùy chọn này giúp đồng bộ tên máy, nhà mạng SIM (MCC, MNC, ISO) và mã quốc gia mà không xóa dữ liệu hay thay đổi IDFV."
@@ -650,6 +726,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)confirmDeepWipeFrom:(UIViewController *)top {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        [self showLicenseRequiredAlertFrom:top featureName:@"Deep Wipe & Cấp Máy Mới"];
+        return;
+    }
+
     ZTSettings *s = [ZTSettings sharedSettings];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🧹 DEEP WIPE & CẤP MÁY MỚI"
                                                                    message:@"Chỉ 1 chạm: Xóa sạch dữ liệu Zalo cũ, cấp ngay ID thiết bị mới tinh và đồng bộ cấu hình mạng SIM mong muốn:"
@@ -687,6 +768,10 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        return;
+    }
+
     NSString *home = NSHomeDirectory();
     if (!home || home.length < 5) return;
     
@@ -790,6 +875,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top {
     UIViewController *presenter = top ?: get_top_view_controller();
     if (!presenter) return;
+
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        [self showLicenseRequiredAlertFrom:presenter featureName:@"Kiểm Tra Độ Sạch Trước Khi Reg"];
+        return;
+    }
 
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra..."
                                                                      message:@"Đang quét bộ nhớ đệm Sandbox và kiểm tra địa chỉ IP mạng..."

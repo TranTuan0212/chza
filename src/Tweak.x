@@ -239,12 +239,17 @@ static void logAudit(NSString *category, NSString *detail);
         self.enabled = [dict[@"enabled"] boolValue];
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
         if (self.needsNewProfile) {
-            logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
-            self.needsNewProfile = NO;
-            self.justGeneratedColdBoot = YES;
-            self.regionMode = dict[@"regionMode"] ?: @"VN";
-            [self generateNewProfile];
-            return;
+            if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
+                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
+                self.needsNewProfile = NO;
+                self.justGeneratedColdBoot = YES;
+                self.regionMode = dict[@"regionMode"] ?: @"VN";
+                [self generateNewProfile];
+                return;
+            } else {
+                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
+                self.needsNewProfile = NO;
+            }
         }
 
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
@@ -795,17 +800,16 @@ static int my_uname(struct utsname *buf) {
 %hook UIDevice
 
 - (NSUUID *)identifierForVendor {
-    // Luôn ưu tiên trả về IDFV spoofed của profile để Zalo tuyệt đối không bao giờ tóm được IDFV thật của máy!
+    if (!is_tweak_active()) {
+        NSUUID *origUUID = %orig;
+        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [CHƯA KÍCH HOẠT KEY / HẾT HẠN - TRẢ VỀ IDFV THẬT] %@", [origUUID UUIDString]]);
+        return origUUID;
+    }
     NSString *fake = [ZTSettings sharedSettings].spoofedIDFV;
     if (fake && fake.length > 0) {
         logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [ĐÃ FAKE IDFV AN TOÀN] %@", fake]);
         NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
         if (uuid) return uuid;
-    }
-    if (!is_tweak_active()) {
-        NSUUID *origUUID = %orig;
-        logAudit(@"IDFV-CHECK", [NSString stringWithFormat:@"identifierForVendor -> [CHƯA KÍCH HOẠT KEY - TRẢ VỀ IDFV THẬT] %@", [origUUID UUIDString]]);
-        return origUUID;
     }
     return %orig;
 }
@@ -860,11 +864,17 @@ static int my_uname(struct utsname *buf) {
 %hook ASIdentifierManager
 
 - (NSUUID *)advertisingIdentifier {
+    if (!is_tweak_active()) {
+        return %orig;
+    }
     logAudit(@"IDFA-CHECK", @"advertisingIdentifier -> [CHUẨN APPLE ATT DENIED] 00000000-0000-0000-0000-000000000000");
     return [[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000000"];
 }
 
 - (BOOL)isAdvertisingTrackingEnabled {
+    if (!is_tweak_active()) {
+        return %orig;
+    }
     return NO;
 }
 
@@ -873,11 +883,18 @@ static int my_uname(struct utsname *buf) {
 %hook ATTrackingManager
 
 + (NSInteger)trackingAuthorizationStatus {
+    if (!is_tweak_active()) {
+        return %orig;
+    }
     logAudit(@"TRACKING-CHECK", @"trackingAuthorizationStatus -> [ĐÃ CHẶN THEO DÕI - TRẢ VỀ DENIED (2)]");
     return 2; // ATTrackingManagerAuthorizationStatusDenied
 }
 
 + (void)requestTrackingAuthorizationWithCompletionHandler:(void (^)(NSInteger status))completion {
+    if (!is_tweak_active()) {
+        %orig(completion);
+        return;
+    }
     logAudit(@"TRACKING-CHECK", @"requestTrackingAuthorization -> [TỰ ĐỘNG TRẢ VỀ DENIED (2)]");
     if (completion) {
         completion(2);
@@ -1564,6 +1581,7 @@ static BOOL s_in_bundle_hook = NO;
 
 - (NSString *)bundleIdentifier {
     if (self == [NSBundle mainBundle]) {
+        if (!is_tweak_active()) return %orig;
         if (s_in_bundle_hook) return %orig;
         s_in_bundle_hook = YES;
         BOOL isOrig = is_original_zalo_app();
@@ -1587,6 +1605,7 @@ static BOOL s_in_bundle_hook = NO;
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
     if (self == [NSBundle mainBundle] && key && [key isEqualToString:@"CFBundleIdentifier"]) {
+        if (!is_tweak_active()) return %orig;
         if (s_in_bundle_hook) return %orig;
         s_in_bundle_hook = YES;
         BOOL isOrig = is_original_zalo_app();
@@ -1606,6 +1625,7 @@ static BOOL s_in_bundle_hook = NO;
 - (NSDictionary *)infoDictionary {
     NSDictionary *dict = %orig;
     if (self == [NSBundle mainBundle] && dict) {
+        if (!is_tweak_active()) return dict;
         if (s_in_bundle_hook) return dict;
         s_in_bundle_hook = YES;
         BOOL isOrig = is_original_zalo_app();
