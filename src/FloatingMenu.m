@@ -376,13 +376,13 @@ UIViewController *ZTGetTopViewController(void) {
     BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     NSString *licStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    NSString *title = @"⚡ ZALOTWEAK - MENU ĐIỀU KHIỂN";
+    NSString *title = [NSString stringWithFormat:@"⚡ ZALOTWEAK | %@", licStatusText];
     NSString *guidance;
     if (!isLicensed) {
         if (settings.hasConfiguredProfile) {
             guidance = @"⚠️ BẢN QUYỀN ĐÃ HẾT HẠN!\nProfile máy ảo hiện tại ĐÃ ĐƯỢC ĐÓNG BĂNG để bảo vệ tài khoản Zalo của bạn.\nCác chức năng Wipe và Đổi máy bị tạm khóa cho đến khi gia hạn.";
         } else {
-            guidance = @"⚠️ BƯỚC ĐẦU TIÊN: Bấm [3️⃣ Cài Đặt Nâng Cao] để KÍCH HOẠT KEY!\nHiện tại app đang dùng máy thật. Hãy kích hoạt Key và bấm [1️⃣] để bắt đầu giả lập máy mới.";
+            guidance = @"⚠️ BƯỚC ĐẦU TIÊN: Bấm nút Bản Quyền bên dưới để KÍCH HOẠT KEY!\nHiện tại app đang dùng máy thật. Hãy kích hoạt Key và bấm [1️⃣] để bắt đầu giả lập máy mới.";
         }
     } else {
         guidance = @"📋 QUY TRÌNH REG ACC CHUẨN:\n"
@@ -398,11 +398,19 @@ UIViewController *ZTGetTopViewController(void) {
         deviceDisplay = @"(Chưa cấp máy ảo - Đang dùng máy thật)";
     }
 
-    NSString *message = [NSString stringWithFormat:@"🛡️ BẢN QUYỀN: %@\n\n%@\n\n📱 Thiết Bị Giả Lập: %@", licStatusText, guidance, deviceDisplay];
+    NSString *message = [NSString stringWithFormat:@"%@\n\n📱 Thiết Bị Giả Lập: %@", guidance, deviceDisplay];
 
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:title
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+
+    // Nút 0: Hiển thị Hạn Bản Quyền ngay ngoài Menu chính
+    NSString *licButtonTitle = [NSString stringWithFormat:@"🛡️ HẠN KEY: %@", licStatusText];
+    [sheet addAction:[UIAlertAction actionWithTitle:licButtonTitle
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        [self showLicenseMenuFrom:top];
+    }]];
 
     // Nút 1: Deep Wipe & Cấp Máy Mới (Chọn SIM 1 chạm)
     NSString *wipeButtonTitle = isLicensed ? @"🚀 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (Chọn SIM)" : @"🔒 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (Cần Key)";
@@ -429,7 +437,7 @@ UIViewController *ZTGetTopViewController(void) {
     }]];
 
     // Nút 3: Cài Đặt Nâng Cao & Bản Quyền
-    NSString *advButtonTitle = isLicensed ? @"⚙️ [3️⃣] Cài Đặt Nâng Cao & Bản Quyền" : @"🛡️ [3️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
+    NSString *advButtonTitle = isLicensed ? @"⚙️ [3️⃣] Cài Đặt Nâng Cao & Quản Lý Profile" : @"🛡️ [3️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
     [sheet addAction:[UIAlertAction actionWithTitle:advButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
@@ -736,7 +744,7 @@ UIViewController *ZTGetTopViewController(void) {
         [top presentViewController:viewAlert animated:YES completion:nil];
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"🌐 Xuất File HAR (Charles / Proxyman)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"🌐 Xuất File Gói Tin Mạng (HAR)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         NSString *home = NSHomeDirectory();
         NSString *harPath = home ? [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"] : @"/var/mobile/Library/Preferences/ZaloTraffic.har";
         if (![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
@@ -963,8 +971,11 @@ UIViewController *ZTGetTopViewController(void) {
     [presenter presentViewController:loading animated:YES completion:^{
         fetch_public_ip(^(NSString *currentIP) {
             [loading dismissViewControllerAnimated:YES completion:^{
-                ZTDiagnosticInfo *info = [self collectDiagnosticInfoWithIP:currentIP];
-                [ZTDiagnosticViewController presentFrom:presenter info:info];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    UIViewController *p = get_top_view_controller() ?: presenter;
+                    ZTDiagnosticInfo *info = [self collectDiagnosticInfoWithIP:currentIP];
+                    [ZTDiagnosticViewController presentFrom:p info:info];
+                });
             }];
         });
     }];

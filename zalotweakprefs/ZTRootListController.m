@@ -119,15 +119,6 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
         dict[@"hasConfiguredProfile"] = @(NO);
         needSave = YES;
     }
-    if (!dict[@"proxyEnabled"]) {
-        dict[@"proxyEnabled"] = @(NO);
-        dict[@"proxyType"] = @"HTTP";
-        dict[@"proxyHost"] = @"";
-        dict[@"proxyPort"] = @(0);
-        dict[@"proxyUser"] = @"";
-        dict[@"proxyPass"] = @"";
-        needSave = YES;
-    }
     if (!dict[@"deviceMachine"]) {
         dict[@"deviceMachine"] = get_prefs_real_machine();
         dict[@"deviceModel"] = get_prefs_real_model();
@@ -182,9 +173,9 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     NSString *key = [specifier propertyForKey:@"key"];
-    if (([key isEqualToString:@"enabled"] || [key isEqualToString:@"regionMode"] || [key isEqualToString:@"proxyEnabled"]) && ![[ZTSecurityManager sharedManager] isLicenseValid]) {
+    if (([key isEqualToString:@"enabled"] || [key isEqualToString:@"regionMode"]) && ![[ZTSecurityManager sharedManager] isLicenseValid]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng hoặc thay đổi cấu hình ZaloTweak / Proxy."
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng hoặc thay đổi cấu hình ZaloTweak."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
