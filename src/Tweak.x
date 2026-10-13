@@ -68,7 +68,7 @@ static inline BOOL is_original_zalo_app(void) {
     return NO;
 }
 
-static inline BOOL has_system_preferenceloader(void) {
+static inline __attribute__((unused)) BOOL has_system_preferenceloader(void) {
     static int s_has_pl = -1;
     if (s_has_pl != -1) return (s_has_pl == 1);
     const char *paths[] = {

@@ -2,6 +2,7 @@
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <sys/sysctl.h>
+#import <sys/stat.h>
 #import <CommonCrypto/CommonHMAC.h>
 #import <CommonCrypto/CommonDigest.h>
 
