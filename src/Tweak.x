@@ -215,6 +215,8 @@ static uint64_t get_real_disk_total_size(void) {
     }
     return 128000000000ULL;
 }
+// Forward declaration - hàm logAudit được định nghĩa ở phần sau
+static void logAudit(NSString *category, NSString *detail);
 
 @implementation ZTSettings
 
