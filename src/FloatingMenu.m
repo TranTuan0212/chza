@@ -150,16 +150,16 @@ void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *e
             socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
         }
         proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
-        proxyDict[(NSString *)kCFNetworkProxiesSOCKSEnable] = @(YES);
-        proxyDict[(NSString *)kCFNetworkProxiesSOCKSProxy] = s.proxyHost;
-        proxyDict[(NSString *)kCFNetworkProxiesSOCKPort] = @(s.proxyPort);
+        proxyDict[@"SOCKSEnable"] = @(YES);
+        proxyDict[@"SOCKSProxy"] = s.proxyHost;
+        proxyDict[@"SOCKPort"] = @(s.proxyPort);
     } else {
         proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
         proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
         proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
-        proxyDict[(NSString *)kCFNetworkProxiesHTTPSEnable] = @(YES);
-        proxyDict[(NSString *)kCFNetworkProxiesHTTPSProxy] = s.proxyHost;
-        proxyDict[(NSString *)kCFNetworkProxiesHTTPSPort] = @(s.proxyPort);
+        proxyDict[@"HTTPSEnable"] = @(YES);
+        proxyDict[@"HTTPSProxy"] = s.proxyHost;
+        proxyDict[@"HTTPSPort"] = @(s.proxyPort);
         if (s.proxyUser.length > 0) {
             proxyDict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
             proxyDict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
@@ -168,7 +168,7 @@ void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *e
                                                                                     port:s.proxyPort
                                                                                 protocol:NSURLProtectionSpaceHTTPProxy
                                                                                    realm:nil
-                                                                    authenticationMethod:NSURLAuthenticationMethodHTTPProxy];
+                                                                    authenticationMethod:NSURLAuthenticationMethodHTTPBasic];
                 NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
                                                                    password:s.proxyPass
                                                                 persistence:NSURLCredentialPersistenceForSession];
