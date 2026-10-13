@@ -36,6 +36,8 @@
 @property (nonatomic, strong) NSString *spoofedWifiMAC;     // Wi-Fi MAC Address
 @property (nonatomic, strong) NSString *spoofedBluetoothMAC;// Bluetooth MAC Address
 @property (nonatomic, assign) BOOL showFloatingMenu;        // Hiện nút nổi trong app (Mặc định NO cho Zalo gốc, YES cho Clone)
+@property (nonatomic, assign) BOOL needsNewProfile;         // Đánh dấu yêu cầu sinh profile mới khi Cold-Boot
+@property (nonatomic, assign) BOOL justGeneratedColdBoot;   // Cờ tạm thời: vừa sinh máy mới từ Cold-Boot
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

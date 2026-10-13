@@ -235,6 +235,16 @@ static uint64_t get_real_disk_total_size(void) {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
     if (dict) {
         self.enabled = [dict[@"enabled"] boolValue];
+        self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
+        if (self.needsNewProfile) {
+            logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
+            self.needsNewProfile = NO;
+            self.justGeneratedColdBoot = YES;
+            self.regionMode = dict[@"regionMode"] ?: @"VN";
+            [self generateNewProfile];
+            return;
+        }
+
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
         self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
         self.deviceName = dict[@"deviceName"] ?: @"iPhone";
@@ -326,7 +336,7 @@ static uint64_t get_real_disk_total_size(void) {
     dict[@"bootTimeSec"] = @(self.bootTimeSec);
     dict[@"bootSessionUUID"] = self.bootSessionUUID ?: @"";
     dict[@"spoofedIDFV"] = self.spoofedIDFV;
-    dict[@"spoofedIDFA"] = self.spoofedIDFA ?: [[NSUUID UUID] UUIDString];
+    dict[@"spoofedIDFA"] = self.spoofedIDFA ?: @"00000000-0000-0000-0000-000000000000";
     dict[@"profileId"] = self.profileId;
     dict[@"diskTotalSize"] = @(self.diskTotalSize);
     dict[@"diskFreeSize"] = @(self.diskFreeSize);
@@ -338,6 +348,7 @@ static uint64_t get_real_disk_total_size(void) {
     dict[@"batteryState"] = @(self.batteryState);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
     dict[@"showFloatingMenu"] = @(self.showFloatingMenu);
+    dict[@"needsNewProfile"] = @(self.needsNewProfile);
     if (self.spoofedSerial) dict[@"spoofedSerial"] = self.spoofedSerial;
     if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
     if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;
@@ -1995,6 +2006,28 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
         if ([ZTSettings sharedSettings].showFloatingMenu) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [[ZTMenuManager sharedManager] tryAttachFloatingButton];
+            });
+        }
+        if ([ZTSettings sharedSettings].justGeneratedColdBoot) {
+            [ZTSettings sharedSettings].justGeneratedColdBoot = NO;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                ZTSettings *s = [ZTSettings sharedSettings];
+                NSString *rDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                                  ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+                NSString *welcomeMsg = [NSString stringWithFormat:
+                    @"🎉 THIẾT BỊ MỚI TINH ĐÃ KÍCH HOẠT!\n\n"
+                    @"• Tên máy: %@\n"
+                    @"• SIM & Vùng: %@ (%@ - MCC %@)\n"
+                    @"• IDFV Mới: %@\n"
+                    @"• IDFA: 00000000-0000-0000-0000-000000000000 (Apple ATT Denied)\n\n"
+                    @"🟢 Môi trường sạch sẽ 100%%, sẵn sàng Reg Acc an toàn!",
+                    s.deviceName, rDesc, s.carrierName, s.carrierMCC, s.spoofedIDFV];
+                
+                UIAlertController *wAlert = [UIAlertController alertControllerWithTitle:@"⚡ ZALOTWEAK COLD-BOOT"
+                                                                                message:welcomeMsg
+                                                                         preferredStyle:UIAlertControllerStyleAlert];
+                [wAlert addAction:[UIAlertAction actionWithTitle:@"Bắt Đầu Sử Dụng" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:wAlert animated:YES completion:nil];
             });
         }
     }

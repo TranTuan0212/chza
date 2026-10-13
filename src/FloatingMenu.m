@@ -748,48 +748,42 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     [fm createDirectoryAtPath:appSupportDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:prefDir withIntermediateDirectories:YES attributes:nil error:nil];
     
-    // 4. Lưu lại IDFV và thời điểm wipe trước khi đổi mới
+    // 4. ĐÁnh dấu Cold-Boot: Lưu khu vực SIM đã chọn và cờ needsNewProfile
+    //    KHÔNG sinh profile mới ở đây - profile sẽ được sinh khi khởi động lại app (Cold-Boot)
     ZTSettings *settings = [ZTSettings sharedSettings];
     settings.lastWipedIDFV = settings.spoofedIDFV;
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
-
-    // Cập nhật vùng và sinh định danh & phần cứng mới tinh đúng 1 LẦN DUY NHẤT
     settings.regionMode = targetRegion ?: @"VN";
-    [settings generateNewProfile];
+    settings.needsNewProfile = YES;
     [settings saveSettings];
-    
-    // 5. Hiển thị thông báo và thoát app sạch sẽ
+
+    // 5. Đóng app dứt khoát ngay lập tức (không delay) để:
+    //    - Ngăn Zalo flush RAM ghi đè lại sandbox vừa dọn
+    //    - Đảm bảo thiết bị mới chỉ được sinh ra hoàn toàn trong tiến trình sạch mới
     UIViewController *top = get_top_view_controller();
-    NSString *regionDesc = [settings.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                           ([settings.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    NSString *regionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                           ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
     NSString *msg = [NSString stringWithFormat:
-                     @"🎉 Đã làm sạch 100%% dữ liệu Zalo Clone!\n\n"
-                     @"• Tên máy mới: %@\n"
-                     @"• SIM & Khu vực: %@ (%@ - MCC %@)\n"
-                     @"• IDFV Mới: %@\n"
-                     @"• IDFA: 00000000-0000-0000-0000-000000000000 (Chuẩn Apple Denied)\n"
+                     @"✅ Đã dọn sạch dữ liệu Zalo cũ!\n\n"
+                     @"• SIM & Khu vực khi mở lại: %@\n"
                      @"• Keychain & Cache: Làm sạch hoàn toàn\n"
                      @"• File Backup .adbk: Được bảo vệ an toàn\n\n"
-                     @"⚠️ Ứng dụng sẽ tự động đóng sau 2 giây.\n"
-                     @"👉 BẬT VÀ TẮT CHẾ ĐỘ MÁY BAY (AIRPLANE MODE) để đổi IP 4G trước khi mở lại Zalo!",
-                     settings.deviceName,
-                     regionDesc, settings.carrierName, settings.carrierMCC,
-                     settings.spoofedIDFV];
-    
-    UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🧹 Deep Wipe Hoàn Tất"
+                     @"⚡ THIẾT BỊ MỚI sẽ được kích hoạt ngay khi bạn mở lại Zalo!\n\n"
+                     @"👉 BẬT VÀ TẮT CHẾ ĐỘ MÁY BAY để đổi IP 4G trước khi mở lại.",
+                     regionDesc];
+
+    UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🧹 Wipe Hoàn Tất - Đang Đóng App"
                                                                        message:msg
                                                                 preferredStyle:UIAlertControllerStyleAlert];
-    
+
     if (top) {
         [top presentViewController:doneAlert animated:YES completion:^{
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 exit(0);
             });
         }];
     } else {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            exit(0);
-        });
+        exit(0);
     }
 }
 
