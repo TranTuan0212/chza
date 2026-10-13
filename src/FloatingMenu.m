@@ -228,41 +228,111 @@ void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *e
     }] resume];
 }
 
-static NSTimeInterval s_lastProxyWarnTime = 0;
+static BOOL s_isEmergencyAlertShowing = NO;
+
+void ZTTriggerEmergencyProxyFreeze(NSString *reason) {
+    // 1. Lập tức kích hoạt Kill-Switch: Chặn 100% outbound network traffic của Zalo
+    ZTSetProxyKillSwitch(YES);
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (s_isEmergencyAlertShowing) return;
+
+        UIViewController *top = get_top_view_controller();
+        if (!top) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                ZTTriggerEmergencyProxyFreeze(reason);
+            });
+            return;
+        }
+
+        s_isEmergencyAlertShowing = YES;
+        ZTSettings *s = [ZTSettings sharedSettings];
+
+        NSString *title = @"🚨 KHẨN CẤP: PROXY MẤT KẾT NỐI / HẾT HẠN!";
+        NSString *msg = [NSString stringWithFormat:
+            @"🛡️ ZaloTweak đã ĐÓNG BĂNG toàn bộ mạng Zalo để bảo vệ tài khoản, TUYỆT ĐỐI KHÔNG ĐỂ LỘ IP THẬT!\n\n"
+            @"• Tình trạng: %@\n"
+            @"• Proxy cấu hình: %@:%u (%@)\n\n"
+            @"⚠️ CẢNH BÁO NGUY HIỂM: Nếu tiếp tục chạy Zalo bằng IP mạng thật (Wi-Fi/4G), hệ thống VNG sẽ phát hiện và KHÓA TÀI KHOẢN NGAY LẬP TỨC!\n\n"
+            @"Vui lòng chọn hướng xử lý an toàn bên dưới:",
+            reason ?: @"Không thể kết nối đến máy chủ Proxy",
+            s.proxyHost.length > 0 ? s.proxyHost : @"Chưa nhập",
+            s.proxyPort,
+            s.proxyType ?: @"HTTP"];
+
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title
+                                                                       message:msg
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+
+        // Nút 1: Nhập Proxy mới để mở băng (Không có nút bỏ qua!)
+        [alert addAction:[UIAlertAction actionWithTitle:@"🌐 [1] Nhập / Đổi Proxy Mới (Mở Băng)"
+                                                 style:UIAlertActionStyleDefault
+                                               handler:^(UIAlertAction * _Nonnull action) {
+            s_isEmergencyAlertShowing = NO;
+            [[ZTMenuManager sharedManager] promptEnterNewProxyToUnfreezeFrom:top];
+        }]];
+
+        // Nút 2: Thoát Zalo Khẩn Cấp (An Toàn)
+        [alert addAction:[UIAlertAction actionWithTitle:@"⚡ [2] Thoát Zalo Khẩn Cấp (An Toàn)"
+                                                 style:UIAlertActionStyleDestructive
+                                               handler:^(UIAlertAction * _Nonnull action) {
+            exit(0);
+        }]];
+
+        [top presentViewController:alert animated:YES completion:nil];
+    });
+}
+
+static dispatch_source_t s_proxyHeartbeatTimer = nil;
+void ZTStartProxyHeartbeat(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+        s_proxyHeartbeatTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+        // Kiểm tra định kỳ mỗi 30 giây
+        dispatch_source_set_timer(s_proxyHeartbeatTimer,
+                                  dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC),
+                                  30 * NSEC_PER_SEC,
+                                  5 * NSEC_PER_SEC);
+        dispatch_source_set_event_handler(s_proxyHeartbeatTimer, ^{
+            ZTSettings *s = [ZTSettings sharedSettings];
+            if (!s.proxyEnabled || s.proxyHost.length == 0 || s.proxyPort == 0) {
+                return;
+            }
+            if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+                ZTTriggerEmergencyProxyFreeze(@"Bản quyền ZaloTweak đã hết hạn (Proxy bị vô hiệu hóa)");
+                return;
+            }
+            ZTCheckProxyHealth(^(BOOL alive, NSString *ip, NSString *errorMessage) {
+                if (!alive) {
+                    ZTTriggerEmergencyProxyFreeze([NSString stringWithFormat:@"Proxy %@:%u mất kết nối: %@", s.proxyHost, s.proxyPort, errorMessage ?: @"Không phản hồi"]);
+                } else {
+                    if (ZTIsProxyKillSwitchActive()) {
+                        ZTSetProxyKillSwitch(NO);
+                        NSLog(@"[ZaloTweak] 🟢 Proxy đã kết nối trở lại. Tự động mở băng mạng.");
+                    }
+                }
+            });
+        });
+        dispatch_resume(s_proxyHeartbeatTimer);
+    });
+}
+
 void ZTAutoCheckProxyAndWarnIfDead(void) {
     ZTSettings *s = [ZTSettings sharedSettings];
     if (!s.proxyEnabled || s.proxyHost.length == 0 || s.proxyPort == 0) return;
 
-    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-    if (now - s_lastProxyWarnTime < 180) return; // Chỉ cảnh báo tối đa 1 lần mỗi 3 phút
+    ZTStartProxyHeartbeat();
 
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-        s_lastProxyWarnTime = now;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIViewController *top = get_top_view_controller();
-            if (top) {
-                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ PROXY TẠM DỪNG: BẢN QUYỀN HẾT HẠN!"
-                                                                               message:@"Cấu hình Proxy riêng cho Zalo đã tạm dừng vì License Key của bạn chưa được kích hoạt hoặc đã hết hạn!\n\n⚠️ Vui lòng gia hạn Key để tiếp tục sử dụng Proxy và bảo vệ IP mạng."
-                                                                        preferredStyle:UIAlertControllerStyleAlert];
-                [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleCancel handler:nil]];
-                [top presentViewController:alert animated:YES completion:nil];
-            }
-        });
+        ZTTriggerEmergencyProxyFreeze(@"Bản quyền ZaloTweak đã hết hạn (Proxy bị vô hiệu hóa)");
         return;
     }
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         ZTCheckProxyHealth(^(BOOL alive, NSString *ip, NSString *errorMessage) {
             if (!alive) {
-                s_lastProxyWarnTime = [[NSDate date] timeIntervalSince1970];
-                UIViewController *top = get_top_view_controller();
-                if (top) {
-                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ CẢNH BÁO: PROXY MẤT KẾT NỐI!"
-                                                                                   message:[NSString stringWithFormat:@"Proxy riêng của Zalo đang BẬT nhưng không thể kết nối tới máy chủ Proxy:\n\n• Proxy: %@:%u (%@)\n• Nguyên nhân: %@\n\n⚠️ Proxy có thể đã HẾT HẠN hoặc MẤT MẠNG. Vui lòng kiểm tra lại cấu hình Proxy để tránh làm gián đoạn Zalo hoặc lộ IP thật!", s.proxyHost, s.proxyPort, s.proxyType ?: @"HTTP", errorMessage ?: @"Không xác định"]
-                                                                            preferredStyle:UIAlertControllerStyleAlert];
-                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleCancel handler:nil]];
-                    [top presentViewController:alert animated:YES completion:nil];
-                }
+                ZTTriggerEmergencyProxyFreeze([NSString stringWithFormat:@"Proxy %@:%u không phản hồi: %@", s.proxyHost, s.proxyPort, errorMessage ?: @"Không thể kết nối"]);
             }
         });
     });
@@ -460,6 +530,11 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
                                                  selector:@selector(tryAttachFloatingButton)
                                                      name:UISceneDidActivateNotification
                                                    object:nil];
+    }
+
+    // Bắt đầu giám sát nhịp tim Proxy liên tục nếu tính năng Proxy đang bật
+    if ([ZTSettings sharedSettings].proxyEnabled) {
+        ZTStartProxyHeartbeat();
     }
 
     // Nhắc nhở bản quyền nếu chưa kích hoạt hoặc đã hết hạn
@@ -683,6 +758,9 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
             return;
         }
         s.proxyEnabled = !s.proxyEnabled;
+        if (!s.proxyEnabled) {
+            ZTSetProxyKillSwitch(NO);
+        }
         [s saveSettings];
         UIAlertController *toast = [UIAlertController alertControllerWithTitle:s.proxyEnabled ? @"Đã Bật Proxy" : @"Đã Tắt Proxy"
                                                                        message:s.proxyEnabled ? @"Toàn bộ kết nối Zalo giờ đây sẽ đi qua Proxy." : @"Zalo đã trở về kết nối mạng thông thường của máy."
@@ -712,6 +790,7 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
     // Nút Xóa cấu hình
     [sheet addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Trắng Cấu Hình Proxy" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
         s.proxyEnabled = NO;
+        ZTSetProxyKillSwitch(NO);
         s.proxyHost = @"";
         s.proxyPort = 0;
         s.proxyUser = @"";
@@ -776,21 +855,114 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         ZTCheckProxyHealth(^(BOOL alive, NSString *ip, NSString *errorMessage) {
             [loading dismissViewControllerAnimated:YES completion:^{
                 if (alive) {
+                    if (ZTIsProxyKillSwitchActive()) {
+                        ZTSetProxyKillSwitch(NO);
+                    }
                     UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"🎉 Proxy Hoạt Động Tốt"
                                                                                 message:[NSString stringWithFormat:@"Proxy đã kết nối thành công!\n\n• IP Public: %@\n• Loại: %@\n• Host: %@:%u", ip, [ZTSettings sharedSettings].proxyType, [ZTSettings sharedSettings].proxyHost, [ZTSettings sharedSettings].proxyPort]
                                                                          preferredStyle:UIAlertControllerStyleAlert];
                     [ok addAction:[UIAlertAction actionWithTitle:@"Tuyệt Vời" style:UIAlertActionStyleDefault handler:nil]];
                     [presenter presentViewController:ok animated:YES completion:nil];
                 } else {
-                    UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ Proxy Mất Kết Nối / Hết Hạn"
-                                                                                  message:[NSString stringWithFormat:@"Không thể kết nối qua Proxy:\n\n• Chi tiết: %@\n• Host: %@:%u\n\n⚠️ Vui lòng kiểm tra lại Proxy hoặc đổi Proxy mới!", errorMessage ?: @"Mất kết nối", [ZTSettings sharedSettings].proxyHost, [ZTSettings sharedSettings].proxyPort]
-                                                                           preferredStyle:UIAlertControllerStyleAlert];
-                    [fail addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                    [presenter presentViewController:fail animated:YES completion:nil];
+                    if ([ZTSettings sharedSettings].proxyEnabled) {
+                        ZTTriggerEmergencyProxyFreeze([NSString stringWithFormat:@"Kiểm tra thất bại: %@", errorMessage ?: @"Mất kết nối"]);
+                    } else {
+                        UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ Proxy Mất Kết Nối"
+                                                                                      message:[NSString stringWithFormat:@"Không thể kết nối qua Proxy:\n\n• Chi tiết: %@\n• Host: %@:%u", errorMessage ?: @"Mất kết nối", [ZTSettings sharedSettings].proxyHost, [ZTSettings sharedSettings].proxyPort]
+                                                                               preferredStyle:UIAlertControllerStyleAlert];
+                        [fail addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                        [presenter presentViewController:fail animated:YES completion:nil];
+                    }
                 }
             }];
         });
     }];
+}
+
+- (void)promptEnterNewProxyToUnfreezeFrom:(UIViewController *)top {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    ZTSettings *s = [ZTSettings sharedSettings];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 NHẬP PROXY MỚI (MỞ BĂNG)"
+                                                                   message:@"Dán chuỗi Proxy mới theo định dạng:\n• IP:Port (vd: 103.150.12.34:8080)\n• hoặc IP:Port:User:Pass"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+        textField.placeholder = @"vd: 103.150.12.34:8080 hoặc có User:Pass";
+        if (s.proxyHost.length > 0) {
+            if (s.proxyUser.length > 0) {
+                textField.text = [NSString stringWithFormat:@"%@:%u:%@:%@", s.proxyHost, s.proxyPort, s.proxyUser, s.proxyPass ?: @""];
+            } else {
+                textField.text = [NSString stringWithFormat:@"%@:%u", s.proxyHost, s.proxyPort];
+            }
+        }
+    }];
+
+    // Nút Thoát Zalo
+    [alert addAction:[UIAlertAction actionWithTitle:@"⚡ Thoát Zalo"
+                                             style:UIAlertActionStyleDestructive
+                                           handler:^(UIAlertAction * _Nonnull action) {
+        exit(0);
+    }]];
+
+    // Nút Kiểm Tra & Kích Hoạt
+    [alert addAction:[UIAlertAction actionWithTitle:@"Kiểm Tra & Mở Băng"
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction * _Nonnull action) {
+        NSString *text = alert.textFields.firstObject.text;
+        NSString *host = @"";
+        uint16_t port = 0;
+        NSString *user = @"";
+        NSString *pass = @"";
+
+        if (!ZTParseProxyString(text, &host, &port, &user, &pass) || host.length == 0 || port == 0) {
+            UIAlertController *err = [UIAlertController alertControllerWithTitle:@"❌ Định Dạng Không Hợp Lệ"
+                                                                         message:@"Vui lòng nhập đúng định dạng IP:Port hoặc IP:Port:User:Pass!"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+            [err addAction:[UIAlertAction actionWithTitle:@"Nhập Lại" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull a) {
+                [self promptEnterNewProxyToUnfreezeFrom:presenter];
+            }]];
+            [err addAction:[UIAlertAction actionWithTitle:@"⚡ Thoát Zalo" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull a) {
+                exit(0);
+            }]];
+            [presenter presentViewController:err animated:YES completion:nil];
+            return;
+        }
+
+        // Lưu cài đặt mới
+        s.proxyHost = host;
+        s.proxyPort = port;
+        s.proxyUser = user;
+        s.proxyPass = pass;
+        s.proxyEnabled = YES;
+        [s saveSettings];
+
+        UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra Proxy Mới..."
+                                                                         message:@"Đang gửi gói tin kiểm tra kết nối qua Proxy mới..."
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+        [presenter presentViewController:loading animated:YES completion:^{
+            ZTCheckProxyHealth(^(BOOL alive, NSString *ip, NSString *errorMessage) {
+                [loading dismissViewControllerAnimated:YES completion:^{
+                    if (alive) {
+                        ZTSetProxyKillSwitch(NO);
+                        UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"🎉 MỞ BĂNG THÀNH CÔNG!"
+                                                                                    message:[NSString stringWithFormat:
+                                                                                        @"✅ Proxy mới hoạt động hoàn hảo!\n\n"
+                                                                                        @"• IP Mới: %@\n"
+                                                                                        @"• Host: %@:%u\n\n"
+                                                                                        @"🟢 Đã mở khóa mạng Zalo an toàn.", ip, host, port]
+                                                                             preferredStyle:UIAlertControllerStyleAlert];
+                        [ok addAction:[UIAlertAction actionWithTitle:@"Tiếp Tục Sử Dụng" style:UIAlertActionStyleDefault handler:nil]];
+                        [presenter presentViewController:ok animated:YES completion:nil];
+                    } else {
+                        ZTTriggerEmergencyProxyFreeze([NSString stringWithFormat:@"Proxy mới (%@:%u) không kết nối được: %@", host, port, errorMessage ?: @"Không phản hồi"]);
+                    }
+                }];
+            });
+        }];
+    }]];
+
+    [presenter presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - Submenus

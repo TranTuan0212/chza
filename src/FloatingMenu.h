@@ -20,6 +20,7 @@
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)showProxySettingsFrom:(UIViewController *)top;
+- (void)promptEnterNewProxyToUnfreezeFrom:(UIViewController *)top;
 - (void)showAdvancedSettingsFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
@@ -33,6 +34,10 @@ UIViewController *ZTGetTopViewController(void);
 void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *errorMessage));
 void ZTAutoCheckProxyAndWarnIfDead(void);
 BOOL ZTParseProxyString(NSString *str, NSString **outHost, uint16_t *outPort, NSString **outUser, NSString **outPass);
+void ZTTriggerEmergencyProxyFreeze(NSString *reason);
+void ZTStartProxyHeartbeat(void);
+void ZTSetProxyKillSwitch(BOOL active);
+BOOL ZTIsProxyKillSwitchActive(void);
 
 #ifdef __cplusplus
 }
