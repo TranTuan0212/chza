@@ -84,6 +84,18 @@ static inline BOOL has_system_preferenceloader(void) {
 }
 
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
+    // 1. Nếu trực tiếp người gọi (addr0) là code nằm trong Zalo.app (chính app Zalo gọi):
+    if (addr0) {
+        Dl_info info0;
+        if (dladdr(addr0, &info0) && info0.dli_fname) {
+            const char *f0 = info0.dli_fname;
+            if ((strstr(f0, ".app/") != NULL || strstr(f0, "/Zalo.app") != NULL) && strstr(f0, "Zalotweak") == NULL) {
+                return NO; // Chắc chắn là code thực thi của Zalo, không phải hệ thống
+            }
+        }
+    }
+
+    // 2. Kiểm tra nếu là các framework/daemon hệ thống của Apple
     void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
         if (!addrs[i]) continue;
@@ -498,7 +510,7 @@ static void logAudit(NSString *category, NSString *detail) {
 
     NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, detail];
     dispatch_async(auditQueue, ^{
-        BOOL isNetworkEvent = [category isEqualToString:@"ZALO-HTTP"];
+        BOOL isNetworkEvent = [category containsString:@"HTTP"] || [category containsString:@"HAR"] || [category containsString:@"NET"];
         if (!isNetworkEvent) {
             if ([loggedAuditKeys containsObject:dedupKey]) {
                 return;
@@ -1497,19 +1509,14 @@ static BOOL s_in_bundle_hook = NO;
         if (isOrig) {
             return %orig;
         }
-        // Cho phép cả app Zalo và module chẩn đoán ZaloTweak nhìn thấy vn.com.vng.zingalo
-        void *retAddr0 = __builtin_return_address(0);
-        void *retAddr1 = __builtin_return_address(1);
-        Dl_info info;
-        if (dladdr(retAddr0, &info) && info.dli_fname) {
-            const char *fname = info.dli_fname;
-            // Chỉ bypass cho các daemon hệ thống Apple core khi cần đăng ký quyền hệ thống
-            if (strstr(fname, "UserNotifications") != NULL ||
-                strstr(fname, "CoreTelephony") != NULL ||
-                strstr(fname, "Security") != NULL) {
-                return %orig;
-            }
+
+        // BẢO VỆ TẦNG MẠNG & KERNEL IOS:
+        // Nếu caller là các daemon/framework hệ thống (CFNetwork, Network, Security...), trả về Bundle ID gốc của bản clone
+        // để Kernel NECP cấp quyền mở socket 4G/Wifi bình thường, tránh lỗi EINVAL 22 / Status -1000
+        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+            return %orig;
         }
+
         logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
         return @"vn.com.vng.zingalo";
     }
@@ -1544,16 +1551,8 @@ static BOOL s_in_bundle_hook = NO;
         if (isOrig) {
             return dict;
         }
-        void *retAddr = __builtin_return_address(0);
-        Dl_info info;
-        if (dladdr(retAddr, &info) && info.dli_fname) {
-            const char *fname = info.dli_fname;
-            if (strstr(fname, "/System/Library/") != NULL ||
-                strstr(fname, "/usr/lib/") != NULL ||
-                strstr(fname, "UserNotifications") != NULL ||
-                strstr(fname, "CoreFoundation") != NULL) {
-                return dict;
-            }
+        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+            return dict;
         }
         NSMutableDictionary *mDict = [dict mutableCopy];
         mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
@@ -1696,11 +1695,44 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     NSInteger statusCode = httpResp ? httpResp.statusCode : (error ? error.code : 0);
     NSString *statusText = httpResp ? [NSHTTPURLResponse localizedStringForStatusCode:statusCode] : (error ? [error localizedDescription] : @"Pending/Unknown");
 
+    // Diễn giải mục đích nghiệp vụ của request Zalo
+    NSString *purpose = @"";
+    if ([urlStr containsString:@"centralized.zaloapp.com/sdk/mobile/ios"]) {
+        purpose = @"📲 [Zalo SDK: Khởi tạo phiên SDK & gửi cấu hình màn hình/thiết bị]";
+    } else if ([urlStr containsString:@"centralized.zaloapp.com/id/mobile/ios"]) {
+        purpose = @"🆔 [Zalo Định Danh: Gửi IDFA, IDFV, Hardware Model lên hệ thống Device Fingerprint]";
+    } else if ([urlStr containsString:@"centralized.zaloapp.com/apps/mobile/ios"]) {
+        purpose = @"🔍 [Zalo Version Check: Kiểm tra phiên bản ứng dụng]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/consents"]) {
+        purpose = @"📜 [Zalo Đăng Ký: Tải chính sách & điều khoản đồng ý người dùng]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/phone/verify"]) {
+        purpose = @"🔑 [Zalo Xác Thực: Gửi số điện thoại yêu cầu mã OTP đăng nhập/đăng ký]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/register/getSupportCountry"]) {
+        purpose = @"🌍 [Zalo Quốc Gia: Tải danh sách mã quốc gia hỗ trợ đăng ký]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/helper/getDefaultCountry"]) {
+        purpose = @"📍 [Zalo Vị Trí: Lấy quốc gia mặc định của thiết bị]";
+    } else if ([urlStr containsString:@"firebase-settings.crashlytics.com"]) {
+        purpose = @"🛡️ [Crashlytics: Kiểm tra cấu hình Crashlytics Firebase]";
+    } else if ([urlStr containsString:@"firebaselogging-pa.googleapis.com"]) {
+        purpose = @"📊 [Firebase Analytics: Gửi log phân tích người dùng]";
+    } else if ([urlStr containsString:@"app-analytics-services.com"]) {
+        purpose = @"📈 [Analytics: Gửi dữ liệu thống kê ứng dụng]";
+    }
+
     // 1. Format Human-Readable Text Log (In ra Console & ZaloAudit.log)
     NSMutableString *logText = [NSMutableString string];
     [logText appendString:@"\n================================================================================"];
     [logText appendFormat:@"\n🌐 [HAR] %@ %@", method, urlStr];
+    if (purpose.length > 0) {
+        [logText appendFormat:@"\n👉 Hành động: %@", purpose];
+    }
     [logText appendFormat:@"\n⏱ Thời gian: %llums | Status: %ld %@", durationMs, (long)statusCode, statusText];
+    if (error) {
+        [logText appendFormat:@"\n⚠️ Chi tiết lỗi mạng: Domain=%@ | Code=%ld (%@)", error.domain, (long)error.code, [error localizedDescription]];
+        if (error.userInfo && error.userInfo.count > 0) {
+            [logText appendFormat:@"\n   • UserInfo: %@", error.userInfo];
+        }
+    }
     
     // Request Headers
     [logText appendString:@"\n--------------------------------- REQUEST HEADERS ------------------------------"];
@@ -1720,6 +1752,12 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
         reqBodyStr = [[NSString alloc] initWithData:reqBody encoding:NSUTF8StringEncoding];
         if (reqBodyStr) {
             [logText appendFormat:@"\n%@", reqBodyStr];
+            if ([reqBodyStr containsString:@"%"]) {
+                NSString *decoded = [reqBodyStr stringByRemovingPercentEncoding];
+                if (decoded && ![decoded isEqualToString:reqBodyStr]) {
+                    [logText appendFormat:@"\n   [ĐÃ GIẢI MÃ NỘI DUNG URL-ENCODED]:\n%@", decoded];
+                }
+            }
         } else {
             [logText appendFormat:@"\n(Dữ liệu nhị phân %lu bytes)", (unsigned long)reqBody.length];
         }
@@ -1822,7 +1860,19 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
+    if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
+        NSString *urlStr = request.URL.absoluteString ?: @"";
+        NSString *method = request.HTTPMethod ?: @"GET";
+        NSString *desc = @"";
+        if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/consents"]) {
+            desc = @" 👉 [Zalo tải điều khoản đăng ký/sử dụng]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/phone/verify"]) {
+            desc = @" 👉 [Zalo xác thực SĐT đăng nhập/OTP]";
+        } else if ([urlStr containsString:@"centralized.zaloapp.com"]) {
+            desc = @" 👉 [Zalo gửi định danh thiết bị]";
+        }
+        logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [ASYNC DELEGATE] %@ %@%@", method, urlStr, desc]);
+    }
     return %orig;
 }
 
@@ -1831,7 +1881,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     NSData *reqBody = request.HTTPBody;
 
     if (!completionHandler) {
-        record_har_traffic(request, reqBody, nil, nil, nil, startDate, nil);
+        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [TASK-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @""]);
+        }
         return %orig(request, nil);
     }
 
@@ -1845,7 +1897,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    record_har_traffic(request, bodyData, nil, nil, nil, [NSDate date], nil);
+    if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
+        logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-DELEGATE] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
+    }
     return %orig;
 }
 
@@ -1853,7 +1907,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     NSDate *startDate = [NSDate date];
 
     if (!completionHandler) {
-        record_har_traffic(request, bodyData, nil, nil, nil, startDate, nil);
+        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
+        }
         return %orig(request, bodyData, nil);
     }
 
@@ -1871,7 +1927,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     NSData *fileData = fileURL ? [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil] : nil;
 
     if (!completionHandler) {
-        record_har_traffic(request, fileData, nil, nil, nil, startDate, nil);
+        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-FILE-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
+        }
         return %orig(request, fileURL, nil);
     }
 
