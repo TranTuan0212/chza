@@ -11,7 +11,7 @@
             <key>label</key>
             <string>THAO TÁC NHANH (QUICK ACTIONS)</string>
             <key>footerText</key>
-            <string>Chỉ 1 chạm: Tự động đóng Zalo, dọn sạch dữ liệu cũ, làm mới Serial/MAC/IDFV và cấp profile máy sạch sẽ hoàn toàn.</string>
+            <string>Chỉ 1 chạm: Chọn SIM, tự động đóng Zalo, dọn sạch dữ liệu cũ, làm mới Serial/MAC/IDFV và cấp profile máy sạch sẽ hoàn toàn.</string>
         </dict>
         <dict>
             <key>cell</key>
@@ -29,9 +29,17 @@
         </dict>
         <dict>
             <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>🛡️ Hạn Bản Quyền</string>
+            <key>get</key>
+            <string>getLicenseStatusDisplayValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
             <string>PSButtonCell</string>
             <key>label</key>
-            <string>🚀 DEEP WIPE SẠCH &amp; CẤP MÁY MỚI (1-CLICK)</string>
+            <string>🚀 DEEP WIPE SẠCH &amp; CẤP MÁY MỚI (CHỌN SIM)</string>
             <key>action</key>
             <string>applyAndWipeCleanSequence:</string>
         </dict>
@@ -52,133 +60,7 @@
             <string>getRuntimeEnvironmentDisplayValue:</string>
         </dict>
 
-        <!-- GROUP 2: PROXY RIÊNG CHO ZALO -->
-        <dict>
-            <key>cell</key>
-            <string>PSGroupCell</string>
-            <key>label</key>
-            <string>PROXY RIÊNG CHO ZALO (PER-APP PROXY - CẦN KEY)</string>
-            <key>footerText</key>
-            <string>Chỉ áp dụng proxy cho app Zalo. Các ứng dụng khác vẫn dùng mạng thường. Tweak tự động cảnh báo nếu proxy mất mạng hoặc hết hạn.</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSSwitchCell</string>
-            <key>default</key>
-            <false/>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>proxyEnabled</string>
-            <key>label</key>
-            <string>Bật Proxy Riêng Cho Zalo</string>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSButtonCell</string>
-            <key>label</key>
-            <string>📋 Dán Nhanh Proxy (IP:Port / User:Pass)</string>
-            <key>action</key>
-            <string>quickPasteProxyAction:</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSButtonCell</string>
-            <key>label</key>
-            <string>🔍 Kiểm Tra Kết Nối Proxy (Test IP)</string>
-            <key>action</key>
-            <string>testProxyAction:</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSLinkListCell</string>
-            <key>default</key>
-            <string>HTTP</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>detail</key>
-            <string>PSListItemsController</string>
-            <key>key</key>
-            <string>proxyType</string>
-            <key>label</key>
-            <string>Loại Proxy</string>
-            <key>validTitles</key>
-            <array>
-                <string>HTTP / HTTPS Proxy</string>
-                <string>SOCKS5 Proxy</string>
-            </array>
-            <key>validValues</key>
-            <array>
-                <string>HTTP</string>
-                <string>SOCKS5</string>
-            </array>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>proxyHost</string>
-            <key>label</key>
-            <string>Host / IP</string>
-            <key>placeholder</key>
-            <string>vd: 103.150.12.34</string>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>proxyPort</string>
-            <key>label</key>
-            <string>Port</string>
-            <key>placeholder</key>
-            <string>vd: 8080</string>
-            <key>keyboard</key>
-            <string>numbers</string>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>proxyUser</string>
-            <key>label</key>
-            <string>Tài Khoản (Tuỳ Chọn)</string>
-            <key>placeholder</key>
-            <string>Username</string>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSEditTextCell</string>
-            <key>defaults</key>
-            <string>com.sonhu.zalotweak</string>
-            <key>key</key>
-            <string>proxyPass</string>
-            <key>label</key>
-            <string>Mật Khẩu (Tuỳ Chọn)</string>
-            <key>placeholder</key>
-            <string>Password</string>
-            <key>isSecure</key>
-            <true/>
-            <key>PostNotification</key>
-            <string>com.sonhu.zalotweak/settingschanged</string>
-        </dict>
-
-        <!-- GROUP 3: BẢN QUYỀN THIẾT BỊ (DRM) -->
+        <!-- GROUP 2: BẢN QUYỀN THIẾT BỊ (DRM) -->
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
@@ -232,7 +114,7 @@
             <string>getLicenseStatusDisplayValue:</string>
         </dict>
 
-        <!-- GROUP 4: THÔNG TIN THIẾT BỊ & ĐỊNH DANH ẢO -->
+        <!-- GROUP 3: THÔNG TIN THIẾT BỊ & ĐỊNH DANH ẢO -->
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>
@@ -334,7 +216,7 @@
             <string>getHardwareScreenValue:</string>
         </dict>
 
-        <!-- GROUP 5: TIỆN ÍCH & KIỂM TOÁN HỆ THỐNG -->
+        <!-- GROUP 4: TIỆN ÍCH & KIỂM TOÁN HỆ THỐNG -->
         <dict>
             <key>cell</key>
             <string>PSGroupCell</string>

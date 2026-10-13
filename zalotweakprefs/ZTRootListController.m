@@ -1,6 +1,7 @@
 #import "ZTRootListController.h"
 #import "SecurityManager.h"
 #import "DeviceProfilePool.h"
+#import "ZTDiagnosticViewController.h"
 #import <UIKit/UIKit.h>
 #import <CFNetwork/CFNetwork.h>
 #import <objc/message.h>
@@ -472,32 +473,73 @@ static void sync_license_to_all_locations(void) {
 - (void)applyAndWipeCleanSequence:(PSSpecifier *)specifier {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi sử dụng tính năng Đổi Máy & Wipe."
+                                                                       message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng tính năng Đổi Máy & Wipe."
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [self presentViewController:alert animated:YES completion:nil];
         return;
     }
 
-    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"Xác Nhận Wipe Sạch Toàn Diện"
-                                                                          message:@"Hệ thống sẽ:\n1. Tắt triệt để Zalo & tiến trình ngầm\n2. Xóa sạch Container, Cache, WebKit, Cookies\n3. Xóa Clipboard\n4. Cấp IDFV, Boot Time & Keychain Profile mới 100%\n\nBạn có muốn tiếp tục?"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🧹 CHỌN SIM & KHU VỰC THIẾT BỊ MỚI"
+                                                                   message:@"Chọn khu vực SIM mong muốn cho thiết bị mới. Hệ thống sẽ tự động tắt Zalo, dọn sạch dữ liệu cũ và cấp profile máy sạch sẽ hoàn toàn:"
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
-    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Tiến Hành Wipe" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [self performWipeAndApply];
-        });
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"VN"];
     }]];
 
-    [self presentViewController:confirmAlert animated:YES completion:nil];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"US_STUDENT"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"US"];
+    }]];
+
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
+    NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", currentRegion];
+    [sheet addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:currentRegion];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentViewController:sheet animated:YES completion:nil];
 }
 
-- (void)performWipeAndApply {
+- (void)performWipeAndApplyWithRegion:(NSString *)targetRegion {
     // 1. Tắt toàn bộ tiến trình
     kill_all_zalo_processes();
 
-    // 2. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
+    // 2. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    NSArray *suitesToPurge = @[
+        @"group.vn.com.vng.zingalo",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo",
+        @"com.zing.zalo.chatMigrateStore",
+        @"vn.com.vng.zingalo.zalosdk",
+        @"com.zing.zalo",
+        @"vn.com.vng.zingalo"
+    ];
+    for (NSString *suite in suitesToPurge) {
+        NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:suite];
+        if (ud) {
+            NSDictionary *d = [ud dictionaryRepresentation];
+            for (NSString *k in d.allKeys) {
+                [ud removeObjectForKey:k];
+            }
+            [ud synchronize];
+        }
+    }
+    NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
+    NSDictionary *stdDict = [stdUD dictionaryRepresentation];
+    for (NSString *k in stdDict.allKeys) {
+        [stdUD removeObjectForKey:k];
+    }
+    [stdUD synchronize];
+
+    // 3. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
     NSArray *dataContainers = get_zalo_data_container_paths();
     for (NSString *dataContainer in dataContainers) {
         if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
@@ -517,7 +559,7 @@ static void sync_license_to_all_locations(void) {
         [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"tmp"] withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
-    // 3. Xóa sạch Shared App Group
+    // 4. Xóa sạch Shared App Group
     NSArray *groupContainers = get_zalo_group_container_paths();
     for (NSString *groupPath in groupContainers) {
         if (!is_valid_zalo_sandbox_path(groupPath)) continue;
@@ -531,11 +573,11 @@ static void sync_license_to_all_locations(void) {
         [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
-    // 4. Xóa sạch Clipboard hệ thống để tránh tracking token
+    // 5. Xóa sạch Clipboard hệ thống để tránh tracking token
     [UIPasteboard generalPasteboard].items = @[];
     [UIPasteboard generalPasteboard].string = @"";
 
-    // 5. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
+    // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
     NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
 
     NSString *oldIDFV = dict[@"spoofedIDFV"];
@@ -544,8 +586,9 @@ static void sync_license_to_all_locations(void) {
     }
     dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
 
-    NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:currentRegion];
+    NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
+    dict[@"regionMode"] = chosenRegion;
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion];
 
     dict[@"enabled"] = @(YES);
     dict[@"hasConfiguredProfile"] = @(YES);
@@ -596,7 +639,7 @@ static void sync_license_to_all_locations(void) {
     [self reloadSpecifiers];
 
     // Thông báo hoàn tất
-    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n⚠️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) để đổi IP 4G trước khi mở lại Zalo.", p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"]];
+    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- SIM & Khu Vực: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n✈️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) trong 5 giây để đổi IP 4G trước khi mở lại Zalo.", p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName];
 
     dispatch_async(dispatch_get_main_queue(), ^{
         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất Tuyệt Đối"
@@ -677,226 +720,6 @@ static void sync_license_to_all_locations(void) {
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }
-
-#pragma mark - Proxy Actions
-
-static BOOL parse_proxy_string_prefs(NSString *str, NSString **outHost, uint16_t *outPort, NSString **outUser, NSString **outPass) {
-    if (!str || str.length == 0) return NO;
-    NSString *clean = [str stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    clean = [clean stringByReplacingOccurrencesOfString:@"http://" withString:@""];
-    clean = [clean stringByReplacingOccurrencesOfString:@"https://" withString:@""];
-    clean = [clean stringByReplacingOccurrencesOfString:@"socks5://" withString:@""];
-
-    NSArray *parts = [clean componentsSeparatedByString:@":"];
-    if (parts.count >= 2) {
-        if (outHost) *outHost = parts[0];
-        if (outPort) *outPort = (uint16_t)[parts[1] intValue];
-        if (parts.count >= 4) {
-            if (outUser) *outUser = parts[2];
-            if (outPass) *outPass = parts[3];
-        } else {
-            if (outUser) *outUser = @"";
-            if (outPass) *outPass = @"";
-        }
-        return YES;
-    }
-    return NO;
-}
-
-- (void)quickPasteProxyAction:(PSSpecifier *)specifier {
-    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                       message:@"Chức năng Proxy yêu cầu License Key hợp lệ. Vui lòng kích hoạt key ở bên dưới!"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Nhập Cấu Hình Proxy Nhanh"
-                                                                   message:@"Dán chuỗi Proxy theo định dạng:\n• IP:Port (vd: 103.150.12.34:8080)\n• hoặc IP:Port:User:Pass"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
-        textField.placeholder = @"vd: 103.150.12.34:8080 hoặc có User:Pass";
-        NSString *h = dict[@"proxyHost"];
-        uint16_t p = [dict[@"proxyPort"] unsignedShortValue];
-        NSString *u = dict[@"proxyUser"];
-        NSString *pw = dict[@"proxyPass"];
-        if (h.length > 0 && p > 0) {
-            if (u.length > 0) {
-                textField.text = [NSString stringWithFormat:@"%@:%u:%@:%@", h, p, u, pw ?: @""];
-            } else {
-                textField.text = [NSString stringWithFormat:@"%@:%u", h, p];
-            }
-        }
-    }];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Lưu & Bật Proxy" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *text = alert.textFields.firstObject.text;
-        NSString *host = @"";
-        uint16_t port = 0;
-        NSString *user = @"";
-        NSString *pass = @"";
-        if (parse_proxy_string_prefs(text, &host, &port, &user, &pass) && host.length > 0 && port > 0) {
-            NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
-            d[@"proxyHost"] = host;
-            d[@"proxyPort"] = @(port);
-            d[@"proxyUser"] = user;
-            d[@"proxyPass"] = pass;
-            d[@"proxyEnabled"] = @(YES);
-            save_dict_to_all_locations(d);
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
-            [self reloadSpecifiers];
-
-            [self testProxyAction:nil];
-        } else {
-            UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Định Dạng Không Hợp Lệ"
-                                                                         message:@"Vui lòng nhập đúng định dạng IP:Port hoặc IP:Port:User:Pass!"
-                                                                  preferredStyle:UIAlertControllerStyleAlert];
-            [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [self presentViewController:err animated:YES completion:nil];
-        }
-    }]];
-
-    [self presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)testProxyAction:(PSSpecifier *)specifier {
-    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                       message:@"Chức năng Proxy yêu cầu License Key hợp lệ. Vui lòng kích hoạt key ở bên dưới!"
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
-    NSString *host = dict[@"proxyHost"];
-    uint16_t port = [dict[@"proxyPort"] unsignedShortValue];
-    NSString *type = dict[@"proxyType"] ?: @"HTTP";
-    NSString *user = dict[@"proxyUser"] ?: @"";
-    NSString *pass = dict[@"proxyPass"] ?: @"";
-
-    if (host.length == 0 || port == 0) {
-        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Chưa Điền Cấu Hình Proxy"
-                                                                     message:@"Vui lòng nhập Host/IP và Port trước khi kiểm tra!"
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-        [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:err animated:YES completion:nil];
-        return;
-    }
-
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra Proxy..."
-                                                                     message:[NSString stringWithFormat:@"Đang gửi yêu cầu kiểm tra qua %@://%@:%u...", type, host, port]
-                                                              preferredStyle:UIAlertControllerStyleAlert];
-    [self presentViewController:loading animated:YES completion:^{
-        NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
-        NSMutableDictionary *proxyDict = [NSMutableDictionary dictionary];
-        if ([type isEqualToString:@"SOCKS5"]) {
-            NSMutableDictionary *socksDict = [NSMutableDictionary dictionary];
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyHost] = host;
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyPort] = @(port);
-            socksDict[(NSString *)kCFStreamPropertySOCKSVersion] = (NSString *)kCFStreamSocketSOCKSVersion5;
-            if (user.length > 0) {
-                socksDict[(NSString *)kCFStreamPropertySOCKSUser] = user;
-                socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = pass ?: @"";
-            }
-            proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
-            proxyDict[@"SOCKSEnable"] = @(YES);
-            proxyDict[@"SOCKSProxy"] = host;
-            proxyDict[@"SOCKSPort"] = @(port);
-            proxyDict[@"SOCKPort"] = @(port);
-        } else {
-            // Chuẩn HTTP forward proxy trên iOS: Dùng HTTPEnable, HTTPProxy, HTTPPort.
-            // Tuyệt đối không set HTTPSProxy vì sẽ gây lỗi kCFErrorDomainCFNetwork 310 (TLS-to-Proxy handshake)!
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = host;
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(port);
-            proxyDict[@"HTTPEnable"] = @(YES);
-            proxyDict[@"HTTPProxy"] = host;
-            proxyDict[@"HTTPPort"] = @(port);
-        }
-
-        if (user.length > 0) {
-            NSString *authStr = [NSString stringWithFormat:@"%@:%@", user, pass ?: @""];
-            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
-            NSString *base64 = [authData base64EncodedStringWithOptions:0];
-            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
-            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
-            config.HTTPAdditionalHeaders = headers;
-        }
-
-        config.connectionProxyDictionary = proxyDict;
-        config.timeoutIntervalForRequest = 6.0;
-        config.timeoutIntervalForResource = 6.0;
-
-        NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
-        NSURL *url = [NSURL URLWithString:@"https://api.ipify.org"];
-        NSURLRequest *req = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:6.0];
-
-        [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [loading dismissViewControllerAnimated:YES completion:^{
-                    if (error) {
-                        NSString *errStr = error.localizedDescription ?: @"Mất kết nối";
-                        if (error.code == 310 || [errStr containsString:@"310"] || [errStr containsString:@"HTTPSProxyConnectionFailure"]) {
-                            errStr = @"Máy chủ Proxy không hỗ trợ HTTPS hoặc lỗi SSL Proxy (Error 310)";
-                        } else if (error.code == 306 || [errStr containsString:@"306"] || [errStr containsString:@"HTTPProxyConnectionFailure"]) {
-                            errStr = @"Không thể kết nối đến máy chủ Proxy (IP/Port không phản hồi hoặc Proxy chết - Error 306)";
-                        } else if (error.code == 307 || error.code == 311 || [errStr containsString:@"307"] || [errStr containsString:@"311"] || [errStr containsString:@"BadProxyCredentials"]) {
-                            errStr = @"Sai Tài Khoản / Mật Khẩu xác thực Proxy (Error 307/311)";
-                        } else if (error.code == NSURLErrorTimedOut || error.code == -1001) {
-                            errStr = @"Quá thời gian phản hồi (Timeout -1001) - Proxy quá chậm hoặc đã chết";
-                        } else if (error.code == NSURLErrorCannotConnectToHost || error.code == -1004) {
-                            errStr = @"Không thể kết nối đến máy chủ Proxy (-1004: Sai Port hoặc Proxy không online)";
-                        } else if (error.code == NSURLErrorCannotFindHost || error.code == -1003) {
-                            errStr = @"Không tìm thấy địa chỉ Host của Proxy (-1003: Sai IP hoặc tên miền)";
-                        } else if (error.code == NSURLErrorUserAuthenticationRequired || error.code == -1013) {
-                            errStr = @"Proxy yêu cầu đăng nhập User/Pass (-1013)";
-                        }
-                        UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ Proxy Mất Kết Nối / Hết Hạn"
-                                                                                      message:[NSString stringWithFormat:@"Không thể kết nối qua Proxy:\n\n• Lỗi: %@\n• Địa chỉ: %@:%u (%@)\n\n⚠️ Vui lòng kiểm tra lại Proxy hoặc đổi Proxy mới!", errStr, host, port, type]
-                                                                               preferredStyle:UIAlertControllerStyleAlert];
-                        [fail addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:fail animated:YES completion:nil];
-                        return;
-                    }
-
-                    NSHTTPURLResponse *httpRes = (NSHTTPURLResponse *)response;
-                    if (httpRes && httpRes.statusCode == 407) {
-                        UIAlertController *authErr = [UIAlertController alertControllerWithTitle:@"❌ Lỗi Xác Thực Proxy (407)"
-                                                                                         message:@"Proxy yêu cầu tài khoản/mật khẩu hoặc thông tin xác thực User/Pass bị sai!"
-                                                                                  preferredStyle:UIAlertControllerStyleAlert];
-                        [authErr addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:authErr animated:YES completion:nil];
-                        return;
-                    }
-
-                    NSString *ip = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
-                    ip = [ip stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-                    if (ip.length >= 7) {
-                        UIAlertController *ok = [UIAlertController alertControllerWithTitle:@"🎉 Proxy Hoạt Động Tốt"
-                                                                                    message:[NSString stringWithFormat:@"Proxy đã kết nối thành công!\n\n• IP Public: %@\n• Loại: %@\n• Host: %@:%u", ip, type, host, port]
-                                                                             preferredStyle:UIAlertControllerStyleAlert];
-                        [ok addAction:[UIAlertAction actionWithTitle:@"Tuyệt Vời" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:ok animated:YES completion:nil];
-                    } else {
-                        UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ Lỗi Phản Hồi Proxy"
-                                                                                      message:@"Proxy kết nối được nhưng không trả về IP hợp lệ!"
-                                                                               preferredStyle:UIAlertControllerStyleAlert];
-                        [fail addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:fail animated:YES completion:nil];
-                    }
-                }];
-            });
-        }] resume];
-    }];
-}
-
 #pragma mark - DRM License Actions
 
 - (id)getRuntimeEnvironmentDisplayValue:(PSSpecifier *)specifier {
@@ -1041,47 +864,50 @@ static NSString *findAuditLogPath(void) {
     }
 
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra..."
-                                                                     message:@"Đang truy vấn IP mạng công khai và rà soát độ sạch của hệ thống..."
+                                                                     message:@"Đang truy vấn IP mạng 4G và rà soát độ sạch của hệ thống..."
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:loading animated:YES completion:^{
         fetch_public_ip_prefs(^(NSString *currentIP) {
             [loading dismissViewControllerAnimated:YES completion:^{
-                [self renderDiagnosticReportWithIP:currentIP];
+                ZTDiagnosticInfo *info = [self collectDiagnosticInfoWithIP:currentIP];
+                [ZTDiagnosticViewController presentFrom:self info:info];
             }];
         });
     }];
 }
 
-- (void)renderDiagnosticReportWithIP:(NSString *)currentIP {
+- (ZTDiagnosticInfo *)collectDiagnosticInfoWithIP:(NSString *)currentIP {
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
-    
-    NSString *lastIP = dict[@"lastWipedIP"] ?: @"";
-    NSString *lastIDFV = dict[@"lastWipedIDFV"] ?: @"";
-    NSString *currentIDFV = dict[@"spoofedIDFV"] ?: @"";
-    NSString *machine = dict[@"deviceMachine"] ?: get_prefs_real_machine();
-    NSString *model = dict[@"deviceModel"] ?: get_prefs_real_model();
-    NSString *serial = dict[@"spoofedSerial"] ?: @"";
-    NSString *mac = dict[@"spoofedWifiMAC"] ?: @"";
-    
-    BOOL isSameIP = (lastIP.length > 0 && [currentIP isEqualToString:lastIP]);
-    BOOL isDifferentIP = (lastIP.length > 0 && ![currentIP isEqualToString:lastIP]);
-    
-    NSString *ipStatus = @"";
-    if (isSameIP) {
-        ipStatus = @"⚠️ TRÙNG IP LẦN WIPE TRƯỚC! (Cần gạt Airplane Mode)";
-    } else if (isDifferentIP) {
-        ipStatus = @"✅ ĐÃ ĐỔI IP MỚI";
-    } else {
-        ipStatus = @"✅ IP HIỆN TẠI HỢP LỆ";
+    ZTDiagnosticInfo *info = [[ZTDiagnosticInfo alloc] init];
+
+    info.currentIP = currentIP ?: @"Không xác định";
+    info.lastWipedIP = dict[@"lastWipedIP"];
+    info.lastWipedIDFV = dict[@"lastWipedIDFV"];
+
+    NSString *machine = dict[@"deviceMachine"];
+    if (!machine || machine.length == 0) {
+        machine = get_prefs_real_machine();
     }
-    
-    BOOL isDuplicateIDFV = (lastIDFV.length > 0 && [currentIDFV isEqualToString:lastIDFV]);
-    NSString *idfvStatus = isDuplicateIDFV ? @"❌ TRÙNG LẶP IDFV CŨ (Cần Wipe lại)" : @"✅ MỚI TINH";
-    
-    BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
-    NSString *licStatus = isLicensed ? @"✅ HỢP LỆ (BẢN QUYỀN MÁY)" : @"❌ CHƯA KÍCH HOẠT";
-    
-    // Kiểm tra dung lượng thư mục Sandbox Zalo
+    info.deviceMachine = machine;
+
+    info.deviceName = dict[@"deviceName"] ?: [[UIDevice currentDevice] name];
+    info.iosVersion = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+    info.bundleId = @"vn.com.vng.zingalo";
+    info.currentIDFV = dict[@"spoofedIDFV"] ?: @"Chưa cấp (Cần Wipe)";
+
+    info.idfa = @"00000000-0000-0000-0000-000000000000";
+    info.serial = dict[@"spoofedSerial"] ?: @"Chưa cấp (Cần Wipe)";
+    info.wifiMAC = dict[@"spoofedWifiMAC"] ?: @"Chưa cấp (Cần Wipe)";
+
+    NSString *regionMode = dict[@"regionMode"] ?: @"VN";
+    NSString *regionDesc = [regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                           ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    info.regionName = regionDesc;
+    info.carrierName = dict[@"carrierName"] ?: @"Viettel";
+    info.carrierMCC = dict[@"carrierMCC"] ?: @"452";
+    info.carrierMNC = dict[@"carrierMNC"] ?: @"04";
+
+    // Đo dung lượng thư mục Sandbox Zalo
     uint64_t sandboxTotalBytes = 0;
     NSArray *zaloContainers = get_zalo_data_container_paths();
     for (NSString *container in zaloContainers) {
@@ -1094,73 +920,30 @@ static NSString *findAuditLogPath(void) {
             sandboxTotalBytes += [attrs fileSize];
         }
     }
-    double sandboxMB = (double)sandboxTotalBytes / (1024.0 * 1024.0);
-    
-    NSMutableString *report = [NSMutableString string];
-    if (!isSameIP && !isDuplicateIDFV && isLicensed) {
-        [report appendString:@"🟢 ĐẠT CHUẨN AN TOÀN TUYỆT ĐỐI (SẴN SÀNG REG ACC)\n\n"];
-    } else {
-        [report appendString:@"🔴 PHÁT HIỆN CẢNH BÁO TRƯỚC KHI REG ACC:\n\n"];
-    }
-    
-    [report appendFormat:@"1. BẢN QUYỀN TWEAK:\n• Trạng Thái: %@\n\n", licStatus];
+    info.sandboxKB = (double)sandboxTotalBytes / 1024.0;
 
-    [report appendString:@"2. MẠNG INTERNET & PROXY:\n"];
-    BOOL proxyOn = [dict[@"proxyEnabled"] boolValue];
-    NSString *proxyHost = dict[@"proxyHost"];
-    uint16_t proxyPort = [dict[@"proxyPort"] unsignedShortValue];
-    NSString *proxyType = dict[@"proxyType"] ?: @"HTTP";
-    NSString *proxyUser = dict[@"proxyUser"];
-    if (proxyOn && proxyHost.length > 0 && proxyPort > 0) {
-        NSString *userStr = (proxyUser.length > 0) ? [NSString stringWithFormat:@" (User: %@)", proxyUser] : @"";
-        [report appendFormat:@"• Proxy Riêng Zalo: 🟢 BẬT [%@://%@:%u%@]\n", proxyType, proxyHost, proxyPort, userStr];
-    } else {
-        [report appendString:@"• Proxy Riêng Zalo: ⚪ TẮT (Dùng mạng trực tiếp của máy)\n"];
-    }
-    [report appendFormat:@"• IP Public Hiện Tại: %@ (%@)\n", currentIP, ipStatus];
-    if (lastIP.length > 0) {
-        [report appendFormat:@"• IP Lần Wipe Trước: %@\n", lastIP];
-    }
-    [report appendString:@"\n"];
+    info.leveldbOK = YES;
+    info.isHiddenProv = YES;
 
-    [report appendString:@"3. THÔNG TIN NHÀ MẠNG & SIM:\n"];
-    NSString *carrierName = dict[@"carrierName"] ?: @"Viettel";
-    NSString *carrierMCC = dict[@"carrierMCC"] ?: @"452";
-    NSString *carrierMNC = dict[@"carrierMNC"] ?: @"04";
-    NSString *carrierCountry = dict[@"carrierCountryCode"] ?: @"vn";
-    NSString *regionMode = dict[@"regionMode"] ?: @"VN";
-    NSString *regionDesc = [regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                           ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
-    [report appendFormat:@"• Tên Nhà Mạng: %@\n", carrierName];
-    [report appendFormat:@"• Mã Quốc Gia / Vùng: %@ (%@)\n", carrierCountry, regionDesc];
-    [report appendFormat:@"• Mã Mạng (MCC - MNC): %@ - %@\n\n", carrierMCC, carrierMNC];
+    NSString *home = NSHomeDirectory();
+    NSDictionary *fsAttrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:home error:nil];
+    unsigned long long liveDiskFree = [fsAttrs[NSFileSystemFreeSize] unsignedLongLongValue];
+    unsigned long long liveDiskTotal = [fsAttrs[NSFileSystemSize] unsignedLongLongValue];
+    info.diskFreeGB = (double)liveDiskFree / (1000.0 * 1000.0 * 1000.0);
+    info.diskTotalGB = (double)liveDiskTotal / (1000.0 * 1000.0 * 1000.0);
+    info.uptimeHours = (uint64_t)([[NSProcessInfo processInfo] systemUptime] / 3600.0);
 
-    [report appendString:@"4. THÔNG TIN THIẾT BỊ ẢO:\n"];
-    [report appendFormat:@"• Dòng Máy: %@ (%@)\n", machine, model];
-    BOOL hasConfigured = [dict[@"hasConfiguredProfile"] boolValue];
-    if (!hasConfigured) {
-        [report appendString:@"• Profile: ⚠️ CHƯA CẤU HÌNH (Đang chạy máy thật, cần kích hoạt Key và bấm Wipe)\n"];
-    }
-    [report appendFormat:@"• IDFV Hiện Tại: %@... (%@)\n", [currentIDFV substringToIndex:MIN((NSUInteger)8, currentIDFV.length)], idfvStatus];
-    [report appendFormat:@"• Serial Number Ảo: %@\n", serial.length > 0 ? serial : @"Chưa cấp (Cần bấm Wipe)"];
-    [report appendFormat:@"• MAC Wi-Fi Ảo: %@\n\n", mac.length > 0 ? mac : @"Chưa cấp (Cần bấm Wipe)"];
+    info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
+    info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    [report appendString:@"5. VỆ SINH SANDBOX:\n"];
-    [report appendFormat:@"• Dung Lượng Cache / Rác: %.2f MB (%@)\n", sandboxMB, (sandboxMB < 1.0 ? @"Sạch sẽ ✅" : @"Có cache")];
-    
-    if (isSameIP) {
-        if (proxyOn) {
-            [report appendString:@"\n⚠️ LƯU Ý: Đang trùng IP Proxy của lần wipe trước. Vui lòng đổi IP Proxy mới!"];
-        } else {
-            [report appendString:@"\n⚠️ LƯU Ý BẮT BUỘC: Bạn chưa đổi IP mạng 4G. Hãy vuốt Control Center, bật Chế Độ Máy Bay trong 5 giây rồi tắt đi, sau đó kiểm tra lại!"];
-        }
+    // Cập nhật lastWipedIP nếu chưa có
+    if ([dict[@"lastWipedIP"] length] == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+        NSMutableDictionary *m = [dict mutableCopy] ?: [NSMutableDictionary dictionary];
+        m[@"lastWipedIP"] = currentIP;
+        save_dict_to_all_locations(m);
     }
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 Báo Cáo Kiểm Tra Độ Sạch"
-                                                                   message:report
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+
+    return info;
 }
 
 static NSString *findHarPath(void) {

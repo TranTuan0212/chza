@@ -1932,71 +1932,9 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     append_to_har_file(harEntry);
 }
 
-static BOOL s_proxyKillSwitchActive = NO;
-
-void ZTSetProxyKillSwitch(BOOL active) {
-    s_proxyKillSwitchActive = active;
-}
-
-BOOL ZTIsProxyKillSwitchActive(void) {
-    return s_proxyKillSwitchActive;
-}
-
-static inline BOOL is_safe_host_during_freeze(NSURL *url) {
-    if (!url) return NO;
-    NSString *host = url.host.lowercaseString;
-    if (!host) return NO;
-    if ([host isEqualToString:@"127.0.0.1"] || [host isEqualToString:@"localhost"] || [host isEqualToString:@"::1"]) {
-        return YES;
-    }
-    if ([host containsString:@"supabase.co"] || [host containsString:@"ipify.org"]) {
-        return YES;
-    }
-    return NO;
-}
-
-static int (*orig_connect)(int sockfd, const struct sockaddr *addr, socklen_t addrlen) = NULL;
-static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    if (s_proxyKillSwitchActive && addr) {
-        if (addr->sa_family == AF_INET || addr->sa_family == AF_INET6) {
-            void *caller0 = __builtin_return_address(0);
-            void *caller1 = __builtin_return_address(1);
-            if (!is_system_caller(caller0, caller1)) {
-                BOOL isLoopback = NO;
-                if (addr->sa_family == AF_INET) {
-                    struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-                    uint32_t ip = ntohl(sin->sin_addr.s_addr);
-                    if ((ip >> 24) == 127) {
-                        isLoopback = YES;
-                    }
-                } else if (addr->sa_family == AF_INET6) {
-                    struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
-                    if (IN6_IS_ADDR_LOOPBACK(&sin6->sin6_addr)) {
-                        isLoopback = YES;
-                    }
-                }
-                if (!isLoopback) {
-                    errno = ECONNREFUSED;
-                    return -1;
-                }
-            }
-        }
-    }
-    return orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
-}
-
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"KILL-SWITCH", [NSString stringWithFormat:@"🛑 [BLOCKED] Đóng băng mạng Zalo: Chặn %@", request.URL.absoluteString ?: @""]);
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionDataTask *task = %orig(blockedReq);
-        [task cancel];
-        return task;
-    }
     if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
         NSString *urlStr = request.URL.absoluteString ?: @"";
         NSString *method = request.HTTPMethod ?: @"GET";
@@ -2014,23 +1952,6 @@ static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"KILL-SWITCH", [NSString stringWithFormat:@"🛑 [BLOCKED] Đóng băng mạng Zalo: Chặn %@", request.URL.absoluteString ?: @""]);
-        }
-        if (completionHandler) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSError *err = [NSError errorWithDomain:NSURLErrorDomain
-                                                   code:NSURLErrorNotConnectedToInternet
-                                               userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-                completionHandler(nil, nil, err);
-            });
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionDataTask *task = %orig(blockedReq, nil);
-        [task cancel];
-        return task;
-    }
     NSDate *startDate = [NSDate date];
     NSData *reqBody = request.HTTPBody;
 
@@ -2051,15 +1972,6 @@ static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"KILL-SWITCH", [NSString stringWithFormat:@"🛑 [BLOCKED] Đóng băng mạng Zalo: Chặn upload %@", request.URL.absoluteString ?: @""]);
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionUploadTask *task = %orig(blockedReq, bodyData);
-        [task cancel];
-        return task;
-    }
     if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
         logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-DELEGATE] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
     }
@@ -2067,23 +1979,6 @@ static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"KILL-SWITCH", [NSString stringWithFormat:@"🛑 [BLOCKED] Đóng băng mạng Zalo: Chặn upload %@", request.URL.absoluteString ?: @""]);
-        }
-        if (completionHandler) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSError *err = [NSError errorWithDomain:NSURLErrorDomain
-                                                   code:NSURLErrorNotConnectedToInternet
-                                               userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-                completionHandler(nil, nil, err);
-            });
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionUploadTask *task = %orig(blockedReq, bodyData, nil);
-        [task cancel];
-        return task;
-    }
     NSDate *startDate = [NSDate date];
 
     if (!completionHandler) {
@@ -2103,23 +1998,6 @@ static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"KILL-SWITCH", [NSString stringWithFormat:@"🛑 [BLOCKED] Đóng băng mạng Zalo: Chặn upload %@", request.URL.absoluteString ?: @""]);
-        }
-        if (completionHandler) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSError *err = [NSError errorWithDomain:NSURLErrorDomain
-                                                   code:NSURLErrorNotConnectedToInternet
-                                               userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-                completionHandler(nil, nil, err);
-            });
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionUploadTask *task = %orig(blockedReq, fileURL, nil);
-        [task cancel];
-        return task;
-    }
     NSDate *startDate = [NSDate date];
     NSData *fileData = fileURL ? [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil] : nil;
 
@@ -2140,136 +2018,11 @@ static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen
 }
 
 - (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURL *location, NSURLResponse *response, NSError *error))completionHandler {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if (completionHandler) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                NSError *err = [NSError errorWithDomain:NSURLErrorDomain
-                                                   code:NSURLErrorNotConnectedToInternet
-                                               userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-                completionHandler(nil, nil, err);
-            });
-        }
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionDownloadTask *task = %orig(blockedReq, nil);
-        [task cancel];
-        return task;
-    }
     return %orig;
 }
 
 - (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        NSURLSessionDownloadTask *task = %orig(blockedReq);
-        [task cancel];
-        return task;
-    }
     return %orig;
-}
-
-%end
-
-static CFDictionaryRef (*orig_CFNetworkCopySystemProxySettings)(void) = NULL;
-static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
-        NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-        if ([s.proxyType isEqualToString:@"SOCKS5"]) {
-            NSMutableDictionary *socksDict = [NSMutableDictionary dictionary];
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyHost] = s.proxyHost;
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyPort] = @(s.proxyPort);
-            socksDict[(NSString *)kCFStreamPropertySOCKSVersion] = (NSString *)kCFStreamSocketSOCKSVersion5;
-            if (s.proxyUser.length > 0) {
-                socksDict[(NSString *)kCFStreamPropertySOCKSUser] = s.proxyUser;
-                socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
-            }
-            dict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
-            dict[@"SOCKSEnable"] = @(YES);
-            dict[@"SOCKSProxy"] = s.proxyHost;
-            dict[@"SOCKSPort"] = @(s.proxyPort);
-            dict[@"SOCKPort"] = @(s.proxyPort);
-        } else {
-            // Chuẩn HTTP forward proxy trên iOS: Dùng HTTPEnable, HTTPProxy, HTTPPort.
-            // CFNetwork tự động tạo HTTP CONNECT tunnel cho cả HTTPS request qua cổng này.
-            // Tuyệt đối không set HTTPSProxy vì sẽ gây lỗi kCFErrorDomainCFNetwork 310 (TLS-to-Proxy handshake)!
-            dict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
-            dict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
-            dict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
-            dict[@"HTTPEnable"] = @(YES);
-            dict[@"HTTPProxy"] = s.proxyHost;
-            dict[@"HTTPPort"] = @(s.proxyPort);
-        }
-        return (__bridge_retained CFDictionaryRef)dict;
-    }
-    return orig_CFNetworkCopySystemProxySettings ? orig_CFNetworkCopySystemProxySettings() : NULL;
-}
-
-%hook NSURLSessionConfiguration
-
-- (NSDictionary *)connectionProxyDictionary {
-    NSDictionary *origDict = %orig;
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
-        NSMutableDictionary *proxyDict = origDict ? [origDict mutableCopy] : [NSMutableDictionary dictionary];
-        if ([s.proxyType isEqualToString:@"SOCKS5"]) {
-            NSMutableDictionary *socksDict = [NSMutableDictionary dictionary];
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyHost] = s.proxyHost;
-            socksDict[(NSString *)kCFStreamPropertySOCKSProxyPort] = @(s.proxyPort);
-            socksDict[(NSString *)kCFStreamPropertySOCKSVersion] = (NSString *)kCFStreamSocketSOCKSVersion5;
-            if (s.proxyUser.length > 0) {
-                socksDict[(NSString *)kCFStreamPropertySOCKSUser] = s.proxyUser;
-                socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
-            }
-            proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
-            proxyDict[@"SOCKSEnable"] = @(YES);
-            proxyDict[@"SOCKSProxy"] = s.proxyHost;
-            proxyDict[@"SOCKSPort"] = @(s.proxyPort);
-            proxyDict[@"SOCKPort"] = @(s.proxyPort);
-        } else {
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
-            proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
-            proxyDict[@"HTTPEnable"] = @(YES);
-            proxyDict[@"HTTPProxy"] = s.proxyHost;
-            proxyDict[@"HTTPPort"] = @(s.proxyPort);
-        }
-        return proxyDict;
-    }
-    return origDict;
-}
-
-+ (NSURLSessionConfiguration *)defaultSessionConfiguration {
-    NSURLSessionConfiguration *config = %orig;
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
-        config.connectionProxyDictionary = [config connectionProxyDictionary];
-        if (s.proxyUser.length > 0) {
-            NSString *authStr = [NSString stringWithFormat:@"%@:%@", s.proxyUser, s.proxyPass ?: @""];
-            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
-            NSString *base64 = [authData base64EncodedStringWithOptions:0];
-            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
-            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
-            config.HTTPAdditionalHeaders = headers;
-        }
-    }
-    return config;
-}
-
-+ (NSURLSessionConfiguration *)ephemeralSessionConfiguration {
-    NSURLSessionConfiguration *config = %orig;
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
-        config.connectionProxyDictionary = [config connectionProxyDictionary];
-        if (s.proxyUser.length > 0) {
-            NSString *authStr = [NSString stringWithFormat:@"%@:%@", s.proxyUser, s.proxyPass ?: @""];
-            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
-            NSString *base64 = [authData base64EncodedStringWithOptions:0];
-            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
-            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
-            config.HTTPAdditionalHeaders = headers;
-        }
-    }
-    return config;
 }
 
 %end
@@ -2277,14 +2030,6 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
 %hook NSURLConnection
 
 + (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if (error) {
-            *error = [NSError errorWithDomain:NSURLErrorDomain
-                                         code:NSURLErrorNotConnectedToInternet
-                                     userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-        }
-        return nil;
-    }
     NSDate *startDate = [NSDate date];
     NSURLResponse *resp = nil;
     NSError *err = nil;
@@ -2299,19 +2044,6 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
 }
 
 + (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *response, NSData *data, NSError *connectionError))handler {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        if (handler) {
-            NSError *err = [NSError errorWithDomain:NSURLErrorDomain
-                                               code:NSURLErrorNotConnectedToInternet
-                                           userInfo:@{NSLocalizedDescriptionKey: @"[ZaloTweak] Network Frozen: Proxy Disconnected"}];
-            if (queue) {
-                [queue addOperationWithBlock:^{ handler(nil, nil, err); }];
-            } else {
-                dispatch_async(dispatch_get_main_queue(), ^{ handler(nil, nil, err); });
-            }
-        }
-        return;
-    }
     NSDate *startDate = [NSDate date];
 
     if (!handler) {
@@ -2330,19 +2062,11 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
 }
 
 - (id)initWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        return %orig(blockedReq, delegate);
-    }
     record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
 
 + (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    if (s_proxyKillSwitchActive && !is_safe_host_during_freeze(request.URL)) {
-        NSURLRequest *blockedReq = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9999/blocked"]];
-        return %orig(blockedReq, delegate);
-    }
     record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
     return %orig;
 }
@@ -2358,9 +2082,6 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [[ZTMenuManager sharedManager] tryAttachFloatingButton];
             });
-        }
-        if ([ZTSettings sharedSettings].proxyEnabled) {
-            ZTAutoCheckProxyAndWarnIfDead();
         }
         if ([ZTSettings sharedSettings].justGeneratedColdBoot) {
             [ZTSettings sharedSettings].justGeneratedColdBoot = NO;
@@ -2519,15 +2240,6 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             universal_hook_c_function("MGCopyAnswer", mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
 
-        // Hook CFNetworkCopySystemProxySettings (Per-App Proxy Zalo)
-        void *cfProxyFunc = dlsym(RTLD_DEFAULT, "CFNetworkCopySystemProxySettings");
-        if (cfProxyFunc) {
-            universal_hook_c_function("CFNetworkCopySystemProxySettings", cfProxyFunc, (void *)hooked_CFNetworkCopySystemProxySettings, (void **)&orig_CFNetworkCopySystemProxySettings);
-        }
-
-        // Hook BSD Socket connect (Emergency Network Kill-Switch)
-        universal_hook_c_function("connect", (void *)connect, (void *)my_connect, (void **)&orig_connect);
-
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
             NSLog(@"[ZaloTweak] ❌ BẢN QUYỀN CHƯA KÍCH HOẠT HOẶC ĐÃ HẾT HẠN! Vui lòng vào Cài đặt để kích hoạt.");
         } else {
@@ -2557,19 +2269,6 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             if ([ZTSettings sharedSettings].showFloatingMenu) {
                 [[ZTMenuManager sharedManager] setupInAppMenu];
             }
-            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
-                                                              object:nil
-                                                               queue:[NSOperationQueue mainQueue]
-                                                          usingBlock:^(NSNotification * _Nonnull note) {
-                if ([ZTSettings sharedSettings].proxyEnabled) {
-                    ZTAutoCheckProxyAndWarnIfDead();
-                }
-            }];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if ([ZTSettings sharedSettings].proxyEnabled) {
-                    ZTAutoCheckProxyAndWarnIfDead();
-                }
-            });
         }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu
