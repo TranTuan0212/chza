@@ -887,6 +887,58 @@ static int my_uname(struct utsname *buf) {
 %end
 
 // ==========================================
+// BẢO VỆ CHỐNG CRASH SIRI INTENTS TRÊN APP CLONE / SIDELOAD
+// (Khắc phục triệt để lỗi thiếu Entitlement com.apple.developer.siri)
+// ==========================================
+@interface INPreferences : NSObject
+@end
+
+%hook INPreferences
+
++ (NSInteger)siriAuthorizationStatus {
+    logAudit(@"SIRI-FIX", @"[INPreferences siriAuthorizationStatus] -> [CHẶN CRASH: TRẢ VỀ DENIED (2)]");
+    return 2; // INSiriAuthorizationStatusDenied
+}
+
++ (void)requestSiriAuthorization:(void (^)(NSInteger status))completion {
+    logAudit(@"SIRI-FIX", @"[INPreferences requestSiriAuthorization] -> [CHẶN CRASH: TỰ ĐỘNG DENIED (2)]");
+    if (completion) {
+        completion(2);
+    }
+}
+
++ (NSString *)siriLanguageCode {
+    return @"vi-VN";
+}
+
+- (id)init {
+    logAudit(@"SIRI-FIX", @"[INPreferences init] -> [CHẶN CRASH: TRẢ VỀ NIL]");
+    return nil;
+}
+
+%end
+
+@interface INVocabulary : NSObject
+@end
+
+%hook INVocabulary
+
++ (id)sharedVocabulary {
+    logAudit(@"SIRI-FIX", @"[INVocabulary sharedVocabulary] -> [CHẶN CRASH: TRẢ VỀ NIL]");
+    return nil;
+}
+
+- (void)setVocabularyStrings:(NSOrderedSet *)vocabularyStrings ofType:(NSInteger)type {
+    // Bỏ qua để tránh crash
+}
+
+- (void)removeAllVocabularyStrings {
+    // Bỏ qua để tránh crash
+}
+
+%end
+
+// ==========================================
 // GIẢ LẬP NHÀ MẠNG VIỄN THÔNG (CARRIER INFO)
 // ==========================================
 %hook CTCarrier
