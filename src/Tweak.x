@@ -239,6 +239,79 @@ static void logAudit(NSString *category, NSString *detail);
     return instance;
 }
 
+static void purge_sandbox_dir_contents_safely(NSString *dirPath, BOOL isPrefDir) {
+    if (!dirPath || dirPath.length == 0) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
+    for (NSString *item in items) {
+        NSString *lower = [item lowercaseString];
+        if ([lower hasSuffix:@".adbk"] ||
+            [lower containsString:@"appsmanager"] ||
+            [lower containsString:@"adbk"] ||
+            [lower isEqualToString:@"zaloaudit.log"] ||
+            [lower isEqualToString:@"zalotraffic.har"] ||
+            [lower containsString:@"com.sonhu.zalotweak"]) {
+            continue;
+        }
+        NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
+        [fm removeItemAtPath:fullPath error:nil];
+    }
+}
+
+static void purge_entire_sandbox_safely(void) {
+    NSString *home = NSHomeDirectory();
+    if (!home || home.length < 5) return;
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSLog(@"[ZaloAudit] [COLD-BOOT] 🧹 Bắt đầu dọn dẹp sạch toàn bộ Sandbox tại Cold-Boot (App chưa khóa file)...");
+
+    NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
+    NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
+    NSString *tmpDir = [home stringByAppendingPathComponent:@"tmp"];
+
+    // 1. Quét dọn Documents và tmp
+    purge_sandbox_dir_contents_safely(docDir, NO);
+    purge_sandbox_dir_contents_safely(tmpDir, NO);
+
+    // 2. Quét dọn toàn bộ các thư mục con trong Library (WebKit, Caches, Application Support, HTTPStorages, Cookies...)
+    NSArray *libItems = [fm contentsOfDirectoryAtPath:libDir error:nil];
+    for (NSString *item in libItems) {
+        NSString *lower = [item lowercaseString];
+        if ([lower containsString:@"com.sonhu.zalotweak"]) continue;
+
+        NSString *subDir = [libDir stringByAppendingPathComponent:item];
+        if ([lower isEqualToString:@"preferences"]) {
+            // Preferences: chỉ xóa các file plist của app và zalo, giữ lại cấu hình tweak
+            purge_sandbox_dir_contents_safely(subDir, YES);
+        } else {
+            purge_sandbox_dir_contents_safely(subDir, NO);
+            NSArray *remain = [fm contentsOfDirectoryAtPath:subDir error:nil];
+            if (!remain || remain.count == 0) {
+                [fm removeItemAtPath:subDir error:nil];
+            }
+        }
+    }
+
+    // 3. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
+    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    for (NSString *grp in groupNames) {
+        NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
+        if (groupURL) {
+            NSString *groupPath = [groupURL path];
+            purge_sandbox_dir_contents_safely(groupPath, NO);
+        }
+    }
+
+    // 4. Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị crash I/O khi nạp
+    [fm createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
+
+    NSLog(@"[ZaloAudit] [COLD-BOOT] ✅ Hoàn tất dọn dẹp sạch toàn bộ Sandbox!");
+}
+
 - (void)loadSettings {
     NSString *path = getConfigPath();
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
@@ -302,10 +375,13 @@ static void logAudit(NSString *category, NSString *detail);
         }
 
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
-        if (self.needsNewProfile) {
+        self.needsSandboxPurge = [dict[@"needsSandboxPurge"] boolValue];
+        if (self.needsNewProfile || self.needsSandboxPurge) {
             if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
-                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
+                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
+                purge_entire_sandbox_safely();
                 self.needsNewProfile = NO;
+                self.needsSandboxPurge = NO;
                 self.justGeneratedColdBoot = YES;
                 self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật sau khi Wipe
                 self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
@@ -314,6 +390,7 @@ static void logAudit(NSString *category, NSString *detail);
             } else {
                 logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
                 self.needsNewProfile = NO;
+                self.needsSandboxPurge = NO;
                 [self saveSettings];
             }
         }
@@ -342,6 +419,8 @@ static void logAudit(NSString *category, NSString *detail);
         self.lastWipedIP = @"";
         self.lastWipedTimestamp = 0;
         self.regionMode = @"VN";
+        self.needsNewProfile = NO;
+        self.needsSandboxPurge = NO;
         self.proxyEnabled = NO;
         self.proxyType = @"HTTP";
         self.proxyHost = @"";
@@ -418,6 +497,7 @@ static void logAudit(NSString *category, NSString *detail);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
     dict[@"showFloatingMenu"] = @(self.showFloatingMenu);
     dict[@"needsNewProfile"] = @(self.needsNewProfile);
+    dict[@"needsSandboxPurge"] = @(self.needsSandboxPurge);
     if (self.spoofedSerial) dict[@"spoofedSerial"] = self.spoofedSerial;
     if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
     if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;

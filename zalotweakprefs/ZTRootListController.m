@@ -611,6 +611,7 @@ static void sync_license_to_all_locations(void) {
     dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
 
     dict[@"wipePending"] = @(YES);
+    dict[@"needsSandboxPurge"] = @(YES);
 
     // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
     save_dict_to_all_locations(dict);

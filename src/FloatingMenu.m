@@ -924,13 +924,14 @@ UIViewController *ZTGetTopViewController(void) {
     wipeDirSafely(docDir);
     wipeDirSafely(tmpDir);
     
-    NSString *cachesDir = [libDir stringByAppendingPathComponent:@"Caches"];
-    NSString *appSupportDir = [libDir stringByAppendingPathComponent:@"Application Support"];
-    NSString *prefDir = [libDir stringByAppendingPathComponent:@"Preferences"];
-    
-    wipeDirSafely(cachesDir);
-    wipeDirSafely(appSupportDir);
-    wipeDirSafely(prefDir);
+    // Quét dọn toàn bộ các thư mục trong Library (WebKit, Cookies, HTTPStorages, Caches, Application Support...)
+    NSArray *libItems = [fm contentsOfDirectoryAtPath:libDir error:nil];
+    for (NSString *item in libItems) {
+        NSString *lower = [item lowercaseString];
+        if ([lower containsString:@"com.sonhu.zalotweak"]) continue;
+        NSString *subDir = [libDir stringByAppendingPathComponent:item];
+        wipeDirSafely(subDir);
+    }
 
     // 4.1. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
     NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
@@ -949,11 +950,11 @@ UIViewController *ZTGetTopViewController(void) {
     // Tái tạo thư mục sạch để Zalo không bị lỗi I/O khi khởi động lại
     [fm createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:cachesDir withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:appSupportDir withIntermediateDirectories:YES attributes:nil error:nil];
-    [fm createDirectoryAtPath:prefDir withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     
-    // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn, IP wipe và cờ needsNewProfile
+    // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn, IP wipe và cờ needsNewProfile + needsSandboxPurge
     ZTSettings *settings = [ZTSettings sharedSettings];
     settings.lastWipedIDFV = settings.spoofedIDFV;
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
@@ -962,6 +963,7 @@ UIViewController *ZTGetTopViewController(void) {
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.regionMode = targetRegion ?: @"VN";
     settings.needsNewProfile = YES;
+    settings.needsSandboxPurge = YES;
     settings.showFloatingMenu = YES;
     [settings saveSettings];
 
