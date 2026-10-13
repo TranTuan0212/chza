@@ -251,20 +251,6 @@ static void logAudit(NSString *category, NSString *detail);
         self.proxyPort = [dict[@"proxyPort"] unsignedShortValue];
         self.proxyUser = dict[@"proxyUser"] ?: @"";
         self.proxyPass = dict[@"proxyPass"] ?: @"";
-        self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
-        if (self.needsNewProfile) {
-            if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
-                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
-                self.needsNewProfile = NO;
-                self.justGeneratedColdBoot = YES;
-                self.regionMode = dict[@"regionMode"] ?: @"VN";
-                [self generateNewProfile];
-                return;
-            } else {
-                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
-                self.needsNewProfile = NO;
-            }
-        }
 
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
         self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
@@ -312,6 +298,23 @@ static void logAudit(NSString *category, NSString *detail);
                 self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
             } else {
                 self.showFloatingMenu = YES;
+            }
+        }
+
+        self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
+        if (self.needsNewProfile) {
+            if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
+                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới sau Deep Wipe -> Khởi tạo Profile mới tinh...");
+                self.needsNewProfile = NO;
+                self.justGeneratedColdBoot = YES;
+                self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật sau khi Wipe
+                self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
+                [self generateNewProfile];
+                return;
+            } else {
+                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
+                self.needsNewProfile = NO;
+                [self saveSettings];
             }
         }
 

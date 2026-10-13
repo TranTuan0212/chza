@@ -1362,6 +1362,7 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.regionMode = targetRegion ?: @"VN";
     settings.needsNewProfile = YES;
+    settings.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật sau khi Wipe
     [settings saveSettings];
 
     // 5. Đóng app dứt khoát ngay lập tức (không delay) để:
