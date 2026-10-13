@@ -806,6 +806,9 @@ static BOOL parse_proxy_string_prefs(NSString *str, NSString **outHost, uint16_t
                 socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = pass ?: @"";
             }
             proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKSEnable] = @(YES);
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKSProxy] = host;
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKPort] = @(port);
         } else {
             proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = host;
@@ -816,6 +819,17 @@ static BOOL parse_proxy_string_prefs(NSString *str, NSString **outHost, uint16_t
             if (user.length > 0) {
                 proxyDict[(NSString *)kCFProxyUsernameKey] = user;
                 proxyDict[(NSString *)kCFProxyPasswordKey] = pass ?: @"";
+                if (pass.length > 0) {
+                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:host
+                                                                                        port:port
+                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
+                                                                                       realm:nil
+                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPProxy];
+                    NSURLCredential *cred = [NSURLCredential credentialWithUser:user
+                                                                       password:pass
+                                                                    persistence:NSURLCredentialPersistenceForSession];
+                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
+                }
             }
         }
         config.connectionProxyDictionary = proxyDict;

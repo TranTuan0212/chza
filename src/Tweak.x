@@ -275,9 +275,9 @@ static void logAudit(NSString *category, NSString *detail);
         self.screenScale = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
-        self.spoofedIDFV = dict[@"spoofedIDFV"] ?: [[NSUUID UUID] UUIDString];
+        self.spoofedIDFV = dict[@"spoofedIDFV"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
-        self.profileId = dict[@"profileId"] ?: [[NSUUID UUID] UUIDString];
+        self.profileId = dict[@"profileId"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: get_real_disk_total_size();
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
         self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
@@ -2028,6 +2028,9 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
                 socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
             }
             dict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+            dict[(NSString *)kCFNetworkProxiesSOCKSEnable] = @(YES);
+            dict[(NSString *)kCFNetworkProxiesSOCKSProxy] = s.proxyHost;
+            dict[(NSString *)kCFNetworkProxiesSOCKPort] = @(s.proxyPort);
         } else {
             dict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             dict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
@@ -2038,6 +2041,17 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
             if (s.proxyUser.length > 0) {
                 dict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
                 dict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
+                if (s.proxyPass.length > 0) {
+                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:s.proxyHost
+                                                                                        port:s.proxyPort
+                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
+                                                                                       realm:nil
+                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPProxy];
+                    NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
+                                                                       password:s.proxyPass
+                                                                    persistence:NSURLCredentialPersistenceForSession];
+                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
+                }
             }
         }
         return (__bridge_retained CFDictionaryRef)dict;
@@ -2062,6 +2076,9 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
                 socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
             }
             proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKSEnable] = @(YES);
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKSProxy] = s.proxyHost;
+            proxyDict[(NSString *)kCFNetworkProxiesSOCKPort] = @(s.proxyPort);
         } else {
             proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
@@ -2072,6 +2089,17 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
             if (s.proxyUser.length > 0) {
                 proxyDict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
                 proxyDict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
+                if (s.proxyPass.length > 0) {
+                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:s.proxyHost
+                                                                                        port:s.proxyPort
+                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
+                                                                                       realm:nil
+                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPProxy];
+                    NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
+                                                                       password:s.proxyPass
+                                                                    persistence:NSURLCredentialPersistenceForSession];
+                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
+                }
             }
         }
         return proxyDict;

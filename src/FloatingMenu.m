@@ -150,6 +150,9 @@ void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *e
             socksDict[(NSString *)kCFStreamPropertySOCKSPassword] = s.proxyPass ?: @"";
         }
         proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
+        proxyDict[(NSString *)kCFNetworkProxiesSOCKSEnable] = @(YES);
+        proxyDict[(NSString *)kCFNetworkProxiesSOCKSProxy] = s.proxyHost;
+        proxyDict[(NSString *)kCFNetworkProxiesSOCKPort] = @(s.proxyPort);
     } else {
         proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
         proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
@@ -160,6 +163,17 @@ void ZTCheckProxyHealth(void (^completion)(BOOL alive, NSString *ip, NSString *e
         if (s.proxyUser.length > 0) {
             proxyDict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
             proxyDict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
+            if (s.proxyPass.length > 0) {
+                NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:s.proxyHost
+                                                                                    port:s.proxyPort
+                                                                                protocol:NSURLProtectionSpaceHTTPProxy
+                                                                                   realm:nil
+                                                                    authenticationMethod:NSURLAuthenticationMethodHTTPProxy];
+                NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
+                                                                   password:s.proxyPass
+                                                                persistence:NSURLCredentialPersistenceForSession];
+                [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
+            }
         }
     }
     config.connectionProxyDictionary = proxyDict;
@@ -210,10 +224,24 @@ static NSTimeInterval s_lastProxyWarnTime = 0;
 void ZTAutoCheckProxyAndWarnIfDead(void) {
     ZTSettings *s = [ZTSettings sharedSettings];
     if (!s.proxyEnabled || s.proxyHost.length == 0 || s.proxyPort == 0) return;
-    if (![[ZTSecurityManager sharedManager] isLicenseValid]) return;
 
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
     if (now - s_lastProxyWarnTime < 180) return; // Chỉ cảnh báo tối đa 1 lần mỗi 3 phút
+
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        s_lastProxyWarnTime = now;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *top = get_top_view_controller();
+            if (top) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ PROXY TẠM DỪNG: BẢN QUYỀN HẾT HẠN!"
+                                                                               message:@"Cấu hình Proxy riêng cho Zalo đã tạm dừng vì License Key của bạn chưa được kích hoạt hoặc đã hết hạn!\n\n⚠️ Vui lòng gia hạn Key để tiếp tục sử dụng Proxy và bảo vệ IP mạng."
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleCancel handler:nil]];
+                [top presentViewController:alert animated:YES completion:nil];
+            }
+        });
+        return;
+    }
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         ZTCheckProxyHealth(^(BOOL alive, NSString *ip, NSString *errorMessage) {
