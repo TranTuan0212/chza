@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = ZaloTweakPrefs
 
-ZaloTweakPrefs_FILES = ZTRootListController.m ../src/SecurityManager.m
+ZaloTweakPrefs_FILES = ZTRootListController.m ../src/SecurityManager.m ../src/DeviceProfilePool.m
 ZaloTweakPrefs_FRAMEWORKS = UIKit Foundation Security
 ZaloTweakPrefs_PRIVATE_FRAMEWORKS = Preferences
 ZaloTweakPrefs_INSTALL_PATH = /Library/PreferenceBundles

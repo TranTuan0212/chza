@@ -1,5 +1,6 @@
 #import "ZTRootListController.h"
 #import "SecurityManager.h"
+#import "DeviceProfilePool.h"
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -473,48 +474,36 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     }
     dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
 
-    NSString *newIDFV = [[NSUUID UUID] UUIDString];
-    NSString *newProfileId = [[NSUUID UUID] UUIDString];
-    uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
-    uint64_t newBootTime = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
-    NSString *newBootUUID = [[NSUUID UUID] UUIDString];
+    NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:currentRegion];
 
     dict[@"enabled"] = @(YES);
-    dict[@"spoofedIDFV"] = newIDFV;
-    dict[@"spoofedIDFA"] = [[NSUUID UUID] UUIDString];
-    dict[@"profileId"] = newProfileId;
-    dict[@"bootTimeSec"] = @(newBootTime);
-    dict[@"bootSessionUUID"] = newBootUUID;
-
-    // Giữ nguyên 100% phần cứng máy thật
-    dict[@"deviceMachine"] = get_prefs_real_machine();
-    dict[@"deviceModel"] = get_prefs_real_model();
-    dict[@"systemVersion"] = [[UIDevice currentDevice] systemVersion];
-    dict[@"kernOsVersion"] = get_prefs_real_os_version();
-    dict[@"ncpu"] = @((uint32_t)[[NSProcessInfo processInfo] activeProcessorCount]);
-    dict[@"memsize"] = @([[NSProcessInfo processInfo] physicalMemory]);
-
-    CGRect bounds = [UIScreen mainScreen].bounds;
-    dict[@"screenWidth"] = @(bounds.size.width);
-    dict[@"screenHeight"] = @(bounds.size.height);
-    dict[@"screenScale"] = @([UIScreen mainScreen].scale);
-
-    // Cấp Serial Number & MAC Address mới ngẫu nhiên mỗi lần Wipe
-    dict[@"spoofedSerial"] = generate_random_serial_prefs();
-    dict[@"spoofedWifiMAC"] = generate_random_mac_prefs();
-    dict[@"spoofedBluetoothMAC"] = generate_random_mac_prefs();
-
-    dict[@"batteryLevel"] = @(0.55f + ((float)arc4random_uniform(40)) / 100.0f);
-    dict[@"batteryState"] = @(1);
-
-    NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
-    [self syncCarrierForRegion:currentRegion inDict:dict];
-
-    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
-    uint64_t totalDisk = [attrs[NSFileSystemSize] unsignedLongLongValue] ?: 128000000000ULL;
-    dict[@"diskTotalSize"] = @(totalDisk);
-    uint64_t randomUsed = 35000000000ULL + ((uint64_t)arc4random_uniform(45000000)) * 1000ULL;
-    dict[@"diskFreeSize"] = @(totalDisk > randomUsed ? (totalDisk - randomUsed) : (totalDisk / 2));
+    dict[@"deviceMachine"] = p.deviceMachine;
+    dict[@"deviceModel"] = p.deviceModel;
+    dict[@"ncpu"] = @(p.ncpu);
+    dict[@"memsize"] = @(p.memsize);
+    dict[@"screenWidth"] = @(p.screenWidth);
+    dict[@"screenHeight"] = @(p.screenHeight);
+    dict[@"screenScale"] = @(p.screenScale);
+    dict[@"systemVersion"] = p.systemVersion;
+    dict[@"kernOsVersion"] = p.kernOsVersion;
+    dict[@"diskTotalSize"] = @(p.diskTotalSize);
+    dict[@"diskFreeSize"] = @(p.diskFreeSize);
+    dict[@"deviceName"] = p.deviceName;
+    dict[@"carrierName"] = p.carrierName;
+    dict[@"carrierMCC"] = p.carrierMCC;
+    dict[@"carrierMNC"] = p.carrierMNC;
+    dict[@"carrierCountryCode"] = p.carrierCountryCode;
+    dict[@"batteryLevel"] = @(p.batteryLevel);
+    dict[@"batteryState"] = @(p.batteryState);
+    dict[@"bootTimeSec"] = @(p.bootTimeSec);
+    dict[@"bootSessionUUID"] = p.bootSessionUUID;
+    dict[@"spoofedIDFV"] = p.spoofedIDFV;
+    dict[@"spoofedIDFA"] = @"00000000-0000-0000-0000-000000000000";
+    dict[@"profileId"] = p.profileId;
+    dict[@"spoofedSerial"] = p.spoofedSerial;
+    dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
+    dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
 
     dict[@"wipePending"] = @(YES);
 

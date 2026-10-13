@@ -23,6 +23,7 @@
 #import "Config.h"
 #import "SecurityManager.h"
 #import "FloatingMenu.h"
+#import "DeviceProfilePool.h"
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
 
@@ -379,122 +380,48 @@ static void logAudit(NSString *category, NSString *detail);
 }
 
 NSString *generate_random_serial(void) {
-    const char chars[] = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-    char serial[13] = {0};
-    serial[0] = 'F';
-    serial[1] = (arc4random_uniform(2) == 0) ? '1' : '2';
-    serial[2] = '7';
-    for (int i = 3; i < 12; i++) {
-        serial[i] = chars[arc4random_uniform(sizeof(chars) - 1)];
-    }
-    return [NSString stringWithUTF8String:serial];
+    return generate_apple_serial();
 }
 
 NSString *generate_random_mac(void) {
-    const char *ouis[] = {"f0:18:98", "ac:de:48", "88:66:5a", "dc:a9:04", "a4:83:e7"};
-    const char *oui = ouis[arc4random_uniform(5)];
-    return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
+    return generate_apple_mac();
 }
 
 - (void)generateNewProfile {
-    // 1. Luôn giữ nguyên Machine và Model thật của máy bạn để khớp màn hình, GPU và Metal 100%
-    self.deviceMachine = get_real_hardware_machine();
-    self.deviceModel = get_real_hardware_model();
+    // 1. Sinh profile thiết bị từ ngân hàng 25 mẫu iPhone chuẩn phần cứng Apple
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN"];
 
-    // Đồng bộ kích thước màn hình theo đúng thiết bị vật lý
-    CGRect screenBounds = [UIScreen mainScreen].bounds;
-    CGFloat scale = [UIScreen mainScreen].scale;
-    self.screenWidth = (screenBounds.size.width > 0) ? screenBounds.size.width : 390.0;
-    self.screenHeight = (screenBounds.size.height > 0) ? screenBounds.size.height : 844.0;
-    self.screenScale = (scale > 0) ? scale : 3.0;
+    self.deviceMachine = p.deviceMachine;
+    self.deviceModel = p.deviceModel;
+    self.ncpu = p.ncpu;
+    self.memsize = p.memsize;
+    self.screenWidth = p.screenWidth;
+    self.screenHeight = p.screenHeight;
+    self.screenScale = p.screenScale;
+    self.systemVersion = p.systemVersion;
+    self.kernOsVersion = p.kernOsVersion;
+    self.diskTotalSize = p.diskTotalSize;
+    self.diskFreeSize = p.diskFreeSize;
+    self.deviceName = p.deviceName;
+    self.carrierName = p.carrierName;
+    self.carrierMCC = p.carrierMCC;
+    self.carrierMNC = p.carrierMNC;
+    self.carrierCountryCode = p.carrierCountryCode;
+    self.batteryLevel = p.batteryLevel;
+    self.batteryState = p.batteryState;
+    self.bootTimeSec = p.bootTimeSec;
+    self.bootSessionUUID = p.bootSessionUUID;
+    self.spoofedIDFV = p.spoofedIDFV;
+    self.spoofedIDFA = p.spoofedIDFA;
+    self.profileId = p.profileId;
+    self.spoofedSerial = p.spoofedSerial;
+    self.spoofedWifiMAC = p.spoofedWifiMAC;
+    self.spoofedBluetoothMAC = p.spoofedBluetoothMAC;
 
-    // CPU và RAM theo máy thật
-    self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount] ?: 6;
-    self.memsize = [[NSProcessInfo processInfo] physicalMemory] ?: 6442450944ULL;
-
-    // 2. Hệ điều hành iOS thật của máy
-    self.systemVersion = [[UIDevice currentDevice] systemVersion];
-    self.kernOsVersion = get_real_os_version();
-
-    // 3. Dung lượng ổ cứng theo máy thật, ramdom dung lượng trống thực tế hợp lý
-    self.diskTotalSize = get_real_disk_total_size();
-    uint64_t randomUsed = 35000000000ULL + ((uint64_t)arc4random_uniform(45000000)) * 1000ULL;
-    self.diskFreeSize = (self.diskTotalSize > randomUsed) ? (self.diskTotalSize - randomUsed) : (self.diskTotalSize / 2);
-
-    // 4. Tên thiết bị & Nhà mạng theo Khu Vực (VN / Du Học Sinh Mỹ / Mỹ)
-    NSString *region = self.regionMode ?: @"VN";
-    if ([region isEqualToString:@"US_STUDENT"]) {
-        NSArray *userNames = @[
-            @"Huy's iPhone", @"Nam's iPhone", @"Trang's iPhone", @"Alex's iPhone",
-            @"Minh's iPhone", @"Linh's iPhone", @"Kevin's iPhone", @"Ha's iPhone",
-            @"Duc's iPhone", @"Vy's iPhone", @"Phong's iPhone", @"Chi's iPhone",
-            @"Dan's iPhone", @"Jenny's iPhone"
-        ];
-        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-
-        NSArray *carriers = @[
-            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"},
-            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
-            @{@"name": @"Mint Mobile", @"mcc": @"310", @"mnc": @"260"}
-        ];
-        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
-        self.carrierName = chosenCarrier[@"name"];
-        self.carrierMCC = chosenCarrier[@"mcc"];
-        self.carrierMNC = chosenCarrier[@"mnc"];
-        self.carrierCountryCode = @"us";
-    } else if ([region isEqualToString:@"US"]) {
-        NSArray *userNames = @[
-            @"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone",
-            @"John's iPhone", @"Daniel's iPhone", @"Chris's iPhone", @"Jessica's iPhone"
-        ];
-        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-
-        NSArray *carriers = @[
-            @{@"name": @"Verizon", @"mcc": @"311", @"mnc": @"480"},
-            @{@"name": @"AT&T", @"mcc": @"310", @"mnc": @"410"},
-            @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"}
-        ];
-        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
-        self.carrierName = chosenCarrier[@"name"];
-        self.carrierMCC = chosenCarrier[@"mcc"];
-        self.carrierMNC = chosenCarrier[@"mnc"];
-        self.carrierCountryCode = @"us";
-    } else {
-        NSArray *userNames = @[
-            @"iPhone", @"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)",
-            @"iPhone của Huy", @"iPhone 13 Pro", @"iPhone của Nam", @"iPhone của Trang",
-            @"iPhone của Hoàng", @"iPhone của Mai", @"iPhone của Lan", @"iPhone của Minh"
-        ];
-        self.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-
-        NSArray *carriers = @[
-            @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
-            @{@"name": @"VINAPHONE", @"mcc": @"452", @"mnc": @"02"},
-            @{@"name": @"VN MOBIFONE", @"mcc": @"452", @"mnc": @"01"}
-        ];
-        NSDictionary *chosenCarrier = carriers[arc4random_uniform((uint32_t)carriers.count)];
-        self.carrierName = chosenCarrier[@"name"];
-        self.carrierMCC = chosenCarrier[@"mcc"];
-        self.carrierMNC = chosenCarrier[@"mnc"];
-        self.carrierCountryCode = @"vn";
-    }
-
-    // 5. Giả lập uptime từ 8 giờ đến 6 ngày trước
-    uint32_t randomOffset = 28800 + (arc4random_uniform(489600));
-    self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
-    self.bootSessionUUID = [[NSUUID UUID] UUIDString];
-    self.spoofedIDFV = [[NSUUID UUID] UUIDString];
-    self.spoofedIDFA = @"00000000-0000-0000-0000-000000000000";
-    self.profileId = [[NSUUID UUID] UUIDString];
-
-    // 5. Giả lập mức pin ngẫu nhiên hợp lý (55% - 95%) và không cắm sạc
-    self.batteryLevel = 0.55f + ((float)arc4random_uniform(40)) / 100.0f;
-    self.batteryState = 1; // UIDeviceBatteryStateUnplugged
-
-    // 6. Giả lập Serial Number và MAC Address phần cứng
-    self.spoofedSerial = generate_random_serial();
-    self.spoofedWifiMAC = generate_random_mac();
-    self.spoofedBluetoothMAC = generate_random_mac();
+    logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | Màn: %.0fx%.0f@%.0fx | Tên: %@",
+              self.deviceMachine, self.deviceModel, self.systemVersion, self.kernOsVersion,
+              (double)self.memsize / (1024.0 * 1024.0 * 1024.0),
+              self.screenWidth, self.screenHeight, self.screenScale, self.deviceName]);
 
     [self saveSettings];
 }
@@ -1420,6 +1347,10 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
         if ([prop isEqualToString:@"BuildVersion"]) {
             logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"BuildVersion -> [ĐÃ FAKE] %@", settings.kernOsVersion]);
             return settings.kernOsVersion ? (__bridge_retained CFTypeRef)[settings.kernOsVersion copy] : orig_MGCopyAnswer(property);
+        }
+        if ([prop isEqualToString:@"HWModelStr"] || [prop isEqualToString:@"HardwarePlatform"]) {
+            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"%@ -> [ĐÃ FAKE] %@", prop, settings.deviceModel]);
+            return settings.deviceModel ? (__bridge_retained CFTypeRef)[settings.deviceModel copy] : orig_MGCopyAnswer(property);
         }
     }
 
