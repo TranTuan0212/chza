@@ -105,7 +105,7 @@
     // 7. Nút Đóng Lớn ở cuối
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    closeBtn.heightAnchor.constraintEqualToConstant(48).active = YES;
+    [closeBtn.heightAnchor constraintEqualToConstant:48].active = YES;
     closeBtn.layer.cornerRadius = 12;
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightBold];
     [closeBtn setTitle:@"ĐÃ HIỂU / ĐÓNG" forState:UIControlStateNormal];
