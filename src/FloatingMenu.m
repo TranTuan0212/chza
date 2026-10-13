@@ -80,7 +80,11 @@ static uint64_t get_directory_size(NSString *path) {
     NSArray *contents = [fm subpathsAtPath:path];
     for (NSString *sub in contents) {
         NSString *lower = [sub lowercaseString];
-        if ([lower hasSuffix:@".adbk"] || [lower containsString:@"appsmanager"] || [lower isEqualToString:@"zaloaudit.log"] || [lower isEqualToString:@"zalotraffic.har"]) {
+        if ([lower hasSuffix:@".adbk"] ||
+            [lower containsString:@"appsmanager"] ||
+            [lower containsString:@"com.sonhu.zalotweak"] ||
+            [lower isEqualToString:@"zaloaudit.log"] ||
+            [lower isEqualToString:@"zalotraffic.har"]) {
             continue;
         }
         NSString *full = [path stringByAppendingPathComponent:sub];
@@ -794,20 +798,20 @@ UIViewController *ZTGetTopViewController(void) {
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self performInAppDeepWipeWithRegion:@"VN"];
+        [self startInAppDeepWipeSequenceWithRegion:@"VN" from:top];
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self performInAppDeepWipeWithRegion:@"US_STUDENT"];
+        [self startInAppDeepWipeSequenceWithRegion:@"US_STUDENT" from:top];
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self performInAppDeepWipeWithRegion:@"US"];
+        [self startInAppDeepWipeSequenceWithRegion:@"US" from:top];
     }]];
 
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", s.regionMode ?: @"VN"];
     [alert addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        [self performInAppDeepWipeWithRegion:s.regionMode ?: @"VN"];
+        [self startInAppDeepWipeSequenceWithRegion:s.regionMode ?: @"VN" from:top];
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
@@ -820,11 +824,28 @@ UIViewController *ZTGetTopViewController(void) {
     [top presentViewController:alert animated:YES completion:nil];
 }
 
+- (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion from:(UIViewController *)top {
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🧹 Đang Dọn Dẹp Dữ Liệu..."
+                                                                   message:@"Đang ghi nhận IP mạng 4G trước khi wipe và làm sạch sandbox..."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [top presentViewController:loading animated:YES completion:^{
+        fetch_public_ip(^(NSString *currentIP) {
+            [loading dismissViewControllerAnimated:YES completion:^{
+                [self performInAppDeepWipeWithRegion:targetRegion currentIP:currentIP];
+            }];
+        });
+    }];
+}
+
 - (void)performInAppDeepWipe {
-    [self performInAppDeepWipeWithRegion:[ZTSettings sharedSettings].regionMode ?: @"VN"];
+    [self performInAppDeepWipeWithRegion:[ZTSettings sharedSettings].regionMode ?: @"VN" currentIP:nil];
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion {
+    [self performInAppDeepWipeWithRegion:targetRegion currentIP:nil];
+}
+
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion currentIP:(NSString *)currentIP {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         return;
     }
@@ -910,6 +931,20 @@ UIViewController *ZTGetTopViewController(void) {
     wipeDirSafely(cachesDir);
     wipeDirSafely(appSupportDir);
     wipeDirSafely(prefDir);
+
+    // 4.1. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
+    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    for (NSString *grp in groupNames) {
+        NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
+        if (groupURL) {
+            NSString *groupPath = [groupURL path];
+            wipeDirSafely(groupPath);
+            NSString *grpLib = [groupPath stringByAppendingPathComponent:@"Library"];
+            [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+            [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+            [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+    }
     
     // Tái tạo thư mục sạch để Zalo không bị lỗi I/O khi khởi động lại
     [fm createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
@@ -918,9 +953,12 @@ UIViewController *ZTGetTopViewController(void) {
     [fm createDirectoryAtPath:appSupportDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:prefDir withIntermediateDirectories:YES attributes:nil error:nil];
     
-    // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn và cờ needsNewProfile
+    // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn, IP wipe và cờ needsNewProfile
     ZTSettings *settings = [ZTSettings sharedSettings];
     settings.lastWipedIDFV = settings.spoofedIDFV;
+    if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+        settings.lastWipedIP = currentIP;
+    }
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.regionMode = targetRegion ?: @"VN";
     settings.needsNewProfile = YES;
@@ -985,6 +1023,7 @@ UIViewController *ZTGetTopViewController(void) {
     ZTSettings *s = [ZTSettings sharedSettings];
     ZTDiagnosticInfo *info = [[ZTDiagnosticInfo alloc] init];
 
+    info.hasConfiguredProfile = s.hasConfiguredProfile;
     info.currentIP = currentIP ?: @"Không xác định";
     info.lastWipedIP = s.lastWipedIP;
     info.lastWipedIDFV = s.lastWipedIDFV;
@@ -998,11 +1037,18 @@ UIViewController *ZTGetTopViewController(void) {
     info.deviceName = [[UIDevice currentDevice] name];
     info.iosVersion = [[UIDevice currentDevice] systemVersion];
     info.bundleId = [[NSBundle mainBundle] bundleIdentifier];
-    info.currentIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+
+    if (!s.hasConfiguredProfile) {
+        info.currentIDFV = @"Chưa cấp (Cần Wipe)";
+        info.serial = @"";
+        info.wifiMAC = @"";
+    } else {
+        info.currentIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
+        info.serial = s.spoofedSerial;
+        info.wifiMAC = s.spoofedWifiMAC;
+    }
 
     info.idfa = @"00000000-0000-0000-0000-000000000000";
-    info.serial = s.spoofedSerial;
-    info.wifiMAC = s.spoofedWifiMAC;
 
     NSString *regionDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
                            ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
@@ -1085,8 +1131,8 @@ UIViewController *ZTGetTopViewController(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    // Cập nhật lastWipedIP nếu chưa có
-    if (s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+    // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
+    if (s.hasConfiguredProfile && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         s.lastWipedIP = currentIP;
         [s saveSettings];
     }

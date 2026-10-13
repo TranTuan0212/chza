@@ -27,6 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) double diskFreeGB;
 @property (nonatomic, assign) double diskTotalGB;
 @property (nonatomic, assign) uint64_t uptimeHours;
+@property (nonatomic, assign) BOOL hasConfiguredProfile;
 
 @end
 

@@ -82,7 +82,7 @@
     BOOL isDifferentIP = (hasWipedHistory && ![self.info.currentIP isEqualToString:self.info.lastWipedIP]);
     BOOL isDuplicateIDFV = (self.info.lastWipedIDFV.length > 0 && [self.info.currentIDFV isEqualToString:self.info.lastWipedIDFV]);
     
-    BOOL isAllPassed = (!isSameIP && !isDuplicateIDFV && self.info.leveldbOK && self.info.isLicensed);
+    BOOL isAllPassed = (self.info.hasConfiguredProfile && !isSameIP && !isDuplicateIDFV && self.info.leveldbOK && self.info.isLicensed);
 
     // 1. Thẻ Kết Luận (Verdict Banner Card)
     [contentStack addArrangedSubview:[self buildVerdictCardWithPassed:isAllPassed isSameIP:isSameIP isDuplicateIDFV:isDuplicateIDFV]];
@@ -260,6 +260,7 @@
 
         NSMutableString *reasons = [NSMutableString string];
         if (!self.info.isLicensed) [reasons appendString:@"• Bản quyền Tweak chưa kích hoạt hoặc đã hết hạn!\n"];
+        if (!self.info.hasConfiguredProfile) [reasons appendString:@"• Chưa bấm Deep Wipe! (App đang dùng phần cứng thật, cần bấm Deep Wipe để cấp máy mới)\n"];
         if (isSameIP) [reasons appendString:@"• Trùng IP 4G lần trước! (Cần gạt Chế Độ Máy Bay 5 giây)\n"];
         if (isDuplicateIDFV) [reasons appendString:@"• Trùng IDFV cũ! (Cần bấm Deep Wipe để cấp máy mới)\n"];
         if (!self.info.leveldbOK) [reasons appendString:@"• Lỗi quyền ghi LevelDB C++ hoặc App Group!\n"];
@@ -282,9 +283,15 @@
 
     [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"🌐" title:@"MẠNG 4G & INTERNET"]];
 
+    BOOL hasWipedHistory = (self.info.lastWipedIP.length > 0);
     NSString *badge;
-    if (isSameIP) {
+    BOOL ipWarning = NO;
+    if (!self.info.hasConfiguredProfile || !hasWipedHistory) {
+        badge = @"Chưa lưu IP ⚠️";
+        ipWarning = YES;
+    } else if (isSameIP) {
         badge = @"TRÙNG IP CŨ ❌";
+        ipWarning = YES;
     } else if (isDifferentIP) {
         badge = @"ĐÃ ĐỔI MỚI ✅";
     } else {
@@ -294,7 +301,7 @@
     [inner addArrangedSubview:[self createRowWithKey:@"IP Public Hiện Tại"
                                               value:self.info.currentIP ?: @"Đang tải..."
                                               badge:badge
-                                          isWarning:isSameIP]];
+                                          isWarning:ipWarning]];
 
     NSString *lastIPStr = self.info.lastWipedIP.length > 0 ? self.info.lastWipedIP : @"Chưa có lịch sử";
     [inner addArrangedSubview:[self createRowWithKey:@"IP Lần Wipe Trước"
@@ -340,33 +347,54 @@
 
     [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"📱" title:@"THIẾT BỊ GIẢ LẬP (APPLE HARDWARE)"]];
 
+    BOOL configured = self.info.hasConfiguredProfile;
     NSString *deviceFull = [NSString stringWithFormat:@"%@ (iOS %@)", self.info.deviceName ?: @"iPhone", self.info.iosVersion ?: @""];
-    [inner addArrangedSubview:[self createRowWithKey:@"Dòng Máy" value:deviceFull badge:nil isWarning:NO]];
+    [inner addArrangedSubview:[self createRowWithKey:@"Dòng Máy" value:deviceFull badge:configured ? nil : @"Máy Thật ⚠️" isWarning:!configured]];
 
+    NSString *machineBadge = configured ? @"Khớp Profile ✅" : @"Máy Thật ⚠️";
     [inner addArrangedSubview:[self createRowWithKey:@"Machine (hw.machine)"
                                               value:self.info.deviceMachine ?: @"iPhone"
-                                              badge:@"Khớp Profile ✅"
-                                          isWarning:NO]];
+                                              badge:machineBadge
+                                          isWarning:!configured]];
 
     NSString *idfvShort = (self.info.currentIDFV.length > 8) ? [self.info.currentIDFV substringToIndex:8] : self.info.currentIDFV;
-    NSString *idfvBadge = isDuplicateIDFV ? @"TRÙNG IDFV CŨ ❌" : @"Mới tinh ✅";
+    NSString *idfvBadge;
+    BOOL idfvWarning = NO;
+    if (!configured) {
+        idfvBadge = @"Chưa cấp ⚠️ (Cần Wipe)";
+        idfvWarning = YES;
+    } else if (isDuplicateIDFV) {
+        idfvBadge = @"TRÙNG IDFV CŨ ❌";
+        idfvWarning = YES;
+    } else {
+        idfvBadge = @"Mới tinh ✅";
+    }
+    NSString *idfvDisplay = configured ? [NSString stringWithFormat:@"%@...", idfvShort ?: @""] : @"Chưa cấp (Cần Wipe)";
     [inner addArrangedSubview:[self createRowWithKey:@"IDFV Mới"
-                                              value:[NSString stringWithFormat:@"%@...", idfvShort ?: @""]
+                                              value:idfvDisplay
                                               badge:idfvBadge
-                                          isWarning:isDuplicateIDFV]];
+                                          isWarning:idfvWarning]];
 
     [inner addArrangedSubview:[self createRowWithKey:@"IDFA Quảng Cáo"
                                               value:@"00000000-0000-0000"
                                               badge:@"Apple ATT Denied ✅"
                                           isWarning:NO]];
 
-    if (self.info.serial.length > 0 || self.info.wifiMAC.length > 0) {
-        NSString *hwCombo = [NSString stringWithFormat:@"%@ | %@", self.info.serial ?: @"---", self.info.wifiMAC ?: @"---"];
-        [inner addArrangedSubview:[self createRowWithKey:@"Serial / MAC Wi-Fi"
-                                                  value:hwCombo
-                                                  badge:@"Ẩn danh ✅"
-                                              isWarning:NO]];
+    NSString *hwCombo;
+    NSString *hwBadge;
+    BOOL hwWarning = NO;
+    if (configured && (self.info.serial.length > 0 || self.info.wifiMAC.length > 0)) {
+        hwCombo = [NSString stringWithFormat:@"%@ | %@", self.info.serial ?: @"---", self.info.wifiMAC ?: @"---"];
+        hwBadge = @"Ẩn danh ✅";
+    } else {
+        hwCombo = @"Chưa cấp (Cần bấm Deep Wipe)";
+        hwBadge = @"Chưa cấp ⚠️";
+        hwWarning = YES;
     }
+    [inner addArrangedSubview:[self createRowWithKey:@"Serial / MAC Wi-Fi"
+                                              value:hwCombo
+                                              badge:hwBadge
+                                          isWarning:hwWarning]];
 
     return card;
 }
@@ -404,12 +432,23 @@
 
     [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"🧹" title:@"VỆ SINH SANDBOX & HỆ THỐNG"]];
 
-    NSString *cleanBadge = (self.info.sandboxKB < 150.0) ? @"Sạch 100% ✅" : @"Có cache";
-    NSString *cacheStr = [NSString stringWithFormat:@"%.1f KB", self.info.sandboxKB];
+    NSString *cleanBadge;
+    BOOL isWarning = NO;
+    if (self.info.sandboxKB < 1024.0) { // Dưới 1MB là sạch 100% (chỉ còn khung rỗng hệ thống iOS)
+        cleanBadge = @"Sạch 100% ✅";
+    } else if (self.info.sandboxKB < 5120.0) { // 1MB - 5MB: Cache nhẹ
+        cleanBadge = @"Cache nhẹ 🟡";
+    } else {
+        cleanBadge = @"Dữ liệu cũ ❌ (Cần Wipe)";
+        isWarning = YES;
+    }
+    NSString *cacheStr = (self.info.sandboxKB >= 1024.0) ?
+        [NSString stringWithFormat:@"%.2f MB", self.info.sandboxKB / 1024.0] :
+        [NSString stringWithFormat:@"%.1f KB", self.info.sandboxKB];
     [inner addArrangedSubview:[self createRowWithKey:@"Bộ Nhớ Rác Sandbox"
                                               value:cacheStr
                                               badge:cleanBadge
-                                          isWarning:(self.info.sandboxKB >= 1024.0)]];
+                                          isWarning:isWarning]];
 
     [inner addArrangedSubview:[self createRowWithKey:@"LevelDB C++ & Groups"
                                               value:self.info.leveldbOK ? @"Thông suốt 100%" : @"Lỗi truy cập"

@@ -881,14 +881,24 @@ static NSString *findAuditLogPath(void) {
     }
     info.deviceMachine = machine;
 
+    BOOL hasConfigured = [dict[@"hasConfiguredProfile"] boolValue];
+    info.hasConfiguredProfile = hasConfigured;
+
     info.deviceName = dict[@"deviceName"] ?: [[UIDevice currentDevice] name];
     info.iosVersion = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
     info.bundleId = @"vn.com.vng.zingalo";
-    info.currentIDFV = dict[@"spoofedIDFV"] ?: @"Chưa cấp (Cần Wipe)";
+
+    if (!hasConfigured) {
+        info.currentIDFV = @"Chưa cấp (Cần Wipe)";
+        info.serial = @"";
+        info.wifiMAC = @"";
+    } else {
+        info.currentIDFV = dict[@"spoofedIDFV"] ?: @"Chưa cấp (Cần Wipe)";
+        info.serial = dict[@"spoofedSerial"] ?: @"";
+        info.wifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
+    }
 
     info.idfa = @"00000000-0000-0000-0000-000000000000";
-    info.serial = dict[@"spoofedSerial"] ?: @"Chưa cấp (Cần Wipe)";
-    info.wifiMAC = dict[@"spoofedWifiMAC"] ?: @"Chưa cấp (Cần Wipe)";
 
     NSString *regionMode = dict[@"regionMode"] ?: @"VN";
     NSString *regionDesc = [regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
@@ -906,7 +916,13 @@ static NSString *findAuditLogPath(void) {
         NSArray *subpaths = [fm subpathsAtPath:container];
         for (NSString *sub in subpaths) {
             NSString *lower = [sub lowercaseString];
-            if ([lower hasSuffix:@".adbk"] || [lower containsString:@"appsmanager"]) continue;
+            if ([lower hasSuffix:@".adbk"] ||
+                [lower containsString:@"appsmanager"] ||
+                [lower containsString:@"com.sonhu.zalotweak"] ||
+                [lower isEqualToString:@"zaloaudit.log"] ||
+                [lower isEqualToString:@"zalotraffic.har"]) {
+                continue;
+            }
             NSDictionary *attrs = [fm attributesOfItemAtPath:[container stringByAppendingPathComponent:sub] error:nil];
             sandboxTotalBytes += [attrs fileSize];
         }
@@ -927,8 +943,8 @@ static NSString *findAuditLogPath(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    // Cập nhật lastWipedIP nếu chưa có
-    if ([dict[@"lastWipedIP"] length] == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+    // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
+    if (hasConfigured && [dict[@"lastWipedIP"] length] == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         NSMutableDictionary *m = [dict mutableCopy] ?: [NSMutableDictionary dictionary];
         m[@"lastWipedIP"] = currentIP;
         save_dict_to_all_locations(m);
