@@ -20,6 +20,7 @@
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)showProxySettingsFrom:(UIViewController *)top;
+- (void)showAdvancedSettingsFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
 @end

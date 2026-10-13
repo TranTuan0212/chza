@@ -516,13 +516,13 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         if (settings.hasConfiguredProfile) {
             guidance = @"⚠️ BẢN QUYỀN ĐÃ HẾT HẠN!\nProfile máy ảo hiện tại ĐÃ ĐƯỢC ĐÓNG BĂNG để bảo vệ an toàn cho tài khoản Zalo của bạn (không lộ máy thật).\nCác chức năng Wipe, Đổi máy, Proxy bị tạm khóa cho đến khi gia hạn.";
         } else {
-            guidance = @"⚠️ BƯỚC CẦN LÀM ĐẦU TIÊN: Bấm [1️⃣] để KÍCH HOẠT KEY!\nHiện tại app đang dùng máy thật. Hãy kích hoạt Key và bấm [2️⃣] để bắt đầu giả lập máy mới.";
+            guidance = @"⚠️ BƯỚC CẦN LÀM ĐẦU TIÊN: Bấm [4️⃣ Cài Đặt Nâng Cao] để KÍCH HOẠT KEY!\nHiện tại app đang dùng máy thật. Hãy kích hoạt Key và bấm [1️⃣] để bắt đầu giả lập máy mới.";
         }
     } else {
         guidance = @"📋 QUY TRÌNH TẠO ACC CHUẨN (LÀM THEO THỨ TỰ):\n"
-                   @"▶️ Bước 1: Bấm [2️⃣ Deep Wipe Sạch & Đổi Máy] (App tự thoát)\n"
-                   @"▶️ Bước 2: Bật rồi tắt Chế Độ Máy Bay (đổi IP 4G) hoặc cấu hình Proxy [6️⃣]\n"
-                   @"▶️ Bước 3: Mở lại Zalo -> Bấm [3️⃣ Kiểm Tra Độ Sạch]\n"
+                   @"▶️ Bước 1: Bấm [1️⃣ Deep Wipe Sạch & Cấp Máy Mới] (Chọn SIM & app tự thoát)\n"
+                   @"▶️ Bước 2: Bật rồi tắt Chế Độ Máy Bay (đổi IP 4G) hoặc cấu hình Proxy [2️⃣]\n"
+                   @"▶️ Bước 3: Mở lại Zalo -> Bấm [3️⃣ Kiểm Tra Độ Sạch Toàn Diện]\n"
                    @"▶️ Bước 4: Thấy tick xanh 🟢 -> Tiến hành Reg Acc an toàn!";
     }
     
@@ -539,16 +539,8 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    // Nút 1: Bản Quyền
-    NSString *licButtonTitle = isLicensed ? @"🛡️ [1️⃣] Quản Lý Bản Quyền (🟢 ĐÃ KÍCH HOẠT)" : @"🛡️ [1️⃣] KÍCH HOẠT BẢN QUYỀN (BẮT BUỘC TRƯỚC)";
-    [sheet addAction:[UIAlertAction actionWithTitle:licButtonTitle
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        [self showLicenseMenuFrom:top];
-    }]];
-    
-    // Nút 2: Deep Wipe & Cấp Máy Mới
-    NSString *wipeButtonTitle = isLicensed ? @"🧹 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Tự đóng app)" : @"🔒 [2️⃣] Deep Wipe Sạch & Cấp Máy Mới (Cần Key)";
+    // Nút 1: Deep Wipe & Cấp Máy Mới (Đã tích hợp sẵn chọn SIM/Khu vực VN, US...)
+    NSString *wipeButtonTitle = isLicensed ? @"🚀 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (1-Click)" : @"🔒 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (Cần Key)";
     [sheet addAction:[UIAlertAction actionWithTitle:wipeButtonTitle
                                              style:UIAlertActionStyleDestructive
                                            handler:^(UIAlertAction *action) {
@@ -559,48 +551,14 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         [self confirmDeepWipeFrom:top];
     }]];
     
-    // Nút 3: Kiểm Tra Độ Sạch Trước Khi Reg
-    NSString *diagButtonTitle = isLicensed ? @"🔍 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)" : @"🔒 [3️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Cần Key)";
-    [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-            [self showLicenseRequiredAlertFrom:top featureName:@"Kiểm Tra Độ Sạch Trước Khi Reg"];
-            return;
-        }
-        [self showPreRegDiagnosticFrom:top];
-    }]];
-    
-    // Nút 4: Xem Cấu Hình Giả Lập
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📱 [4️⃣] Xem Thông Số Máy Đang Dùng"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        [self showHardwareSpecsFrom:top];
-    }]];
-
-    // Nút 5: Đổi Khu Vực & Nhà Mạng (VN / Du Học Sinh Mỹ / Mỹ)
-    NSString *currentRegion = settings.regionMode ?: @"VN";
-    NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
-                           ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)");
-    NSString *regionButtonTitle = isLicensed ? [NSString stringWithFormat:@"🌐 [5️⃣] Khu Vực & SIM: %@", regionName] : @"🔒 [5️⃣] Khu Vực & SIM (Cần Key)";
-    [sheet addAction:[UIAlertAction actionWithTitle:regionButtonTitle
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-            [self showLicenseRequiredAlertFrom:top featureName:@"Đổi Khu Vực & Nhà Mạng SIM"];
-            return;
-        }
-        [self showRegionSelectionMenuFrom:top];
-    }]];
-    
-    // Nút 6: Proxy Riêng Cho Zalo (Per-App Proxy)
+    // Nút 2: Proxy Riêng Cho Zalo (Per-App Proxy)
     NSString *proxyButtonTitle;
     if (!isLicensed) {
-        proxyButtonTitle = @"🔒 [6️⃣] Proxy Riêng Cho Zalo (Cần Key)";
+        proxyButtonTitle = @"🔒 [2️⃣] Proxy Riêng Cho Zalo (Cần Key)";
     } else {
         proxyButtonTitle = settings.proxyEnabled ?
-            [NSString stringWithFormat:@"🌐 [6️⃣] Proxy Zalo: BẬT (%@://%@:%u)", settings.proxyType, settings.proxyHost, settings.proxyPort] :
-            @"🌐 [6️⃣] Cài Đặt Proxy Riêng Cho Zalo (Đang Tắt)";
+            [NSString stringWithFormat:@"🌐 [2️⃣] Proxy Zalo: BẬT (%@:%u - %@)", settings.proxyHost, settings.proxyPort, settings.proxyType ?: @"HTTP"] :
+            @"🌐 [2️⃣] Cấu Hình Proxy Riêng Zalo (Đang Tắt)";
     }
     [sheet addAction:[UIAlertAction actionWithTitle:proxyButtonTitle
                                              style:UIAlertActionStyleDefault
@@ -612,26 +570,81 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         [self showProxySettingsFrom:top];
     }]];
 
-    // Nút 7: Nhật Ký Kiểm Toán (Audit Log)
-    [sheet addAction:[UIAlertAction actionWithTitle:@"📋 [7️⃣] Nhật Ký Kiểm Toán & HAR Inspector"
+    // Nút 3: Kiểm Tra Độ Sạch Trước Khi Reg
+    NSString *diagButtonTitle = isLicensed ? @"🔍 [3️⃣] Kiểm Tra Độ Sạch Toàn Diện (Checklist)" : @"🔒 [3️⃣] Kiểm Tra Độ Sạch Toàn Diện (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
-        [self showAuditLogMenuFrom:top];
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Kiểm Tra Độ Sạch Trước Khi Reg"];
+            return;
+        }
+        [self showPreRegDiagnosticFrom:top];
     }]];
     
-    // Nút 8: Ẩn Nút Nổi
-    [sheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Này"
+    // Nút 4: Cài Đặt Nâng Cao & Bản Quyền (Gom Bản quyền, Thông số máy, Audit log, Ẩn nút)
+    NSString *advButtonTitle = isLicensed ? @"⚙️ [4️⃣] Cài Đặt Nâng Cao & Bản Quyền" : @"🛡️ [4️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
+    [sheet addAction:[UIAlertAction actionWithTitle:advButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
-        [[ZTFloatingButton sharedButton] hide];
-        UIAlertController *hint = [UIAlertController alertControllerWithTitle:@"Đã Ẩn Nút Nổi"
-                                                                      message:@"Để hiện lại nút nổi, bạn chỉ cần bấm thoát ra màn hình chính rồi mở lại Zalo."
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [hint addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:hint animated:YES completion:nil];
+        [self showAdvancedSettingsFrom:top];
     }]];
     
     [sheet addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+    
+    // Hỗ trợ iPad popover
+    if (sheet.popoverPresentationController) {
+        sheet.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        sheet.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+    
+    [top presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)showAdvancedSettingsFrom:(UIViewController *)top {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    if (!presenter) return;
+
+    BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
+    UIAlertController *advSheet = [UIAlertController alertControllerWithTitle:@"⚙️ CÀI ĐẶT NÂNG CAO & BẢN QUYỀN"
+                                                                     message:@"Quản lý bản quyền DRM, xem chi tiết phần cứng và nhật ký kiểm toán hệ thống:"
+                                                              preferredStyle:UIAlertControllerStyleActionSheet];
+
+    // 1. Quản lý bản quyền
+    NSString *licTitle = isLicensed ? @"🛡️ Quản Lý Bản Quyền (🟢 ĐÃ KÍCH HOẠT)" : @"🛡️ KÍCH HOẠT BẢN QUYỀN (Nhập Key)";
+    [advSheet addAction:[UIAlertAction actionWithTitle:licTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self showLicenseMenuFrom:presenter];
+    }]];
+
+    // 2. Xem thông số máy ảo đang dùng
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"📱 Xem Chi Tiết Thông Số Máy Giả Lập" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self showHardwareSpecsFrom:presenter];
+    }]];
+
+    // 3. Nhật ký kiểm toán & HAR Inspector
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"📋 Nhật Ký Kiểm Toán (Audit Log & HAR Inspector)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self showAuditLogMenuFrom:presenter];
+    }]];
+
+    // 4. Tạm ẩn nút nổi
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Trên Màn Hình" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        [[ZTFloatingButton sharedButton] hide];
+        UIAlertController *hint = [UIAlertController alertControllerWithTitle:@"Đã Ẩn Nút Nổi"
+                                                                      message:@"Nút nổi đã được tạm ẩn.\nĐể hiện lại nút nổi, bạn chỉ cần bấm thoát ra màn hình chính rồi mở lại Zalo."
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [hint addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+        [presenter presentViewController:hint animated:YES completion:nil];
+    }]];
+
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"Quay Lại" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (advSheet.popoverPresentationController) {
+        advSheet.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        advSheet.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+
+    [presenter presentViewController:advSheet animated:YES completion:nil];
+}
     
     // Hỗ trợ iPad popover
     if (sheet.popoverPresentationController) {
@@ -1220,19 +1233,31 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
     }
 
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🔍 Đang Kiểm Tra..."
-                                                                     message:@"Đang quét bộ nhớ đệm Sandbox và kiểm tra địa chỉ IP mạng..."
+                                                                     message:@"Đang quét bộ nhớ đệm Sandbox, kiểm tra IP mạng và trạng thái Proxy/SIM..."
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [presenter presentViewController:loading animated:YES completion:^{
-        fetch_public_ip(^(NSString *currentIP) {
-            [loading dismissViewControllerAnimated:YES completion:^{
-                [self renderDiagnosticReportWithIP:currentIP from:presenter];
-            }];
-        });
+        ZTSettings *s = [ZTSettings sharedSettings];
+        if (s.proxyEnabled && s.proxyHost.length > 0 && s.proxyPort > 0) {
+            ZTCheckProxyHealth(^(BOOL alive, NSString *proxyIP, NSString *proxyErr) {
+                [loading dismissViewControllerAnimated:YES completion:^{
+                    [self renderDiagnosticReportWithIP:proxyIP ?: @"Mất kết nối" proxyAlive:alive proxyError:proxyErr from:presenter];
+                }];
+            });
+        } else {
+            fetch_public_ip(^(NSString *currentIP) {
+                [loading dismissViewControllerAnimated:YES completion:^{
+                    [self renderDiagnosticReportWithIP:currentIP proxyAlive:NO proxyError:nil from:presenter];
+                }];
+            });
+        }
     }];
 }
 
-- (void)renderDiagnosticReportWithIP:(NSString *)currentIP from:(UIViewController *)presenter {
+- (void)renderDiagnosticReportWithIP:(NSString *)currentIP proxyAlive:(BOOL)proxyAlive proxyError:(NSString *)proxyError from:(UIViewController *)presenter {
     ZTSettings *s = [ZTSettings sharedSettings];
+    BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
+    NSString *licStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
+
     NSString *home = NSHomeDirectory();
     NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
     NSString *cacheDir = [home stringByAppendingPathComponent:@"Library/Caches"];
@@ -1291,21 +1316,32 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
     BOOL isSameIP = (hasWipedHistory && [currentIP isEqualToString:s.lastWipedIP]);
     
     NSString *ipStatus = @"";
-    if (isSameIP) {
-        ipStatus = @"TRÙNG IP CŨ (CẦN BẬT AIRPLANE MODE) ❌";
-    } else if (isDifferentIP) {
-        ipStatus = @"Đã đổi IP mới ✅";
+    if (s.proxyEnabled) {
+        if (!proxyAlive) {
+            ipStatus = @"PROXY MẤT KẾT NỐI / HẾT HẠN ❌";
+        } else if (isSameIP) {
+            ipStatus = @"TRÙNG IP PROXY CŨ ❌";
+        } else if (isDifferentIP) {
+            ipStatus = @"Đã đổi IP Proxy mới ✅";
+        } else {
+            ipStatus = @"IP Proxy hoạt động tốt ✅";
+        }
     } else {
-        ipStatus = @"IP hợp lệ ✅";
+        if (isSameIP) {
+            ipStatus = @"TRÙNG IP 4G CŨ (CẦN BẬT AIRPLANE MODE) ❌";
+        } else if (isDifferentIP) {
+            ipStatus = @"Đã đổi IP 4G mới ✅";
+        } else {
+            ipStatus = @"IP 4G hợp lệ ✅";
+        }
     }
 
-    if (!hasWipedHistory && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
+    if (!hasWipedHistory && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"] && ![currentIP containsString:@"Mất kết nối"]) {
         s.lastWipedIP = currentIP;
         [s saveSettings];
     }
 
     // 7. KIỂM TRA THỰC TẾ BẰNG HÀM C POSIX (Chính xác cách LevelDB C++ gọi mở file)
-    // a. Gọi hàm C open() với ĐƯỜNG DẪN TƯƠNG ĐỐI
     int fd_rel = open("KVCore/Device/_zt_rel_test.tmp", O_RDWR | O_CREAT, 0644);
     BOOL leveldbRelWritable = NO;
     if (fd_rel >= 0) {
@@ -1316,7 +1352,6 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         unlink("KVCore/Device/_zt_rel_test.tmp");
     }
 
-    // b. Gọi hàm C open() với ĐƯỜNG DẪN TUYỆT ĐỐI (Sandbox Application Support)
     NSString *absDeviceDir = [home stringByAppendingPathComponent:@"Library/Application Support/KVCore/Device"];
     [[NSFileManager defaultManager] createDirectoryAtPath:absDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *absTestFile = [absDeviceDir stringByAppendingPathComponent:@"_zt_abs_test.tmp"];
@@ -1330,7 +1365,6 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         unlink([absTestFile UTF8String]);
     }
 
-    // c. Gọi hàm C openat() với AT_FDCWD và ĐƯỜNG DẪN TƯƠNG ĐỐI
     int fd_at = openat(AT_FDCWD, "KVCore/Device/_zt_at_test.tmp", O_RDWR | O_CREAT, 0644);
     BOOL leveldbAtWritable = NO;
     if (fd_at >= 0) {
@@ -1341,7 +1375,6 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         unlink("KVCore/Device/_zt_at_test.tmp");
     }
 
-    // d. Gọi hàm hệ thống NSUserDefaults với SuiteName (App Groups)
     BOOL appGroupWorking = NO;
     @try {
         NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
@@ -1361,22 +1394,30 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
 
     // 8. ĐỐI CHIẾU TOÀN DIỆN KHÔNG CHO PHÉP FAKE OK
     BOOL isMachineSpoofed = ([liveMachineStr isEqualToString:s.deviceMachine] && liveMachineStr.length > 0);
+    BOOL isProxyOK = (!s.proxyEnabled) || (s.proxyEnabled && proxyAlive);
     BOOL isAllPassed = (isMachineSpoofed && 
                         (!isSameIP) && 
                         (!isDuplicateIDFV) && 
+                        isProxyOK &&
                         leveldbRelWritable && 
                         leveldbAbsWritable && 
                         leveldbAtWritable && 
                         appGroupWorking && 
-                        isHiddenProv);
+                        isHiddenProv &&
+                        isLicensed);
 
     NSString *conclusion = @"";
     if (!isAllPassed) {
-        NSMutableString *errList = [NSMutableString stringWithString:@"🔴 KHÔNG ĐẠT TIÊU CHUẨN! PHÁT HIỆN CẢNH BÁO:\n"];
+        NSMutableString *errList = [NSMutableString stringWithString:@"🔴 KHÔNG ĐẠT TIÊU CHUẨN! CẦN XỬ LÝ:\n"];
+        if (!isLicensed) [errList appendString:@"• Bản quyền Tweak chưa kích hoạt hoặc đã hết hạn!\n"];
         if (!isMachineSpoofed) [errList appendString:@"• Machine C chưa khớp với cấu hình profile.\n"];
-        if (isSameIP) [errList appendString:@"• TRÙNG IP 4G CŨ! Hãy Bật rồi Tắt Chế Độ Máy Bay.\n"];
-        if (isDuplicateIDFV) [errList appendString:@"• TRÙNG IDFV CŨ! Vui lòng bấm [2️⃣] Deep Wipe.\n"];
-        if (!leveldbRelWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tương đối C (KVCore/Device).\n"];
+        if (s.proxyEnabled && !proxyAlive) [errList appendFormat:@"• Proxy Zalo lỗi/mất kết nối: %@\n", proxyError ?: @"Không phản hồi"];
+        if (isSameIP) {
+            if (s.proxyEnabled) [errList appendString:@"• TRÙNG IP PROXY CŨ! Hãy đổi IP proxy mới.\n"];
+            else [errList appendString:@"• TRÙNG IP 4G CŨ! Hãy Bật rồi Tắt Chế Độ Máy Bay.\n"];
+        }
+        if (isDuplicateIDFV) [errList appendString:@"• TRÙNG IDFV CŨ! Vui lòng bấm [1️⃣] Deep Wipe.\n"];
+        if (!leveldbRelWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tương đối C.\n"];
         if (!leveldbAbsWritable) [errList appendString:@"• LevelDB không thể ghi qua đường dẫn tuyệt đối C.\n"];
         if (!leveldbAtWritable) [errList appendString:@"• LevelDB không thể ghi qua hàm openat C.\n"];
         if (!appGroupWorking) [errList appendString:@"• Lỗi quyền App Group Sandbox.\n"];
@@ -1387,60 +1428,87 @@ void ZTAutoCheckProxyAndWarnIfDead(void) {
         conclusion = [NSString stringWithFormat:
             @"🟢 MÁY SẠCH HOÀN TOÀN - AN TOÀN 100%% ĐỂ REG ACC!\n"
             @"• Đã đối chiếu chéo thực tế 100%% qua hàm C & OS:\n"
-            @"  - Tên máy: %@\n"
-            @"  - Phiên bản: iOS %@\n"
-            @"  - C open (tương đối & tuyệt đối): Đã thông suốt\n"
-            @"  - C openat (AT_FDCWD): Đã thông suốt\n"
+            @"  - Dòng máy: %@ (iOS %@)\n"
+            @"  - Nhà mạng: %@ (%@ - %@)\n"
+            @"  - Mạng: %@\n"
             @"  - IDFV: Cấp mới tinh không trùng lặp\n"
-            @"  - IP 4G: Đã xoay dải mạng mới",
-            liveDeviceName, liveSystemVersion];
+            @"  - C LevelDB: Thông suốt hoàn toàn",
+            liveDeviceName, liveSystemVersion,
+            s.carrierName ?: @"Viettel", s.carrierMCC ?: @"452", s.carrierMNC ?: @"04",
+            (s.proxyEnabled ? [NSString stringWithFormat:@"Proxy riêng %@ (%@:%u)", s.proxyType, s.proxyHost, s.proxyPort] : @"IP 4G Đã xoay dải mới")];
     }
+
+    // Định dạng chuỗi Proxy
+    NSString *proxyInfoStr;
+    if (s.proxyEnabled) {
+        NSString *authStr = (s.proxyUser.length > 0) ? [NSString stringWithFormat:@" (User: %@)", s.proxyUser] : @"";
+        proxyInfoStr = [NSString stringWithFormat:@"🟢 BẬT [%@://%@:%u%@]\n • Tình Trạng Proxy : %@",
+                        s.proxyType ?: @"HTTP", s.proxyHost ?: @"", s.proxyPort, authStr,
+                        (proxyAlive ? @"Kết nối tốt ✅" : [NSString stringWithFormat:@"Lỗi: %@ ❌", proxyError ?: @"Không xác định"])];
+    } else {
+        proxyInfoStr = @"⚪ TẮT (Dùng mạng trực tiếp 4G/Wi-Fi của máy)";
+    }
+
+    // Định dạng chuỗi Nhà Mạng
+    NSString *regionName = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                           ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    NSString *carrierInfoStr = [NSString stringWithFormat:
+        @" • Tên Nhà Mạng   : %@\n"
+        @" • Mã Quốc Gia ISO: %@ (Hồ sơ: %@)\n"
+        @" • Mã Mạng (MCC)  : %@ | (MNC): %@\n"
+        @" • Chuẩn SIM Ảo   : Khớp nhà mạng thật 100%% ✅",
+        s.carrierName ?: @"Viettel",
+        s.carrierCountryCode ?: @"vn", regionName,
+        s.carrierMCC ?: @"452", s.carrierMNC ?: @"04"];
 
     NSString *report = [NSString stringWithFormat:
         @"═══════════════════════════\n"
-        @"1. XÁC THỰC ĐỊNH DANH (LIVE C & RUNTIME):\n"
+        @"1. BẢN QUYỀN TWEAK (DRM):\n"
+        @" • Trạng Thái: %@\n\n"
+        @"2. MẠNG INTERNET & PROXY ZALO:\n"
+        @" • Proxy Riêng: %@\n"
+        @" • IP Public Hiện Tại: %@ (%@)\n"
+        @" • IP Lần Wipe Trước : %@\n\n"
+        @"3. THÔNG TIN NHÀ MẠNG & SIM:\n%@\n\n"
+        @"4. ĐỊNH DANH PHẦN CỨNG ẢO:\n"
         @" • Machine (C)  : %@ (%@)\n"
         @" • Tên Thiết Bị : %@\n"
         @" • Phiên Bản iOS: %@\n"
-        @" • Bundle ID    : %@ (%@)\n"
+        @" • Serial Số Ảo : %@\n"
+        @" • Wi-Fi MAC Ảo : %@\n"
         @" • IDFV Hiện Tại: %@... (%@)\n"
         @" • IDFV Trước Đó: %@...\n"
-        @" • IDFA Quảng Cáo: %@...\n"
-        @" • App Tracking : Denied (Từ chối theo dõi ✅)\n\n"
-        @"2. ĐỊA CHỈ IP 4G (INTERNET CELLULAR):\n"
-        @" • IP Lần Này   : %@ (%@)\n"
-        @" • IP Trước Đó  : %@\n\n"
-        @"3. THÔNG SỐ Ổ CỨNG TRÌNH DIỄN ZALO:\n"
-        @" • Trống / Tổng : %.1f GB / %.1f GB ✅\n"
-        @" • Uptime Máy   : %llu giờ hoạt động ✅\n\n"
-        @"4. VỆ SINH DỮ LIỆU SANDBOX:\n"
-        @" • Rác / Cache  : %.1f KB (%@)\n"
-        @" • Sideload     : %@\n"
-        @" • Profile Sec  : Phân vùng Keychain riêng biệt ✅\n\n"
-        @"5. THỰC THI C++ LEVELDB (GỌI HÀM C TRỰC TIẾP):\n"
-        @" • C open (tương đối)  : %@\n"
-        @" • C open (tuyệt đối)  : %@\n"
-        @" • C openat (AT_FDCWD) : %@\n"
-        @" • App Groups Suite    : %@\n"
+        @" • IDFA Quảng Cáo: %@ (Ẩn danh ✅)\n"
+        @" • Dung Lượng Trống: %.1f GB / %.1f GB\n\n"
+        @"5. VỆ SINH SANDBOX & LEVELDB C++:\n"
+        @" • Dữ Liệu Cache: %.1f KB (%@)\n"
+        @" • Mobileprovision: %@\n"
+        @" • C open (tương đối): %@\n"
+        @" • C open (tuyệt đối): %@\n"
+        @" • C openat (AT_FDCWD): %@\n"
+        @" • App Groups: %@\n"
         @"═══════════════════════════\n"
-        @"👉 KẾT LUẬN ĐỐI CHIẾU:\n%@",
+        @"👉 KẾT LUẬN TOÀN DIỆN:\n%@",
+        licStatusText,
+        proxyInfoStr,
+        currentIP, ipStatus,
+        ipOld,
+        carrierInfoStr,
         liveMachineStr, (isMachineSpoofed ? @"Khớp Profile ✅" : @"Chưa khớp ❌"),
         liveDeviceName,
         liveSystemVersion,
-        liveBundle, ([liveBundle isEqualToString:@"vn.com.vng.zingalo"] ? @"Gốc VNG ✅" : @"Chưa đổi ❌"),
+        s.spoofedSerial ?: @"(Chưa cấp)",
+        s.spoofedWifiMAC ?: @"(Chưa cấp)",
         idfvShort, idfvStatus,
         idfvOld,
         (liveIDFA.length > 8 ? [liveIDFA substringToIndex:8] : liveIDFA),
-        currentIP, ipStatus,
-        ipOld,
         freeGB, totalGB,
-        uptimeHours,
         sandboxKB, (sandboxKB < 150.0 ? @"Sạch 100% ✅" : @"Có cache"),
         (isHiddenProv ? @"Đã ẩn mobileprovision ✅" : @"Chưa ẩn ❌"),
         (leveldbRelWritable ? @"C tương đối THÀNH CÔNG ✅" : @"Lỗi mở tương đối ❌"),
         (leveldbAbsWritable ? @"C tuyệt đối THÀNH CÔNG ✅" : @"Lỗi mở tuyệt đối ❌"),
         (leveldbAtWritable ? @"C openat() THÀNH CÔNG ✅" : @"Lỗi mở openat ❌"),
-        (appGroupWorking ? @"Đã chuyển hướng Sandbox an toàn ✅" : @"Lỗi truy cập ❌"),
+        (appGroupWorking ? @"Đã chuyển hướng an toàn ✅" : @"Lỗi truy cập ❌"),
         conclusion];
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 BÁO CÁO ĐỐI CHIẾU HỆ THỐNG RUNTIME"

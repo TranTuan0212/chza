@@ -1095,31 +1095,57 @@ static NSString *findAuditLogPath(void) {
         [report appendString:@"🔴 PHÁT HIỆN CẢNH BÁO TRƯỚC KHI REG ACC:\n\n"];
     }
     
-    [report appendFormat:@"• Địa chỉ IP mạng: %@ (%@)\n", currentIP, ipStatus];
-    if (lastIP.length > 0) {
-        [report appendFormat:@"• IP lần Wipe trước: %@\n", lastIP];
-    }
-    [report appendFormat:@"• IDFV: %@... (%@)\n", [currentIDFV substringToIndex:MIN((NSUInteger)8, currentIDFV.length)], idfvStatus];
-    [report appendFormat:@"• Bản Quyền Tweak: %@\n", licStatus];
-    [report appendFormat:@"• Dòng Máy Thật: %@ (%@)\n", machine, model];
-    BOOL hasConfigured = [dict[@"hasConfiguredProfile"] boolValue];
-    if (!hasConfigured) {
-        [report appendString:@"• Cấu Hình Profile: ⚠️ CHƯA CẤU HÌNH (Đang chạy máy thật, cần kích hoạt Key và bấm Wipe để bắt đầu fake)\n"];
-    }
+    [report appendFormat:@"1. BẢN QUYỀN TWEAK:\n• Trạng Thái: %@\n\n", licStatus];
+
+    [report appendString:@"2. MẠNG INTERNET & PROXY:\n"];
     BOOL proxyOn = [dict[@"proxyEnabled"] boolValue];
     NSString *proxyHost = dict[@"proxyHost"];
     uint16_t proxyPort = [dict[@"proxyPort"] unsignedShortValue];
+    NSString *proxyType = dict[@"proxyType"] ?: @"HTTP";
+    NSString *proxyUser = dict[@"proxyUser"];
     if (proxyOn && proxyHost.length > 0 && proxyPort > 0) {
-        [report appendFormat:@"• Proxy Riêng Zalo: 🟢 BẬT (%@:%u - %@)\n", proxyHost, proxyPort, dict[@"proxyType"] ?: @"HTTP"];
+        NSString *userStr = (proxyUser.length > 0) ? [NSString stringWithFormat:@" (User: %@)", proxyUser] : @"";
+        [report appendFormat:@"• Proxy Riêng Zalo: 🟢 BẬT [%@://%@:%u%@]\n", proxyType, proxyHost, proxyPort, userStr];
     } else {
         [report appendString:@"• Proxy Riêng Zalo: ⚪ TẮT (Dùng mạng trực tiếp của máy)\n"];
     }
+    [report appendFormat:@"• IP Public Hiện Tại: %@ (%@)\n", currentIP, ipStatus];
+    if (lastIP.length > 0) {
+        [report appendFormat:@"• IP Lần Wipe Trước: %@\n", lastIP];
+    }
+    [report appendString:@"\n"];
+
+    [report appendString:@"3. THÔNG TIN NHÀ MẠNG & SIM:\n"];
+    NSString *carrierName = dict[@"carrierName"] ?: @"Viettel";
+    NSString *carrierMCC = dict[@"carrierMCC"] ?: @"452";
+    NSString *carrierMNC = dict[@"carrierMNC"] ?: @"04";
+    NSString *carrierCountry = dict[@"carrierCountryCode"] ?: @"vn";
+    NSString *regionMode = dict[@"regionMode"] ?: @"VN";
+    NSString *regionDesc = [regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                           ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    [report appendFormat:@"• Tên Nhà Mạng: %@\n", carrierName];
+    [report appendFormat:@"• Mã Quốc Gia / Vùng: %@ (%@)\n", carrierCountry, regionDesc];
+    [report appendFormat:@"• Mã Mạng (MCC - MNC): %@ - %@\n\n", carrierMCC, carrierMNC];
+
+    [report appendString:@"4. THÔNG TIN THIẾT BỊ ẢO:\n"];
+    [report appendFormat:@"• Dòng Máy: %@ (%@)\n", machine, model];
+    BOOL hasConfigured = [dict[@"hasConfiguredProfile"] boolValue];
+    if (!hasConfigured) {
+        [report appendString:@"• Profile: ⚠️ CHƯA CẤU HÌNH (Đang chạy máy thật, cần kích hoạt Key và bấm Wipe)\n"];
+    }
+    [report appendFormat:@"• IDFV Hiện Tại: %@... (%@)\n", [currentIDFV substringToIndex:MIN((NSUInteger)8, currentIDFV.length)], idfvStatus];
     [report appendFormat:@"• Serial Number Ảo: %@\n", serial.length > 0 ? serial : @"Chưa cấp (Cần bấm Wipe)"];
-    [report appendFormat:@"• MAC Wi-Fi Ảo: %@\n", mac.length > 0 ? mac : @"Chưa cấp (Cần bấm Wipe)"];
-    [report appendFormat:@"• Dữ Liệu Sandbox Còn Lại: %.2f MB\n", sandboxMB];
+    [report appendFormat:@"• MAC Wi-Fi Ảo: %@\n\n", mac.length > 0 ? mac : @"Chưa cấp (Cần bấm Wipe)"];
+
+    [report appendString:@"5. VỆ SINH SANDBOX:\n"];
+    [report appendFormat:@"• Dung Lượng Cache / Rác: %.2f MB (%@)\n", sandboxMB, (sandboxMB < 1.0 ? @"Sạch sẽ ✅" : @"Có cache")];
     
     if (isSameIP) {
-        [report appendString:@"\n⚠️ LƯU Ý BẮT BUỘC: Bạn chưa đổi IP mạng 4G. Hãy vuốt Control Center, bật Chế Độ Máy Bay trong 5 giây rồi tắt đi, sau đó kiểm tra lại!"];
+        if (proxyOn) {
+            [report appendString:@"\n⚠️ LƯU Ý: Đang trùng IP Proxy của lần wipe trước. Vui lòng đổi IP Proxy mới!"];
+        } else {
+            [report appendString:@"\n⚠️ LƯU Ý BẮT BUỘC: Bạn chưa đổi IP mạng 4G. Hãy vuốt Control Center, bật Chế Độ Máy Bay trong 5 giây rồi tắt đi, sau đó kiểm tra lại!"];
+        }
     }
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔍 Báo Cáo Kiểm Tra Độ Sạch"
