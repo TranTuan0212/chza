@@ -2031,28 +2031,17 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
             dict[@"SOCKSEnable"] = @(YES);
             dict[@"SOCKSProxy"] = s.proxyHost;
             dict[@"SOCKSPort"] = @(s.proxyPort);
+            dict[@"SOCKPort"] = @(s.proxyPort);
         } else {
+            // Chuẩn HTTP forward proxy trên iOS: Dùng HTTPEnable, HTTPProxy, HTTPPort.
+            // CFNetwork tự động tạo HTTP CONNECT tunnel cho cả HTTPS request qua cổng này.
+            // Tuyệt đối không set HTTPSProxy vì sẽ gây lỗi kCFErrorDomainCFNetwork 310 (TLS-to-Proxy handshake)!
             dict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             dict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
             dict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
-            dict[@"HTTPSEnable"] = @(YES);
-            dict[@"HTTPSProxy"] = s.proxyHost;
-            dict[@"HTTPSPort"] = @(s.proxyPort);
-            if (s.proxyUser.length > 0) {
-                dict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
-                dict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
-                if (s.proxyPass.length > 0) {
-                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:s.proxyHost
-                                                                                        port:s.proxyPort
-                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
-                                                                                       realm:nil
-                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPBasic];
-                    NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
-                                                                       password:s.proxyPass
-                                                                    persistence:NSURLCredentialPersistenceForSession];
-                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
-                }
-            }
+            dict[@"HTTPEnable"] = @(YES);
+            dict[@"HTTPProxy"] = s.proxyHost;
+            dict[@"HTTPPort"] = @(s.proxyPort);
         }
         return (__bridge_retained CFDictionaryRef)dict;
     }
@@ -2079,28 +2068,14 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
             proxyDict[@"SOCKSEnable"] = @(YES);
             proxyDict[@"SOCKSProxy"] = s.proxyHost;
             proxyDict[@"SOCKSPort"] = @(s.proxyPort);
+            proxyDict[@"SOCKPort"] = @(s.proxyPort);
         } else {
             proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = s.proxyHost;
             proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(s.proxyPort);
-            proxyDict[@"HTTPSEnable"] = @(YES);
-            proxyDict[@"HTTPSProxy"] = s.proxyHost;
-            proxyDict[@"HTTPSPort"] = @(s.proxyPort);
-            if (s.proxyUser.length > 0) {
-                proxyDict[(NSString *)kCFProxyUsernameKey] = s.proxyUser;
-                proxyDict[(NSString *)kCFProxyPasswordKey] = s.proxyPass ?: @"";
-                if (s.proxyPass.length > 0) {
-                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:s.proxyHost
-                                                                                        port:s.proxyPort
-                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
-                                                                                       realm:nil
-                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPBasic];
-                    NSURLCredential *cred = [NSURLCredential credentialWithUser:s.proxyUser
-                                                                       password:s.proxyPass
-                                                                    persistence:NSURLCredentialPersistenceForSession];
-                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
-                }
-            }
+            proxyDict[@"HTTPEnable"] = @(YES);
+            proxyDict[@"HTTPProxy"] = s.proxyHost;
+            proxyDict[@"HTTPPort"] = @(s.proxyPort);
         }
         return proxyDict;
     }
@@ -2112,6 +2087,14 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
     ZTSettings *s = [ZTSettings sharedSettings];
     if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
         config.connectionProxyDictionary = [config connectionProxyDictionary];
+        if (s.proxyUser.length > 0) {
+            NSString *authStr = [NSString stringWithFormat:@"%@:%@", s.proxyUser, s.proxyPass ?: @""];
+            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
+            NSString *base64 = [authData base64EncodedStringWithOptions:0];
+            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
+            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
+            config.HTTPAdditionalHeaders = headers;
+        }
     }
     return config;
 }
@@ -2121,6 +2104,14 @@ static CFDictionaryRef hooked_CFNetworkCopySystemProxySettings(void) {
     ZTSettings *s = [ZTSettings sharedSettings];
     if (s.proxyEnabled && [[ZTSecurityManager sharedManager] isLicenseValid] && s.proxyHost.length > 0 && s.proxyPort > 0) {
         config.connectionProxyDictionary = [config connectionProxyDictionary];
+        if (s.proxyUser.length > 0) {
+            NSString *authStr = [NSString stringWithFormat:@"%@:%@", s.proxyUser, s.proxyPass ?: @""];
+            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
+            NSString *base64 = [authData base64EncodedStringWithOptions:0];
+            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
+            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
+            config.HTTPAdditionalHeaders = headers;
+        }
     }
     return config;
 }

@@ -339,6 +339,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     [request setTimeoutInterval:15.0];
 
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.connectionProxyDictionary = @{}; // Bypass proxy: Luôn kết nối trực tiếp đến Supabase để đảm bảo kiểm tra Key không bị chặn nếu proxy lỗi
     NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
 
     [[session dataTaskWithRequest:request completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {

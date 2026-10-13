@@ -808,47 +808,55 @@ static BOOL parse_proxy_string_prefs(NSString *str, NSString **outHost, uint16_t
             proxyDict[(NSString *)kCFStreamPropertySOCKSProxy] = socksDict;
             proxyDict[@"SOCKSEnable"] = @(YES);
             proxyDict[@"SOCKSProxy"] = host;
+            proxyDict[@"SOCKSPort"] = @(port);
             proxyDict[@"SOCKPort"] = @(port);
         } else {
+            // Chuẩn HTTP forward proxy trên iOS: Dùng HTTPEnable, HTTPProxy, HTTPPort.
+            // Tuyệt đối không set HTTPSProxy vì sẽ gây lỗi kCFErrorDomainCFNetwork 310 (TLS-to-Proxy handshake)!
             proxyDict[(NSString *)kCFNetworkProxiesHTTPEnable] = @(YES);
             proxyDict[(NSString *)kCFNetworkProxiesHTTPProxy] = host;
             proxyDict[(NSString *)kCFNetworkProxiesHTTPPort] = @(port);
-            proxyDict[@"HTTPSEnable"] = @(YES);
-            proxyDict[@"HTTPSProxy"] = host;
-            proxyDict[@"HTTPSPort"] = @(port);
-            if (user.length > 0) {
-                proxyDict[(NSString *)kCFProxyUsernameKey] = user;
-                proxyDict[(NSString *)kCFProxyPasswordKey] = pass ?: @"";
-                if (pass.length > 0) {
-                    NSURLProtectionSpace *space = [[NSURLProtectionSpace alloc] initWithHost:host
-                                                                                        port:port
-                                                                                    protocol:NSURLProtectionSpaceHTTPProxy
-                                                                                       realm:nil
-                                                                        authenticationMethod:NSURLAuthenticationMethodHTTPBasic];
-                    NSURLCredential *cred = [NSURLCredential credentialWithUser:user
-                                                                       password:pass
-                                                                    persistence:NSURLCredentialPersistenceForSession];
-                    [[NSURLCredentialStorage sharedCredentialStorage] setDefaultCredential:cred forProtectionSpace:space];
-                }
-            }
+            proxyDict[@"HTTPEnable"] = @(YES);
+            proxyDict[@"HTTPProxy"] = host;
+            proxyDict[@"HTTPPort"] = @(port);
         }
+
+        if (user.length > 0) {
+            NSString *authStr = [NSString stringWithFormat:@"%@:%@", user, pass ?: @""];
+            NSData *authData = [authStr dataUsingEncoding:NSUTF8StringEncoding];
+            NSString *base64 = [authData base64EncodedStringWithOptions:0];
+            NSMutableDictionary *headers = [config.HTTPAdditionalHeaders mutableCopy] ?: [NSMutableDictionary dictionary];
+            headers[@"Proxy-Authorization"] = [NSString stringWithFormat:@"Basic %@", base64];
+            config.HTTPAdditionalHeaders = headers;
+        }
+
         config.connectionProxyDictionary = proxyDict;
-        config.timeoutIntervalForRequest = 5.0;
-        config.timeoutIntervalForResource = 5.0;
+        config.timeoutIntervalForRequest = 6.0;
+        config.timeoutIntervalForResource = 6.0;
 
         NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
         NSURL *url = [NSURL URLWithString:@"https://api.ipify.org"];
-        NSURLRequest *req = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:5.0];
+        NSURLRequest *req = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:6.0];
 
         [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [loading dismissViewControllerAnimated:YES completion:^{
                     if (error) {
                         NSString *errStr = error.localizedDescription ?: @"Mất kết nối";
-                        if (error.code == NSURLErrorTimedOut) {
-                            errStr = @"Quá thời gian phản hồi (Timeout) - Proxy quá chậm hoặc đã chết";
-                        } else if (error.code == NSURLErrorCannotConnectToHost) {
-                            errStr = @"Không thể kết nối đến máy chủ Proxy (Sai Port hoặc Proxy đã chết)";
+                        if (error.code == 310 || [errStr containsString:@"310"] || [errStr containsString:@"HTTPSProxyConnectionFailure"]) {
+                            errStr = @"Máy chủ Proxy không hỗ trợ HTTPS hoặc lỗi SSL Proxy (Error 310)";
+                        } else if (error.code == 306 || [errStr containsString:@"306"] || [errStr containsString:@"HTTPProxyConnectionFailure"]) {
+                            errStr = @"Không thể kết nối đến máy chủ Proxy (IP/Port không phản hồi hoặc Proxy chết - Error 306)";
+                        } else if (error.code == 307 || error.code == 311 || [errStr containsString:@"307"] || [errStr containsString:@"311"] || [errStr containsString:@"BadProxyCredentials"]) {
+                            errStr = @"Sai Tài Khoản / Mật Khẩu xác thực Proxy (Error 307/311)";
+                        } else if (error.code == NSURLErrorTimedOut || error.code == -1001) {
+                            errStr = @"Quá thời gian phản hồi (Timeout -1001) - Proxy quá chậm hoặc đã chết";
+                        } else if (error.code == NSURLErrorCannotConnectToHost || error.code == -1004) {
+                            errStr = @"Không thể kết nối đến máy chủ Proxy (-1004: Sai Port hoặc Proxy không online)";
+                        } else if (error.code == NSURLErrorCannotFindHost || error.code == -1003) {
+                            errStr = @"Không tìm thấy địa chỉ Host của Proxy (-1003: Sai IP hoặc tên miền)";
+                        } else if (error.code == NSURLErrorUserAuthenticationRequired || error.code == -1013) {
+                            errStr = @"Proxy yêu cầu đăng nhập User/Pass (-1013)";
                         }
                         UIAlertController *fail = [UIAlertController alertControllerWithTitle:@"❌ Proxy Mất Kết Nối / Hết Hạn"
                                                                                       message:[NSString stringWithFormat:@"Không thể kết nối qua Proxy:\n\n• Lỗi: %@\n• Địa chỉ: %@:%u (%@)\n\n⚠️ Vui lòng kiểm tra lại Proxy hoặc đổi Proxy mới!", errStr, host, port, type]
