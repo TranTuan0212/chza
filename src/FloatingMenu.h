@@ -7,6 +7,12 @@
 - (void)hide;
 @end
 
+@interface ZTFloatingWindow : UIWindow
++ (instancetype)sharedWindow;
+- (void)show;
+- (void)hide;
+@end
+
 @interface ZTMenuManager : NSObject
 + (instancetype)sharedManager;
 - (void)setupInAppMenu;
@@ -14,4 +20,5 @@
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
+- (void)performInAppDeepWipeWithRegion:(NSString *)region;
 @end

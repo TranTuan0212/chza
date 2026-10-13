@@ -248,7 +248,7 @@ static uint64_t get_real_disk_total_size(void) {
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: [[NSUUID UUID] UUIDString];
-        self.spoofedIDFA = dict[@"spoofedIDFA"] ?: [[NSUUID UUID] UUIDString];
+        self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
         self.profileId = dict[@"profileId"] ?: [[NSUUID UUID] UUIDString];
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: get_real_disk_total_size();
         self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
@@ -302,7 +302,10 @@ static uint64_t get_real_disk_total_size(void) {
         self.lastWipedIP = @"";
         self.lastWipedTimestamp = 0;
         self.regionMode = @"VN";
-        [self generateNewProfile];
+        BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
+        if (!isAppExtension) {
+            [self generateNewProfile];
+        }
     }
 }
 
@@ -463,7 +466,7 @@ NSString *generate_random_mac(void) {
     self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
     self.bootSessionUUID = [[NSUUID UUID] UUIDString];
     self.spoofedIDFV = [[NSUUID UUID] UUIDString];
-    self.spoofedIDFA = [[NSUUID UUID] UUIDString];
+    self.spoofedIDFA = @"00000000-0000-0000-0000-000000000000";
     self.profileId = [[NSUUID UUID] UUIDString];
 
     // 5. Giả lập mức pin ngẫu nhiên hợp lý (55% - 95%) và không cắm sạc
@@ -522,7 +525,7 @@ static void logAudit(NSString *category, NSString *detail) {
         [df setDateFormat:@"HH:mm:ss"];
         NSString *timeStr = [df stringFromDate:[NSDate date]];
 
-        NSString *line = [NSString stringWithFormat:@"[%@] [%@] %@\n", timeStr, category, detail];
+        NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, detail];
         NSString *path = getAuditLogPath();
 
         NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
@@ -844,13 +847,7 @@ static int my_uname(struct utsname *buf) {
 %hook ASIdentifierManager
 
 - (NSUUID *)advertisingIdentifier {
-    NSString *fake = [ZTSettings sharedSettings].spoofedIDFA;
-    if (fake && fake.length > 0) {
-        logAudit(@"IDFA-CHECK", [NSString stringWithFormat:@"advertisingIdentifier -> [ĐÃ FAKE IDFA MỚI] %@", fake]);
-        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:fake];
-        if (uuid) return uuid;
-    }
-    logAudit(@"IDFA-CHECK", @"advertisingIdentifier -> [TRẢ VỀ ZERO UUID]");
+    logAudit(@"IDFA-CHECK", @"advertisingIdentifier -> [CHUẨN APPLE ATT DENIED] 00000000-0000-0000-0000-000000000000");
     return [[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000000"];
 }
 

@@ -16,39 +16,50 @@ static inline NSString *get_inapp_audit_log_path(void) {
     return [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
 }
 
-// Hàm hỗ trợ tìm UIWindow đang hoạt động
+// Hàm hỗ trợ tìm UIWindow đang hoạt động của Zalo (loại trừ ZTFloatingWindow)
 static UIWindow *get_active_key_window(void) {
     if (@available(iOS 13.0, *)) {
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
                 UIWindowScene *winScene = (UIWindowScene *)scene;
                 for (UIWindow *w in winScene.windows) {
-                    if (w.isKeyWindow) return w;
+                    if (w.isKeyWindow && ![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) return w;
                 }
-                if (winScene.windows.count > 0) return winScene.windows.firstObject;
+                for (UIWindow *w in winScene.windows) {
+                    if (![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) return w;
+                }
             }
         }
         for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
             if ([scene isKindOfClass:[UIWindowScene class]]) {
                 UIWindowScene *winScene = (UIWindowScene *)scene;
                 for (UIWindow *w in winScene.windows) {
-                    if (w.isKeyWindow) return w;
+                    if (w.isKeyWindow && ![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) return w;
                 }
-                if (winScene.windows.count > 0) return winScene.windows.firstObject;
+                for (UIWindow *w in winScene.windows) {
+                    if (![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) return w;
+                }
             }
         }
     }
-    UIWindow *w = [UIApplication sharedApplication].keyWindow;
-    if (!w && [UIApplication sharedApplication].windows.count > 0) {
-        w = [UIApplication sharedApplication].windows.firstObject;
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if (![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) return w;
     }
-    return w;
+    return [UIApplication sharedApplication].keyWindow;
 }
 
 // Hàm hỗ trợ tìm UIViewController cao nhất đang hiển thị
 static UIViewController *get_top_view_controller(void) {
     UIWindow *keyWin = get_active_key_window();
     UIViewController *topVC = keyWin.rootViewController;
+    if (!topVC) {
+        for (UIWindow *w in [UIApplication sharedApplication].windows) {
+            if (![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")] && w.rootViewController) {
+                topVC = w.rootViewController;
+                break;
+            }
+        }
+    }
     while (topVC.presentedViewController) {
         topVC = topVC.presentedViewController;
     }
@@ -92,6 +103,74 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     }] resume];
 }
 
+@implementation ZTFloatingWindow
+
++ (instancetype)sharedWindow {
+    static ZTFloatingWindow *s_window = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        CGRect bounds = [UIScreen mainScreen].bounds;
+        s_window = [[ZTFloatingWindow alloc] initWithFrame:bounds];
+        s_window.windowLevel = UIWindowLevelAlert + 1000.0;
+        s_window.backgroundColor = [UIColor clearColor];
+        
+        UIViewController *rootVC = [[UIViewController alloc] init];
+        rootVC.view.backgroundColor = [UIColor clearColor];
+        rootVC.view.userInteractionEnabled = NO;
+        s_window.rootViewController = rootVC;
+        
+        ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
+        [s_window addSubview:btn];
+    });
+    return s_window;
+}
+
+- (void)show {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (@available(iOS 13.0, *)) {
+            if (!self.windowScene) {
+                for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                    if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                        self.windowScene = (UIWindowScene *)scene;
+                        break;
+                    }
+                }
+                if (!self.windowScene) {
+                    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                        if ([scene isKindOfClass:[UIWindowScene class]]) {
+                            self.windowScene = (UIWindowScene *)scene;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.hidden = NO;
+        ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
+        btn.hidden = NO;
+        [self bringSubviewToFront:btn];
+    });
+}
+
+- (void)hide {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        self.hidden = YES;
+    });
+}
+
+- (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+    ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
+    if (btn && !btn.hidden && btn.alpha > 0.01) {
+        CGPoint p = [btn convertPoint:point fromView:self];
+        if ([btn pointInside:p withEvent:event]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+@end
+
 @implementation ZTFloatingButton {
     CGPoint _startCenter;
     BOOL _isDragging;
@@ -106,24 +185,24 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)setupUI {
-    CGFloat btnSize = 56.0;
+    CGFloat btnSize = 58.0;
     self.frame = CGRectMake(15, 140, btnSize, btnSize);
     self.layer.cornerRadius = btnSize / 2.0;
     self.clipsToBounds = YES;
-    self.backgroundColor = [UIColor colorWithRed:0.06 green:0.42 blue:0.95 alpha:0.95]; // Màu xanh Zalo
+    self.backgroundColor = [UIColor colorWithRed:0.06 green:0.45 blue:0.98 alpha:0.95]; // Màu xanh Zalo nổi bật
     self.layer.borderColor = [UIColor whiteColor].CGColor;
     self.layer.borderWidth = 3.0;
     
     // Đổ bóng nổi
     self.layer.shadowColor = [UIColor blackColor].CGColor;
-    self.layer.shadowOffset = CGSizeMake(0, 3);
+    self.layer.shadowOffset = CGSizeMake(0, 4);
     self.layer.shadowOpacity = 0.6;
-    self.layer.shadowRadius = 6.0;
+    self.layer.shadowRadius = 8.0;
     self.layer.masksToBounds = NO;
     
     [self setTitle:@"⚡ZT" forState:UIControlStateNormal];
     [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
     
     // Kéo thả cử chỉ
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
@@ -133,23 +212,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)attachToWindow:(UIWindow *)window {
-    if (!window) {
-        window = get_active_key_window();
-    }
-    if (!window) return;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.superview != window) {
-            [self removeFromSuperview];
-            [window addSubview:self];
-        }
-        [window bringSubviewToFront:self];
-        self.hidden = NO;
-    });
+    [[ZTFloatingWindow sharedWindow] show];
 }
 
 - (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *container = self.superview;
+    UIView *container = self.superview ?: [ZTFloatingWindow sharedWindow];
     if (!container) return;
     
     CGPoint translation = [pan translationInView:container];
@@ -162,7 +229,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     } else if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
         _isDragging = NO;
         // Tự động hít vào mép trái hoặc phải màn hình
-        CGRect screenBounds = container.bounds;
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
         CGFloat btnRadius = self.frame.size.width / 2.0;
         CGFloat targetX = (self.center.x < screenBounds.size.width / 2.0) ? (btnRadius + 10.0) : (screenBounds.size.width - btnRadius - 10.0);
         
@@ -182,14 +249,11 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)show {
-    self.hidden = NO;
-    if (self.superview) {
-        [self.superview bringSubviewToFront:self];
-    }
+    [[ZTFloatingWindow sharedWindow] show];
 }
 
 - (void)hide {
-    self.hidden = YES;
+    [[ZTFloatingWindow sharedWindow] hide];
 }
 
 @end
@@ -206,9 +270,9 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)setupInAppMenu {
-    // Thử attach nút ngay lập tức và retry mỗi 0.5s đến 1.0s trong 10 giây đầu khởi động
-    for (int i = 1; i <= 10; i++) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    // Thử hiện nút nổi định kỳ trong 10 giây đầu khởi động để đảm bảo window scene đã sẵn sàng
+    for (int i = 0; i <= 10; i++) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self tryAttachFloatingButton];
         });
     }
@@ -221,10 +285,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 
 - (void)tryAttachFloatingButton {
     if (![ZTSettings sharedSettings].showFloatingMenu) return;
-    
-    UIWindow *win = get_active_key_window();
-    [[ZTFloatingButton sharedButton] attachToWindow:win];
-    [[ZTFloatingButton sharedButton] show];
+    [[ZTFloatingWindow sharedWindow] show];
 }
 
 - (void)presentMainMenuFrom:(UIViewController *)presentingVC {
@@ -431,15 +492,42 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     [top presentViewController:alert animated:YES completion:nil];
 }
 
+- (void)applyRegionOnly:(NSString *)region {
+    ZTSettings *s = [ZTSettings sharedSettings];
+    s.regionMode = region;
+    if ([region isEqualToString:@"US_STUDENT"]) {
+        NSArray *userNames = @[@"Huy's iPhone", @"Nam's iPhone", @"Trang's iPhone", @"Alex's iPhone", @"Minh's iPhone"];
+        s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+        s.carrierName = @"T-Mobile";
+        s.carrierMCC = @"310";
+        s.carrierMNC = @"260";
+        s.carrierCountryCode = @"us";
+    } else if ([region isEqualToString:@"US"]) {
+        NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
+        s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+        s.carrierName = @"Verizon";
+        s.carrierMCC = @"311";
+        s.carrierMNC = @"480";
+        s.carrierCountryCode = @"us";
+    } else {
+        NSArray *userNames = @[@"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)", @"iPhone của Huy", @"iPhone của Nam"];
+        s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+        s.carrierName = @"Viettel";
+        s.carrierMCC = @"452";
+        s.carrierMNC = @"04";
+        s.carrierCountryCode = @"vn";
+    }
+    [s saveSettings];
+}
+
 - (void)showRegionSelectionMenuFrom:(UIViewController *)top {
     ZTSettings *s = [ZTSettings sharedSettings];
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 Chọn Khu Vực & Nhà Mạng SIM"
-                                                                   message:@"Tùy chọn này giúp đồng bộ tên máy, nhà mạng SIM (MCC, MNC, ISO) và mã quốc gia để Zalo cấp OTP và đăng ký mượt mà nhất."
+                                                                   message:@"Tùy chọn này giúp đồng bộ tên máy, nhà mạng SIM (MCC, MNC, ISO) và mã quốc gia mà không xóa dữ liệu hay thay đổi IDFV."
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        s.regionMode = @"VN";
-        [s generateNewProfile];
+        [self applyRegionOnly:@"VN"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
                                                                       message:[NSString stringWithFormat:@"Đã chuyển sang khu vực Việt Nam (+84).\n• SIM: %@ (MCC %@)\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
@@ -448,8 +536,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        s.regionMode = @"US_STUDENT";
-        [s generateNewProfile];
+        [self applyRegionOnly:@"US_STUDENT"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
                                                                       message:[NSString stringWithFormat:@"Đã chuyển sang Du Học Sinh Mỹ (+1).\n• SIM: %@ (US)\n• Tên máy: %@\n\n💡 MẸO: Hãy kết nối Proxy/VPN US trước khi Reg để Zalo duyệt mượt 100%%.", s.carrierName, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
@@ -458,8 +545,7 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ / Mỹ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        s.regionMode = @"US";
-        [s generateNewProfile];
+        [self applyRegionOnly:@"US"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
                                                                       message:[NSString stringWithFormat:@"Đã chuyển sang Hoa Kỳ (+1).\n• SIM: %@ (US)\n• Tên máy: %@", s.carrierName, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
@@ -564,26 +650,43 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
 }
 
 - (void)confirmDeepWipeFrom:(UIViewController *)top {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚠️ XÁC NHẬN DEEP WIPE SẠCH DỮ LIỆU"
-                                                                   message:@"Hành động này sẽ thực hiện tự động:\n"
-                                                                           @"1. Xóa sạch mọi tài khoản, token đăng nhập, cache, cookies của clone này.\n"
-                                                                           @"2. Cấp IDFV mới tinh, Uptime mới & phân vùng Keychain mới 100%.\n"
-                                                                           @"3. BẢO TỒN NGUYÊN VẸN BẢN QUYỀN (Không bao giờ bị mất Key).\n"
-                                                                           @"4. BẢO VỆ TUYỆT ĐỐI các file backup .adbk của Apps Manager.\n\n"
-                                                                           @"👉 QUY TRÌNH SAU KHI APP TỰ ĐÓNG:\n"
-                                                                           @"• BẬT RỒI TẮT Chế Độ Máy Bay (để xoay IP 4G mới).\n"
-                                                                           @"• Mở lại Zalo -> Bấm [3️⃣ Kiểm Tra Độ Sạch] trước khi Reg Acc!"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"🧹 Wipe Sạch & Đổi Máy Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        [self performInAppDeepWipe];
+    ZTSettings *s = [ZTSettings sharedSettings];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🧹 DEEP WIPE & CẤP MÁY MỚI"
+                                                                   message:@"Chỉ 1 chạm: Xóa sạch dữ liệu Zalo cũ, cấp ngay ID thiết bị mới tinh và đồng bộ cấu hình mạng SIM mong muốn:"
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self performInAppDeepWipeWithRegion:@"VN"];
     }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"Hủy" style:UIAlertActionStyleCancel handler:nil]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self performInAppDeepWipeWithRegion:@"US_STUDENT"];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self performInAppDeepWipeWithRegion:@"US"];
+    }]];
+
+    NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@) & Cấp Máy Mới", s.regionMode ?: @"VN"];
+    [alert addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        [self performInAppDeepWipeWithRegion:s.regionMode ?: @"VN"];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+
     [top presentViewController:alert animated:YES completion:nil];
 }
 
 - (void)performInAppDeepWipe {
+    [self performInAppDeepWipeWithRegion:[ZTSettings sharedSettings].regionMode ?: @"VN"];
+}
+
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion {
     NSString *home = NSHomeDirectory();
     if (!home || home.length < 5) return;
     
@@ -650,18 +753,27 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     settings.lastWipedIDFV = settings.spoofedIDFV;
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
 
-    // Sinh định danh & phần cứng mới tinh
+    // Cập nhật vùng và sinh định danh & phần cứng mới tinh đúng 1 LẦN DUY NHẤT
+    settings.regionMode = targetRegion ?: @"VN";
     [settings generateNewProfile];
+    [settings saveSettings];
     
     // 5. Hiển thị thông báo và thoát app sạch sẽ
     UIViewController *top = get_top_view_controller();
+    NSString *regionDesc = [settings.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                           ([settings.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
     NSString *msg = [NSString stringWithFormat:
                      @"🎉 Đã làm sạch 100%% dữ liệu Zalo Clone!\n\n"
+                     @"• Tên máy mới: %@\n"
+                     @"• SIM & Khu vực: %@ (%@ - MCC %@)\n"
                      @"• IDFV Mới: %@\n"
+                     @"• IDFA: 00000000-0000-0000-0000-000000000000 (Chuẩn Apple Denied)\n"
                      @"• Keychain & Cache: Làm sạch hoàn toàn\n"
                      @"• File Backup .adbk: Được bảo vệ an toàn\n\n"
                      @"⚠️ Ứng dụng sẽ tự động đóng sau 2 giây.\n"
-                     @"VUI LÒNG BẬT VÀ TẮT CHẾ ĐỘ MÁY BAY (AIRPLANE MODE) để đổi IP 4G trước khi mở lại Zalo!",
+                     @"👉 BẬT VÀ TẮT CHẾ ĐỘ MÁY BAY (AIRPLANE MODE) để đổi IP 4G trước khi mở lại Zalo!",
+                     settings.deviceName,
+                     regionDesc, settings.carrierName, settings.carrierMCC,
                      settings.spoofedIDFV];
     
     UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🧹 Deep Wipe Hoàn Tất"
