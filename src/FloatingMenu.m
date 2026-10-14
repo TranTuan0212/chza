@@ -1255,8 +1255,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_birthtimespec.tv_nsec / 1000000ULL);
         uint64_t mtimeMs = ((uint64_t)st_hw.st_mtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_mtimespec.tv_nsec / 1000000ULL);
         uint64_t ctimeMs = ((uint64_t)st_hw.st_ctimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_ctimespec.tv_nsec / 1000000ULL);
-        if (mtimeMs == 0) mtimeMs = birthMs + 1435000ULL;
-        if (ctimeMs == 0) ctimeMs = mtimeMs;
+        if (mtimeMs == 0) mtimeMs = birthMs + 180000ULL + ((birthMs * 104729ULL) % 1800000ULL);
+        if (ctimeMs == 0) ctimeMs = mtimeMs + 30000ULL + ((birthMs * 1299709ULL) % 600000ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", birthMs, mtimeMs, ctimeMs];
         
         BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
@@ -1268,9 +1268,11 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         }
     } else if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
         uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
-        uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
-        uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
-        uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
+        uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
+        uint64_t delta_c = delta_m + 30ULL + ((fakeBirth * 1299709ULL) % 600ULL) + ((fakeBirth / 13ULL) % 43ULL);
+        uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 850ULL + 100ULL);
+        uint64_t ms2 = (fakeBirth + delta_m) * 1000ULL + (((fakeBirth + delta_m) * 2246822519ULL) % 850ULL + 100ULL);
+        uint64_t ms3 = (fakeBirth + delta_c) * 1000ULL + (((fakeBirth + delta_c) * 3266489917ULL) % 850ULL + 100ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {

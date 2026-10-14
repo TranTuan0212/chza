@@ -69,17 +69,17 @@ static const AppleDeviceSpec kAppleDeviceSpecs[] = {
     {"iPhone13,4", "D54pAP",  6, 6442450944ULL, 8388608ULL,  428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 15, 18, "iPhone 12 Pro Max", 1603411200ULL, 1631577600ULL},
 
     // iPhone 13 Series (A15 Bionic, L2: 12MB) [09/2021 - 09/2024]
-    {"iPhone14,4", "D16AP",   6, 4294967296ULL, 12582912ULL, 360.0, 780.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 15, 18, "iPhone 13 mini", 1632441600ULL, 1694563200ULL},
-    {"iPhone14,5", "D17AP",   6, 4294967296ULL, 12582912ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 15, 18, "iPhone 13", 1632441600ULL, 1725840000ULL},
-    {"iPhone14,2", "D63AP",   6, 6442450944ULL, 12582912ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 15, 18, "iPhone 13 Pro", 1632441600ULL, 1662508800ULL},
-    {"iPhone14,3", "D64AP",   6, 6442450944ULL, 12582912ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 15, 18, "iPhone 13 Pro Max", 1632441600ULL, 1662508800ULL},
-    {"iPhone14,6", "D49AP",   6, 4294967296ULL, 12582912ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 15, 18, "iPhone SE 3", 1646784000ULL, 1725840000ULL},
+    {"iPhone14,4", "D16AP",   6, 4294967296ULL, 12582912ULL, 360.0, 780.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 13 mini", 1632441600ULL, 1694563200ULL},
+    {"iPhone14,5", "D17AP",   6, 4294967296ULL, 12582912ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 13", 1632441600ULL, 1725840000ULL},
+    {"iPhone14,2", "D63AP",   6, 6442450944ULL, 12582912ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 13 Pro", 1632441600ULL, 1662508800ULL},
+    {"iPhone14,3", "D64AP",   6, 6442450944ULL, 12582912ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 13 Pro Max", 1632441600ULL, 1662508800ULL},
+    {"iPhone14,6", "D49AP",   6, 4294967296ULL, 12582912ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17, 18, "iPhone SE 3", 1646784000ULL, 1725840000ULL},
 
     // iPhone 14 Series (A15 / A16 Bionic, L2: 16MB) [09/2022 - 09/2025]
-    {"iPhone14,7", "D27AP",   6, 6442450944ULL, 16777216ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 16, 18, "iPhone 14", 1663286400ULL, 1757376000ULL},
-    {"iPhone14,8", "D28AP",   6, 6442450944ULL, 16777216ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 16, 18, "iPhone 14 Plus", 1663286400ULL, 1725840000ULL},
-    {"iPhone15,2", "D73AP",   6, 6442450944ULL, 16777216ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 16, 18, "iPhone 14 Pro", 1663286400ULL, 1694563200ULL},
-    {"iPhone15,3", "D74AP",   6, 6442450944ULL, 16777216ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 16, 18, "iPhone 14 Pro Max", 1663286400ULL, 1694563200ULL},
+    {"iPhone14,7", "D27AP",   6, 6442450944ULL, 16777216ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 14", 1663286400ULL, 1757376000ULL},
+    {"iPhone14,8", "D28AP",   6, 6442450944ULL, 16777216ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 14 Plus", 1663286400ULL, 1725840000ULL},
+    {"iPhone15,2", "D73AP",   6, 6442450944ULL, 16777216ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 14 Pro", 1663286400ULL, 1694563200ULL},
+    {"iPhone15,3", "D74AP",   6, 6442450944ULL, 16777216ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 14 Pro Max", 1663286400ULL, 1694563200ULL},
 
     // iPhone 15 Series (A16 / A17 Pro, L2: 16MB) [09/2023 - 09/2026]
     {"iPhone15,4", "D37AP",   6, 6442450944ULL, 16777216ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 15", 1694736000ULL, 1788739200ULL},
@@ -98,52 +98,53 @@ typedef struct {
     const char *version; // "15.8.3", "17.6.1"
     const char *build;   // "19H386", "21G93"
     int major;           // 15, 16, 17, 18
+    BOOL legacyOnly;     // Chỉ dành cho thiết bị ngừng hỗ trợ (iPhone 6s/7 cho 15.8.x, iPhone 8/X cho 16.7.x)
 } AppleOSRelease;
 
 // Bảng phiên bản iOS thực tế & Build ID chính xác của Apple (Tối thiểu 15.1+ để Zalo hoạt động chuẩn)
 static const AppleOSRelease kAppleOSReleases[] = {
     // iOS 15 Releases (iPhone 6s / 6s Plus / SE 1 / iPhone 7 / 7 Plus)
-    {"15.4.1", "19E258",  15},
-    {"15.5",   "19F77",   15},
-    {"15.6",   "19G69",   15},
-    {"15.6.1", "19G82",   15},
-    {"15.7",   "19H12",   15},
-    {"15.7.1", "19H117",  15},
-    {"15.7.2", "19H218",  15},
-    {"15.7.5", "19H332",  15},
-    {"15.8",   "19H370",  15},
-    {"15.8.1", "19H380",  15},
-    {"15.8.2", "19H384",  15},
-    {"15.8.3", "19H386",  15},
+    {"15.4.1", "19E258",  15, NO},
+    {"15.5",   "19F77",   15, NO},
+    {"15.6",   "19G69",   15, NO},
+    {"15.6.1", "19G82",   15, NO},
+    {"15.7",   "19H12",   15, NO},
+    {"15.7.1", "19H117",  15, NO},
+    {"15.7.2", "19H218",  15, NO},
+    {"15.7.5", "19H332",  15, NO},
+    {"15.8",   "19H370",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
+    {"15.8.1", "19H380",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
+    {"15.8.2", "19H384",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
+    {"15.8.3", "19H386",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
 
     // iOS 16 Releases (iPhone 8 / 8 Plus / X)
-    {"16.5",    "20F66",  16},
-    {"16.6",    "20G75",  16},
-    {"16.6.1",  "20G81",  16},
-    {"16.7.2",  "20H115", 16},
-    {"16.7.5",  "20H307", 16},
-    {"16.7.10", "20H350", 16},
+    {"16.5",    "20F66",  16, NO},
+    {"16.6",    "20G75",  16, NO},
+    {"16.6.1",  "20G81",  16, NO},
+    {"16.7.2",  "20H115", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
+    {"16.7.5",  "20H307", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
+    {"16.7.10", "20H350", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
 
     // iOS 17 Releases
-    {"17.4",   "21E219",  17},
-    {"17.4.1", "21E236",  17},
-    {"17.5",   "21F79",   17},
-    {"17.5.1", "21F90",   17},
-    {"17.6",   "21G80",   17},
-    {"17.6.1", "21G93",   17},
-    {"17.7",   "21H16",   17},
-    {"17.7.1", "21H216",  17},
-    {"17.7.2", "21H221",  17},
+    {"17.4",   "21E219",  17, NO},
+    {"17.4.1", "21E236",  17, NO},
+    {"17.5",   "21F79",   17, NO},
+    {"17.5.1", "21F90",   17, NO},
+    {"17.6",   "21G80",   17, NO},
+    {"17.6.1", "21G93",   17, NO},
+    {"17.7",   "21H16",   17, NO},
+    {"17.7.1", "21H216",  17, NO},
+    {"17.7.2", "21H221",  17, NO},
 
     // iOS 18 Releases
-    {"18.0",   "22A3354", 18},
-    {"18.0.1", "22A3370", 18},
-    {"18.1",   "22B83",   18},
-    {"18.1.1", "22B91",   18},
-    {"18.2",   "22C152",  18},
-    {"18.2.1", "22C161",  18},
-    {"18.3",   "22D63",   18},
-    {"18.3.1", "22D72",   18}
+    {"18.0",   "22A3354", 18, NO},
+    {"18.0.1", "22A3370", 18, NO},
+    {"18.1",   "22B83",   18, NO},
+    {"18.1.1", "22B91",   18, NO},
+    {"18.2",   "22C152",  18, NO},
+    {"18.2.1", "22C161",  18, NO},
+    {"18.3",   "22D63",   18, NO},
+    {"18.3.1", "22D72",   18, NO}
 };
 
 NSString *generate_apple_serial(void) {
@@ -282,14 +283,19 @@ static NSString *detect_real_system_machine(void) {
     // 2. CHỌN BẢN iOS TƯƠNG THÍCH VỚI DÒNG MÁY (iPhone 7: 15.x, iPhone 16: 18+)
     size_t osCount = sizeof(kAppleOSReleases) / sizeof(kAppleOSReleases[0]);
     NSMutableArray *validOSList = [NSMutableArray array];
+    BOOL isLegacyOnlyDevice = (spec.maxIOS <= 16); // Chỉ iPhone 6s/7/8/X
     for (size_t i = 0; i < osCount; i++) {
         if (kAppleOSReleases[i].major >= spec.minIOS && kAppleOSReleases[i].major <= spec.maxIOS) {
+            // Máy hiện đại (iPhone XR/11/12/13/14/15/16) không bao giờ nhận các bản vá độc quyền của máy cũ ngừng hỗ trợ (16.7.x hay 15.8.x)
+            if (kAppleOSReleases[i].legacyOnly && !isLegacyOnlyDevice) {
+                continue;
+            }
             [validOSList addObject:[NSValue valueWithPointer:&kAppleOSReleases[i]]];
         }
     }
     if (validOSList.count == 0) {
         for (size_t i = 0; i < osCount; i++) {
-            if (kAppleOSReleases[i].major >= spec.minIOS) {
+            if (kAppleOSReleases[i].major >= spec.minIOS && (!kAppleOSReleases[i].legacyOnly || isLegacyOnlyDevice)) {
                 [validOSList addObject:[NSValue valueWithPointer:&kAppleOSReleases[i]]];
             }
         }
@@ -419,10 +425,11 @@ static NSString *detect_real_system_machine(void) {
     uint64_t launch = spec.launchTimestamp ?: 1568160000ULL;
     uint64_t eol = spec.eolTimestamp ?: (launch + 94608000ULL);
     uint64_t span = (eol > launch) ? (eol - launch) : 86400ULL;
-    profile.birthTimeSec = launch + arc4random_uniform((uint32_t)span);
+    // Mỗi lần sinh Profile cấp mới, đảm bảo ngày sinh phân tán ngẫu nhiên và có jitter lẻ
+    profile.birthTimeSec = launch + arc4random_uniform((uint32_t)span) + arc4random_uniform(86399);
     // Đảm bảo ngày xuất xưởng / cài đặt luôn xảy ra trước BootTime ít nhất vài tuần và không trùng giây
     if (profile.birthTimeSec >= profile.bootTimeSec) {
-        profile.birthTimeSec = profile.bootTimeSec - (86400ULL * 30ULL + arc4random_uniform(86400 * 180) + arc4random_uniform(3599));
+        profile.birthTimeSec = profile.bootTimeSec - (86400ULL * (30ULL + arc4random_uniform(250)) + arc4random_uniform(86399));
     }
 
     // Pin ngẫu nhiên (50% - 96%) và không cắm sạc

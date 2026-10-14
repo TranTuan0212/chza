@@ -1991,15 +1991,23 @@ static inline BOOL should_fake_stat_path(const char *path) {
     return NO;
 }
 
+static inline void get_consistent_stat_times(uint64_t fake_birth, time_t *out_mtime, time_t *out_ctime, long *out_nsec_b, long *out_nsec_m, long *out_nsec_c) {
+    uint64_t delta_m = 180ULL + ((fake_birth * 104729ULL) % 1800ULL) + (fake_birth % 59ULL);
+    uint64_t delta_c = delta_m + 30ULL + ((fake_birth * 1299709ULL) % 600ULL) + ((fake_birth / 13ULL) % 43ULL);
+    if (out_mtime) *out_mtime = (time_t)(fake_birth + delta_m);
+    if (out_ctime) *out_ctime = (time_t)(fake_birth + delta_c);
+    if (out_nsec_b) *out_nsec_b = (long)(((fake_birth * 2654435761ULL) % 850ULL + 100ULL) * 1000000L);
+    if (out_nsec_m) *out_nsec_m = (long)((((fake_birth + delta_m) * 2246822519ULL) % 850ULL + 100ULL) * 1000000L);
+    if (out_nsec_c) *out_nsec_c = (long)((((fake_birth + delta_c) * 3266489917ULL) % 850ULL + 100ULL) * 1000000L);
+}
+
 static inline void fake_stat_timespec(struct stat *buf, uint64_t btime) {
     if (!buf) return;
     ZTSettings *s = [ZTSettings sharedSettings];
     time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
-    time_t fake_mtime = (time_t)(fake_birth + 1435);
-    time_t fake_ctime = (time_t)(fake_birth + 1555);
-    long nsec_birth = (long)(((fake_birth * 2654435761ULL) % 900 + 100) * 1000000L);
-    long nsec_mtime = (long)(((fake_mtime * 2246822519ULL) % 900 + 100) * 1000000L);
-    long nsec_ctime = (long)(((fake_ctime * 3266489917ULL) % 900 + 100) * 1000000L);
+    time_t fake_mtime = 0, fake_ctime = 0;
+    long nsec_birth = 0, nsec_mtime = 0, nsec_ctime = 0;
+    get_consistent_stat_times((uint64_t)fake_birth, &fake_mtime, &fake_ctime, &nsec_birth, &nsec_mtime, &nsec_ctime);
     buf->st_birthtimespec.tv_sec = fake_birth;
     buf->st_birthtimespec.tv_nsec = nsec_birth;
     buf->st_mtimespec.tv_sec = fake_mtime;
@@ -2881,9 +2889,12 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
             NSString *devId = [NSString stringWithFormat:@"%@", dict[@"device_id"]];
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
-            uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
-            uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
-            uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
+            time_t fake_mtime = 0, fake_ctime = 0;
+            long nsec_b = 0, nsec_m = 0, nsec_c = 0;
+            get_consistent_stat_times(fakeBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
+            uint64_t ms1 = fakeBirth * 1000ULL + (uint64_t)(nsec_b / 1000000L);
+            uint64_t ms2 = (uint64_t)fake_mtime * 1000ULL + (uint64_t)(nsec_m / 1000000L);
+            uint64_t ms3 = (uint64_t)fake_ctime * 1000ULL + (uint64_t)(nsec_c / 1000000L);
             NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
             
             NSMutableDictionary *m = [dict mutableCopy];
