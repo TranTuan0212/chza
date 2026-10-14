@@ -845,7 +845,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.boottime -> [ĐÃ FAKE] Timestamp: %llu", settings.bootTimeSec]);
         struct timeval bt;
         bt.tv_sec = (time_t)settings.bootTimeSec;
-        bt.tv_usec = 345678;
+        bt.tv_usec = (suseconds_t)((settings.bootTimeSec * 2654435761ULL) % 1000000ULL);
         if (oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
             memcpy(oldp, &bt, sizeof(struct timeval));
         }

@@ -19,6 +19,15 @@ typedef struct {
 
 // Ngân hàng thiết bị iPhone chuẩn xác 100% phần cứng của Apple
 static const AppleDeviceSpec kAppleDeviceSpecs[] = {
+    // iPhone 6 Series (A8, 2 Cores, 1GB RAM, iOS 8 - 12.5.7, 375x667 @2x / 414x736 @3x)
+    {"iPhone7,2",  "N61AP",   2, 1073741824ULL, 375.0, 667.0, 2.0, {16000000000ULL, 64000000000ULL, 128000000000ULL, 0}, 8, 12, "iPhone 6"},      // iPhone 6
+    {"iPhone7,1",  "N56AP",   2, 1073741824ULL, 414.0, 736.0, 3.0, {16000000000ULL, 64000000000ULL, 128000000000ULL, 0}, 8, 12, "iPhone 6 Plus"}, // iPhone 6 Plus
+
+    // iPhone 6s Series & SE 1 (A9, 2 Cores, 2GB RAM, iOS 9 - 15.8.3)
+    {"iPhone8,1",  "N71AP",   2, 2147483648ULL, 375.0, 667.0, 2.0, {16000000000ULL, 32000000000ULL, 64000000000ULL, 128000000000ULL, 0}, 9, 15, "iPhone 6s"},      // iPhone 6s
+    {"iPhone8,2",  "N66AP",   2, 2147483648ULL, 414.0, 736.0, 3.0, {16000000000ULL, 32000000000ULL, 64000000000ULL, 128000000000ULL, 0}, 9, 15, "iPhone 6s Plus"}, // iPhone 6s Plus
+    {"iPhone8,4",  "N69AP",   2, 2147483648ULL, 320.0, 568.0, 2.0, {16000000000ULL, 32000000000ULL, 64000000000ULL, 128000000000ULL, 0}, 9, 15, "iPhone SE (1st gen)"}, // SE 1
+
     // iPhone 7 Series (A10 Fusion, 2 Cores, iOS 10 - 15.8.3, 375x667 @2x)
     {"iPhone9,1",  "D10AP",   2, 2147483648ULL, 375.0, 667.0, 2.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7"},      // iPhone 7 Global
     {"iPhone9,3",  "D101AP",  2, 2147483648ULL, 375.0, 667.0, 2.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7"},      // iPhone 7 GSM
@@ -90,7 +99,17 @@ typedef struct {
 
 // Bảng phiên bản iOS thực tế & Build ID chính xác của Apple
 static const AppleOSRelease kAppleOSReleases[] = {
-    // iOS 15 Releases (iPhone 7 / 7 Plus)
+    // iOS 12 Releases (iPhone 6 / 6 Plus)
+    {"12.5.5", "16H62",   12},
+    {"12.5.6", "16H71",   12},
+    {"12.5.7", "16H81",   12},
+
+    // iOS 14 Releases
+    {"14.7.1", "18G82",   14},
+    {"14.8",   "18H17",   14},
+    {"14.8.1", "18H107",  14},
+
+    // iOS 15 Releases (iPhone 6s / 6s Plus / SE 1 / iPhone 7 / 7 Plus)
     {"15.4.1", "19E258",  15},
     {"15.5",   "19F77",   15},
     {"15.6",   "19G69",   15},

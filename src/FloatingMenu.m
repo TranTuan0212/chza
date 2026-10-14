@@ -8,6 +8,25 @@
 #import <fcntl.h>
 #import <unistd.h>
 #import <CFNetwork/CFNetwork.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+
+// Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở
+static void sever_all_network_sockets_immediately(void) {
+    [[NSURLSession sharedSession] invalidateAndCancel];
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+
+    int maxFd = getdtablesize();
+    if (maxFd > 1024) maxFd = 1024;
+    for (int fd = 3; fd < maxFd; fd++) {
+        struct sockaddr_storage ss;
+        socklen_t sslen = sizeof(ss);
+        if (getpeername(fd, (struct sockaddr *)&ss, &sslen) == 0) {
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+        }
+    }
+}
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -1015,8 +1034,7 @@ UIViewController *ZTGetTopViewController(void) {
     [settings saveSettings];
 
     // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
-    [[NSURLSession sharedSession] invalidateAndCancel];
-    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    sever_all_network_sockets_immediately();
 
     // 7. Đóng app dứt khoát
     UIViewController *top = get_top_view_controller();
