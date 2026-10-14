@@ -1,5 +1,4 @@
 #import "ZTDiagnosticViewController.h"
-#import "FloatingMenu.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
@@ -339,12 +338,30 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
-    [[ZTFloatingButton sharedButton] hide];
+    Class btnCls = NSClassFromString(@"ZTFloatingButton");
+    if (btnCls && [btnCls respondsToSelector:@selector(sharedButton)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id btn = [btnCls performSelector:@selector(sharedButton)];
+        if (btn && [btn respondsToSelector:@selector(hide)]) {
+            [btn performSelector:@selector(hide)];
+        }
+#pragma clang diagnostic pop
+    }
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
-    [[ZTFloatingButton sharedButton] show];
+    Class btnCls = NSClassFromString(@"ZTFloatingButton");
+    if (btnCls && [btnCls respondsToSelector:@selector(sharedButton)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id btn = [btnCls performSelector:@selector(sharedButton)];
+        if (btn && [btn respondsToSelector:@selector(show)]) {
+            [btn performSelector:@selector(show)];
+        }
+#pragma clang diagnostic pop
+    }
 }
 
 - (void)dismissSelf {
