@@ -1494,18 +1494,35 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
     return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
 }
 
-// Hook POSIX stat & lstat để làm mới device_id và st_birthtimespec
+// Hook POSIX stat, lstat & fstat để làm mới device_id và st_birthtimespec
+static inline BOOL should_fake_stat_path(const char *path) {
+    if (!path) return NO;
+    if (strstr(path, "/var") ||
+        strstr(path, "Containers") ||
+        strstr(path, "Documents") ||
+        strstr(path, "Library") ||
+        strstr(path, "Application") ||
+        strstr(path, "mobile") ||
+        strcmp(path, "/") == 0 ||
+        strcmp(path, "/private") == 0 ||
+        strcmp(path, "/private/var") == 0) {
+        return YES;
+    }
+    return NO;
+}
+
 static int (*orig_stat)(const char *path, struct stat *buf);
 static int my_stat(const char *path, struct stat *buf) {
     int ret = orig_stat ? orig_stat(path, buf) : stat(path, buf);
     if (ret == 0 && is_tweak_active() && buf && path) {
-        if (strstr(path, "/var/mobile") || strstr(path, "Containers") || strstr(path, "Documents") || strstr(path, "Library")) {
+        if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
                 time_t fake_ctime = (time_t)(btime - 864000);
                 buf->st_birthtimespec.tv_sec = fake_ctime;
                 buf->st_mtimespec.tv_sec = fake_ctime;
                 buf->st_ctimespec.tv_sec = fake_ctime;
+                logAudit(@"STAT-BIRTH", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ FAKE BIRTHTIME] %lld-0-0", path, (long long)fake_ctime * 1000LL]);
             }
         }
     }
@@ -1516,13 +1533,33 @@ static int (*orig_lstat)(const char *path, struct stat *buf);
 static int my_lstat(const char *path, struct stat *buf) {
     int ret = orig_lstat ? orig_lstat(path, buf) : lstat(path, buf);
     if (ret == 0 && is_tweak_active() && buf && path) {
-        if (strstr(path, "/var/mobile") || strstr(path, "Containers") || strstr(path, "Documents") || strstr(path, "Library")) {
+        if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
                 time_t fake_ctime = (time_t)(btime - 864000);
                 buf->st_birthtimespec.tv_sec = fake_ctime;
                 buf->st_mtimespec.tv_sec = fake_ctime;
                 buf->st_ctimespec.tv_sec = fake_ctime;
+                logAudit(@"STAT-BIRTH", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ FAKE BIRTHTIME] %lld-0-0", path, (long long)fake_ctime * 1000LL]);
+            }
+        }
+    }
+    return ret;
+}
+
+static int (*orig_fstat)(int fildes, struct stat *buf);
+static int my_fstat(int fildes, struct stat *buf) {
+    int ret = orig_fstat ? orig_fstat(fildes, buf) : fstat(fildes, buf);
+    if (ret == 0 && is_tweak_active() && buf) {
+        uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+        if (btime > 0) {
+            uint64_t realBirth = ((uint64_t)buf->st_birthtimespec.tv_sec) * 1000ULL;
+            if (realBirth == 1777525794000ULL || realBirth == 1753442559000ULL || S_ISDIR(buf->st_mode)) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                buf->st_birthtimespec.tv_sec = fake_ctime;
+                buf->st_mtimespec.tv_sec = fake_ctime;
+                buf->st_ctimespec.tv_sec = fake_ctime;
+                logAudit(@"STAT-BIRTH", [NSString stringWithFormat:@"fstat(fd:%d) -> [ĐÃ FAKE BIRTHTIME] %lld-0-0", fildes, (long long)fake_ctime * 1000LL]);
             }
         }
     }
@@ -2483,7 +2520,11 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
+        universal_hook_c_function("stat$INODE64", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
+        universal_hook_c_function("lstat$INODE64", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
+        universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
+        universal_hook_c_function("fstat$INODE64", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
             universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);

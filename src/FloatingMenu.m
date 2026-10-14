@@ -1234,7 +1234,7 @@ UIViewController *ZTGetTopViewController(void) {
     // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec)
     struct stat st_hw;
     memset(&st_hw, 0, sizeof(st_hw));
-    if (stat("/var/mobile", &st_hw) == 0 || (home && stat([home UTF8String], &st_hw) == 0)) {
+    if (stat("/var/mobile", &st_hw) == 0 || (home && stat([home UTF8String], &st_hw) == 0) || stat("/", &st_hw) == 0) {
         uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL;
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
         
@@ -1245,6 +1245,10 @@ UIViewController *ZTGetTopViewController(void) {
         } else {
             info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
         }
+    } else if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
+        uint64_t birthMs = (s.bootTimeSec - 864000ULL) * 1000ULL;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        info.deviceIdPassed = YES;
     } else {
         info.hardwareDeviceId = @"Chưa cấp (Cần Wipe)";
         info.deviceIdPassed = NO;
