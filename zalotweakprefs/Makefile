@@ -11,7 +11,7 @@ ZaloTweakPrefs_FILES = ZTRootListController.m ../src/SecurityManager.m ../src/De
 ZaloTweakPrefs_FRAMEWORKS = UIKit Foundation Security CFNetwork
 ZaloTweakPrefs_PRIVATE_FRAMEWORKS = Preferences
 ZaloTweakPrefs_INSTALL_PATH = /Library/PreferenceBundles
-ZaloTweakPrefs_CFLAGS = -fobjc-arc -I../src
+ZaloTweakPrefs_CFLAGS = -fobjc-arc -I../src -Wno-deprecated-declarations -Wno-error
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 ZaloTweakPrefs_CFLAGS += -DTHEOS_PACKAGE_SCHEME_ROOTHIDE=1
 endif

@@ -604,11 +604,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     statusRow.spacing = 8;
     statusRow.alignment = UIStackViewAlignmentCenter;
 
-    if (@available(iOS 13.0, *)) {
-        self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
-    } else {
-        self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    }
+    self.spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleMedium];
     self.spinner.hidesWhenStopped = YES;
     [statusRow addArrangedSubview:self.spinner];
 
@@ -681,8 +677,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                 } else {
                     // Là proxy kèm User/Pass hoặc domain xoay -> Thiết lập connectionProxyDictionary
                     NSMutableDictionary *p = [NSMutableDictionary dictionary];
-                    p[(NSString *)kCFStreamPropertyHTTPProxyHost] = host;
-                    p[(NSString *)kCFStreamPropertyHTTPProxyPort] = port ?: @(80);
+                    p[@"HTTPEnable"] = @YES;
+                    p[@"HTTPProxy"] = host;
+                    p[@"HTTPPort"] = port ?: @(80);
                     if (user.length > 0) p[(NSString *)kCFProxyUsernameKey] = user;
                     if (pass.length > 0) p[(NSString *)kCFProxyPasswordKey] = pass;
                     proxyDict = [p copy];

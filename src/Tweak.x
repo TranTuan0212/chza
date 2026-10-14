@@ -1835,7 +1835,6 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
                 time_t fake_birth = (time_t)(btime - 864000);
-                time_t fake_mtime = (time_t)(fake_birth + 1435);
                 size_t words = attrBufSize / sizeof(uint64_t);
                 uint64_t *ptr64 = (uint64_t *)attrBuf;
                 for (size_t i = 0; i < words; ++i) {
