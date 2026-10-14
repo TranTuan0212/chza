@@ -26,6 +26,44 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
     ];
 }
 
+static NSString *get_roothide_prefs_path(void) {
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    if (jbroot_fn) {
+        const char *p = jbroot_fn("/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist");
+        if (p) return [NSString stringWithUTF8String:p];
+    }
+    return PREFS_PATH;
+}
+
+static NSString *get_roothide_license_path(void) {
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    if (jbroot_fn) {
+        const char *p = jbroot_fn("/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist");
+        if (p) return [NSString stringWithUTF8String:p];
+    }
+    return @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist";
+}
+
+static NSDictionary *load_current_prefs_dict(void) {
+    NSString *rhPath = get_roothide_prefs_path();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:rhPath];
+    if (!dict && ![rhPath isEqualToString:PREFS_PATH]) {
+        dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    }
+    return dict;
+}
+
+static NSMutableDictionary *load_current_mutable_prefs_dict(void) {
+    NSString *rhPath = get_roothide_prefs_path();
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:rhPath];
+    if (!dict && ![rhPath isEqualToString:PREFS_PATH]) {
+        dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    }
+    return dict ?: [NSMutableDictionary dictionary];
+}
+
 static void save_dict_to_all_locations(NSDictionary *dict);
 static void sync_license_to_all_locations(void);
 static void kill_all_zalo_processes(void);
@@ -140,18 +178,14 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 }
 
 - (void)initDefaultSettingsIfNeeded {
-    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSMutableDictionary *dict = load_current_mutable_prefs_dict();
     BOOL needSave = NO;
-    if (!dict) {
-        dict = [NSMutableDictionary dictionary];
-        needSave = YES;
-    }
     if (!dict[@"enabled"]) {
         dict[@"enabled"] = @(YES);
         needSave = YES;
     }
     if (!dict[@"showFloatingMenu"]) {
-        dict[@"showFloatingMenu"] = @(YES);
+        dict[@"showFloatingMenu"] = @(NO); // Mặc định trên Jailbreak luôn là NO để tàng hình tuyệt đối khỏi Zalo UI audit
         needSave = YES;
     }
     if (!dict[@"hasConfiguredProfile"]) {
@@ -201,7 +235,7 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 }
 
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *key = [specifier propertyForKey:@"key"];
     id value = dict[key];
     if (!value) {
@@ -222,7 +256,7 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
         return;
     }
 
-    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
+    NSMutableDictionary *dict = load_current_mutable_prefs_dict();
     dict[key] = value;
 
     if ([key isEqualToString:@"regionMode"]) {
@@ -434,8 +468,14 @@ static NSArray<NSString *> *get_zalo_group_container_paths(void) {
 }
 
 static void save_dict_to_all_locations(NSDictionary *dict) {
-    [dict writeToFile:PREFS_PATH atomically:YES];
-    chmod([PREFS_PATH UTF8String], 0644);
+    NSString *rhPath = get_roothide_prefs_path();
+    [dict writeToFile:rhPath atomically:YES];
+    chmod([rhPath UTF8String], 0666);
+
+    if (![rhPath isEqualToString:PREFS_PATH]) {
+        [dict writeToFile:PREFS_PATH atomically:YES];
+        chmod([PREFS_PATH UTF8String], 0666);
+    }
 
     // Đồng bộ vào cfprefsd để ứng dụng trong Sandbox luôn đọc được
     for (id key in dict) {
@@ -467,8 +507,9 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
 }
 
 static void sync_license_to_all_locations(void) {
+    NSString *rhLicPath = get_roothide_license_path();
     NSString *mainLicensePath = @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist";
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:mainLicensePath];
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:rhLicPath] ?: [NSDictionary dictionaryWithContentsOfFile:mainLicensePath];
     if (!dict) {
         NSString *home = NSHomeDirectory();
         if (home) {
@@ -481,8 +522,13 @@ static void sync_license_to_all_locations(void) {
     }
     if (!dict) return;
 
-    [dict writeToFile:mainLicensePath atomically:YES];
-    chmod([mainLicensePath UTF8String], 0666);
+    [dict writeToFile:rhLicPath atomically:YES];
+    chmod([rhLicPath UTF8String], 0666);
+
+    if (![rhLicPath isEqualToString:mainLicensePath]) {
+        [dict writeToFile:mainLicensePath atomically:YES];
+        chmod([mainLicensePath UTF8String], 0666);
+    }
 
     // Đồng bộ license vào cfprefsd để Zalo sandbox truy cập thông suốt
     for (id key in dict) {
@@ -541,7 +587,7 @@ static void sync_license_to_all_locations(void) {
         [self performWipeAndApplyWithRegion:@"US"];
     }]];
 
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", currentRegion];
     [sheet addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
@@ -623,7 +669,7 @@ static void sync_license_to_all_locations(void) {
     [UIPasteboard generalPasteboard].string = @"";
 
     // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
-    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
+    NSMutableDictionary *dict = load_current_mutable_prefs_dict();
 
     NSString *oldIDFV = dict[@"spoofedIDFV"];
     if (oldIDFV && oldIDFV.length > 0) {
@@ -675,7 +721,7 @@ static void sync_license_to_all_locations(void) {
     // Truy vấn và lưu IP hiện tại để đối chiếu checklist
     fetch_public_ip_prefs(^(NSString *ip) {
         if (ip.length > 0 && ![ip isEqualToString:@"Không xác định"]) {
-            NSMutableDictionary *d = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH] ?: [NSMutableDictionary dictionary];
+            NSMutableDictionary *d = load_current_mutable_prefs_dict();
             d[@"lastWipedIP"] = ip;
             save_dict_to_all_locations(d);
         }
@@ -697,7 +743,7 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (id)getHardwareMachineValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *machine = dict[@"deviceMachine"] ?: get_prefs_real_machine();
     NSString *model = dict[@"deviceModel"] ?: get_prefs_real_model();
     if (model.length > 0) {
@@ -707,14 +753,14 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (id)getHardwareOSValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *sysVer = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
     NSString *kernVer = dict[@"kernOsVersion"] ?: get_prefs_real_os_version();
     return [NSString stringWithFormat:@"iOS %@ (%@)", sysVer, kernVer];
 }
 
 - (id)getHardwareSpecsValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     uint32_t ncpu = [dict[@"ncpu"] unsignedIntValue] ?: (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
     uint64_t ram = [dict[@"memsize"] unsignedLongLongValue] ?: [[NSProcessInfo processInfo] physicalMemory];
     double ramGB = (double)ram / (1024.0 * 1024.0 * 1024.0);
@@ -722,7 +768,7 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (id)getHardwareScreenValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     double w = [dict[@"screenWidth"] doubleValue] ?: [UIScreen mainScreen].bounds.size.width;
     double h = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
     double s = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
@@ -730,17 +776,17 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (id)getSpoofedSerialValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     return dict[@"spoofedSerial"] ?: @"Chưa cấp (Bấm Wipe)";
 }
 
 - (id)getSpoofedWifiMACValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     return dict[@"spoofedWifiMAC"] ?: @"Chưa cấp (Bấm Wipe)";
 }
 
 - (id)getSpoofedIDFVValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *idfv = dict[@"spoofedIDFV"];
     if (idfv.length > 18) {
         return [NSString stringWithFormat:@"%@...%@", [idfv substringToIndex:8], [idfv substringFromIndex:idfv.length - 6]];
@@ -749,7 +795,7 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (id)getSpoofedProfileIdValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *pid = dict[@"profileId"];
     if (pid.length > 18) {
         return [NSString stringWithFormat:@"%@...%@", [pid substringToIndex:8], [pid substringFromIndex:pid.length - 6]];
@@ -791,7 +837,7 @@ static void sync_license_to_all_locations(void) {
         }
     }
 
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *envFromApp = dict[@"runtimeEnvironment"];
     if (envFromApp && envFromApp.length > 0) {
         return envFromApp;
@@ -825,7 +871,7 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (void)activateLicenseAction:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     NSString *key = dict[@"licenseKeyInput"];
     if (!key || key.length == 0) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Nhập Key"
@@ -939,7 +985,7 @@ static NSString *findAuditLogPath(void) {
 }
 
 - (ZTDiagnosticInfo *)collectDiagnosticInfoWithIP:(NSString *)currentIP {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSDictionary *dict = load_current_prefs_dict();
     ZTDiagnosticInfo *info = [[ZTDiagnosticInfo alloc] init];
 
     info.currentIP = currentIP ?: @"Không xác định";

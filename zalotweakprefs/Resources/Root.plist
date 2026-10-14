@@ -223,7 +223,7 @@
             <key>label</key>
             <string>TIỆN ÍCH &amp; KIỂM TOÁN HỆ THỐNG</string>
             <key>footerText</key>
-            <string>Ghi lại nhật ký truy vấn hệ thống (ZaloAudit.log) và toàn bộ gói tin mạng HTTP/HTTPS (ZaloTraffic.har chuẩn HAR 1.2 cho Proxyman/Charles).</string>
+            <string>Trên máy Jailbreak (Roothide), nút nổi mặc định TẮT để tàng hình tuyệt đối khỏi Zalo UI audit. Ghi lại nhật ký truy vấn hệ thống (ZaloAudit.log) và toàn bộ gói tin mạng HTTP/HTTPS (ZaloTraffic.har).</string>
         </dict>
         <dict>
             <key>cell</key>

@@ -159,6 +159,16 @@ static inline BOOL is_system_caller(void *addr0, void *addr1) {
 
 #define GLOBAL_PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 
+static NSString *get_roothide_prefs_path(void) {
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    if (jbroot_fn) {
+        const char *p = jbroot_fn("/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist");
+        if (p) return [NSString stringWithUTF8String:p];
+    }
+    return GLOBAL_PREFS_PATH;
+}
+
 // Tìm đường dẫn file cấu hình tối ưu để vượt rào Sandbox
 static NSString *getConfigPath(void) {
     NSString *home = NSHomeDirectory();
@@ -172,8 +182,10 @@ static NSString *getConfigPath(void) {
             return containerDoc;
         }
 
-        // Kiểm tra file cấu hình toàn cục từ Cài Đặt Settings
+        // Kiểm tra file cấu hình toàn cục từ Cài Đặt Settings qua Roothide / Rootless
+        NSString *rhPath = get_roothide_prefs_path();
         NSArray *globalCandidates = @[
+            rhPath,
             GLOBAL_PREFS_PATH,
             @"/var/jb/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist",
             @"/private/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
@@ -184,6 +196,7 @@ static NSString *getConfigPath(void) {
                 if (d && d.count > 0) {
                     [[NSFileManager defaultManager] createDirectoryAtPath:[containerPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
                     [d writeToFile:containerPref atomically:YES];
+                    chmod([containerPref UTF8String], 0666);
                     return containerPref;
                 }
             }
@@ -424,7 +437,7 @@ static void purge_entire_sandbox_safely(void) {
         } else if (dict[@"showFloatingMenu"] != nil) {
             self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
-            self.showFloatingMenu = YES; // Mặc định luôn hiện nút nổi trên mọi môi trường (Jailbreak lẫn Sideload)
+            self.showFloatingMenu = is_device_jailbroken() ? NO : YES; // Jailbreak (Roothide): Mặc định NO để tàng hình tuyệt đối khỏi Zalo UI audit; Non-JB: Mặc định YES
         }
 
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
@@ -439,7 +452,7 @@ static void purge_entire_sandbox_safely(void) {
                 if (dict[@"showFloatingMenu"] != nil) {
                     self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
                 } else {
-                    self.showFloatingMenu = YES;
+                    self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
                 }
                 self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                 [self generateNewProfile];
@@ -469,7 +482,7 @@ static void purge_entire_sandbox_safely(void) {
         }
     } else {
         self.enabled = YES;
-        self.showFloatingMenu = YES;
+        self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
         self.hasConfiguredProfile = NO; // MỚI CÀI ĐẶT: CHƯA CẤU HÌNH -> KHÔNG FAKE MÁY NGAY!
         self.enableAuditLog = NO;
         self.lastWipedIDFV = @"";
@@ -565,16 +578,34 @@ static void purge_entire_sandbox_safely(void) {
     NSString *path = getConfigPath();
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
     [dict writeToFile:path atomically:YES];
+    chmod([path UTF8String], 0666);
 
     NSString *home = NSHomeDirectory();
     if (home) {
         NSString *localPref = [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
         [[NSFileManager defaultManager] createDirectoryAtPath:[localPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         [dict writeToFile:localPref atomically:YES];
+        chmod([localPref UTF8String], 0666);
         NSString *localDoc = [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.plist"];
         [[NSFileManager defaultManager] createDirectoryAtPath:[localDoc stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         [dict writeToFile:localDoc atomically:YES];
+        chmod([localDoc UTF8String], 0666);
     }
+
+    if (is_device_jailbroken()) {
+        NSString *rhPath = get_roothide_prefs_path();
+        if (rhPath) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:[rhPath stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+            [dict writeToFile:rhPath atomically:YES];
+            chmod([rhPath UTF8String], 0666);
+        }
+        [dict writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+        chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
+    }
+
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.sonhu.zalotweak/settingschanged"),
+                                         NULL, NULL, YES);
 }
 
 NSString *generate_random_serial(void) {
@@ -1855,6 +1886,18 @@ static BOOL s_in_bundle_hook = NO;
 - (instancetype)initWithSuiteName:(NSString *)suitename {
     id orig = %orig;
     if (orig) {
+        if (suitename && ([suitename containsString:@"zalo"] || [suitename containsString:@"zingalo"] || [suitename containsString:@"vng"])) {
+            @try {
+                [orig setObject:@"__zt_probe__" forKey:@"__zt_probe_key__"];
+                if (![orig stringForKey:@"__zt_probe_key__"]) {
+                    logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"SuiteName '%@' không có quyền ghi cfprefsd -> Điều hướng an toàn về standardUserDefaults", suitename]);
+                    return [NSUserDefaults standardUserDefaults];
+                }
+                [orig removeObjectForKey:@"__zt_probe_key__"];
+            } @catch (NSException *e) {
+                return [NSUserDefaults standardUserDefaults];
+            }
+        }
         return orig;
     }
     // Nếu ứng dụng (như bản Clone com.sonhu.zaloclone hoặc Sideload) không có App Group entitlement,

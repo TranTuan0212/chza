@@ -5,6 +5,9 @@
 #import <objc/runtime.h>
 #import <Security/Security.h>
 #import <sys/sysctl.h>
+#if __has_feature(modules)
+@import Darwin.POSIX.sys.stat;
+#endif
 #import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -1186,21 +1189,32 @@ UIViewController *ZTGetTopViewController(void) {
 
     BOOL appGroupWorking = NO;
     @try {
-        NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
-        if (groupDefaults) {
-            [groupDefaults setObject:@"zt_ok" forKey:@"_zt_diagnostic_check"];
-            [groupDefaults synchronize];
-            NSString *readBack = [groupDefaults stringForKey:@"_zt_diagnostic_check"];
-            if ([readBack isEqualToString:@"zt_ok"]) {
+        NSURL *grpURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:@"group.vn.com.vng.zingalo"];
+        if (grpURL) {
+            NSString *testFilePath = [grpURL.path stringByAppendingPathComponent:@"_zt_grp_test.tmp"];
+            if ([@"ZT_GRP_OK" writeToFile:testFilePath atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
                 appGroupWorking = YES;
-                [groupDefaults removeObjectForKey:@"_zt_diagnostic_check"];
+                [[NSFileManager defaultManager] removeItemAtPath:testFilePath error:nil];
+            }
+        }
+        if (!appGroupWorking) {
+            NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
+            if (groupDefaults) {
+                [groupDefaults setObject:@"zt_ok" forKey:@"_zt_diagnostic_check"];
                 [groupDefaults synchronize];
+                NSString *readBack = [groupDefaults stringForKey:@"_zt_diagnostic_check"];
+                if ([readBack isEqualToString:@"zt_ok"]) {
+                    appGroupWorking = YES;
+                    [groupDefaults removeObjectForKey:@"_zt_diagnostic_check"];
+                    [groupDefaults synchronize];
+                }
             }
         }
     } @catch (NSException *e) {
         appGroupWorking = NO;
     }
-    info.leveldbOK = ((leveldbRelWritable || leveldbAbsWritable || leveldbAtWritable) && appGroupWorking);
+    BOOL leveldbWritable = (leveldbRelWritable || leveldbAbsWritable || leveldbAtWritable);
+    info.leveldbOK = (leveldbWritable && appGroupWorking);
 
     // Mobileprovision check
     NSString *provPath = [[NSBundle mainBundle] pathForResource:@"embedded" ofType:@"mobileprovision"];

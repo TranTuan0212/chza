@@ -11,6 +11,16 @@
 #define SHARED_SECRET_SALT @"ZaloTweakSecuredSalt2026!@#$"
 #define LICENSE_STORAGE_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist"
 
+static NSString *get_roothide_license_path(void) {
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    if (jbroot_fn) {
+        const char *p = jbroot_fn("/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist");
+        if (p) return [NSString stringWithUTF8String:p];
+    }
+    return LICENSE_STORAGE_PATH;
+}
+
 @interface ZTSecurityManager ()
 @property (nonatomic, copy, readwrite) NSString *realUDID;
 @property (nonatomic, copy, readwrite, nullable) NSString *currentLicenseKey;
@@ -128,8 +138,13 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         }
     }
 
-    // 3. Fallback đọc từ Global Preferences (/var/mobile/Library/Preferences/...)
-    if (!dict && [[NSFileManager defaultManager] fileExistsAtPath:LICENSE_STORAGE_PATH]) {
+    // 3. Fallback đọc từ Roothide / Global Preferences (/var/mobile/Library/Preferences/...)
+    NSString *rhLicPath = get_roothide_license_path();
+    if (!dict && [[NSFileManager defaultManager] fileExistsAtPath:rhLicPath]) {
+        dict = [NSDictionary dictionaryWithContentsOfFile:rhLicPath];
+        if (dict) loadedFrom = rhLicPath;
+    }
+    if (!dict && ![rhLicPath isEqualToString:LICENSE_STORAGE_PATH] && [[NSFileManager defaultManager] fileExistsAtPath:LICENSE_STORAGE_PATH]) {
         dict = [NSDictionary dictionaryWithContentsOfFile:LICENSE_STORAGE_PATH];
         if (dict) loadedFrom = LICENSE_STORAGE_PATH;
     }
@@ -293,8 +308,13 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         chmod([backupPath UTF8String], 0666);
     }
 
-    // 3. Nếu có quyền, lưu vào Global Preferences (/var/mobile/Library/Preferences)
-    if (![path isEqualToString:LICENSE_STORAGE_PATH]) {
+    // 3. Nếu có quyền, lưu vào Roothide / Global Preferences (/var/mobile/Library/Preferences)
+    NSString *rhLicPath = get_roothide_license_path();
+    [[NSFileManager defaultManager] createDirectoryAtPath:[rhLicPath stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+    [dict writeToFile:rhLicPath atomically:YES];
+    chmod([rhLicPath UTF8String], 0666);
+
+    if (![rhLicPath isEqualToString:LICENSE_STORAGE_PATH]) {
         [[NSFileManager defaultManager] createDirectoryAtPath:[LICENSE_STORAGE_PATH stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
         [dict writeToFile:LICENSE_STORAGE_PATH atomically:YES];
         chmod([LICENSE_STORAGE_PATH UTF8String], 0666);
