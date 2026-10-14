@@ -1,4 +1,5 @@
 #import "ZTDiagnosticViewController.h"
+#import "FloatingMenu.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
@@ -336,6 +337,16 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     }
 }
 
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [[ZTFloatingButton sharedButton] hide];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [[ZTFloatingButton sharedButton] show];
+}
+
 - (void)dismissSelf {
     [self dismissViewControllerAnimated:YES completion:nil];
 }
@@ -414,10 +425,8 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     // 2. Thẻ Kết Luận Tổng Thể (Verdict Banner)
     [self.contentStack addArrangedSubview:[self buildVerdictCardWithPassed:isAllPassed isPendingPhone:isPendingPhone isSameIP:isSameIP isDuplicateIDFV:isDuplicateIDFV]];
 
-    // 3. Thẻ Phân Tích Số Điện Thoại (Nếu đã nhập số)
-    if (self.info.inputPhone.length > 0 || self.info.phoneCheckCompleted) {
-        [self.contentStack addArrangedSubview:[self buildPhoneCard]];
-    }
+    // 3. Thẻ Phân Tích Số Điện Thoại (Luôn hiển thị để người dùng nắm rõ tình trạng SĐT)
+    [self.contentStack addArrangedSubview:[self buildPhoneCard]];
 
     // 4. Thẻ Mạng & Proxy Thực Tế (Network & Proxy Hygiene)
     [self.contentStack addArrangedSubview:[self buildNetworkCardWithSameIP:isSameIP differentIP:isDifferentIP]];
@@ -983,9 +992,15 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id trùng timestamp máy thật (Chưa fake birthtime)!\n"];
         if (!self.info.armCpuPassed) [reasons appendString:@"• Lệch tập lệnh ARM CPU phần cứng Apple!\n"];
         if (self.info.ipCheckCompleted && !self.info.ipCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• IP KHÔNG SẠCH: %@\n", self.info.ipTypeDesc ?: @""]];
-        if (self.info.phoneCheckCompleted && !self.info.matchGeoPassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchGeoReason ?: @"Lệch quốc gia"]];
+
+        if (!self.info.phoneCheckCompleted) {
+            [reasons appendString:@"• Chưa nhập Số điện thoại dự định đăng ký để kiểm tra độ khớp!\n"];
+        } else {
+            if (!self.info.matchGeoPassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchGeoReason ?: @"Lệch quốc gia"]];
+            if (!self.info.phonePassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchProfileReason ?: @"SĐT không tương thích"]];
+        }
+
         if (self.info.ipCheckCompleted && !self.info.matchTimezonePassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchTimezoneReason ?: @"Lệch múi giờ"]];
-        if (self.info.phoneCheckCompleted && !self.info.phonePassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchProfileReason ?: @"SĐT không tương thích"]];
         if (!self.info.regionSyncPassed) [reasons appendString:@"• Múi giờ, Ngôn ngữ và SIM chưa đồng bộ nhất quán!\n"];
 
         descLbl.text = [reasons stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -1004,6 +1019,27 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     UIStackView *inner = [self createCardInnerStackForCard:card];
 
     [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"📱" title:@"1. PHÂN TÍCH SỐ ĐIỆN THOẠI ĐĂNG KÝ"]];
+
+    if (!self.info.phoneCheckCompleted) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Số Điện Thoại"
+                                                  value:@"[Chưa nhập - Bắt buộc]"
+                                                  badge:@"⚠️ Bắt buộc"
+                                              isWarning:YES]];
+
+        [inner addArrangedSubview:[self createRowWithKey:@"Tình Trạng Đối Chiếu"
+                                                  value:@"Chưa đối chiếu với IP & Múi giờ"
+                                                  badge:@"⚠️ Cần kiểm tra"
+                                              isWarning:YES]];
+
+        UILabel *guideLbl = [[UILabel alloc] init];
+        guideLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        guideLbl.textColor = [UIColor colorWithRed:0.85 green:0.55 blue:0.0 alpha:1.0];
+        guideLbl.numberOfLines = 0;
+        guideLbl.text = @"👉 Hãy nhập Số điện thoại dự định đăng ký ở trên rồi bấm [🔍 KIỂM TRA ĐỘ KHỚP] để hệ thống phân tích nhà mạng viễn thông và phát hiện số ảo/VoIP trước khi Reg nick!";
+        [inner addArrangedSubview:guideLbl];
+
+        return card;
+    }
 
     [inner addArrangedSubview:[self createRowWithKey:@"Số Điện Thoại"
                                               value:self.info.inputPhone ?: @"---"
