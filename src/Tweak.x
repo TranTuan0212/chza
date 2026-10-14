@@ -1260,11 +1260,25 @@ static int my_uname(struct utsname *buf) {
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"CARRIER-CHECK", [NSString stringWithFormat:@"Zalo đọc SIM -> [%@ | MCC:%@ MNC:%@ ISO:%@]",
+                  [ZTSettings sharedSettings].carrierName ?: @"Viettel",
+                  [ZTSettings sharedSettings].carrierMCC ?: @"452",
+                  [ZTSettings sharedSettings].carrierMNC ?: @"04",
+                  [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
+    }
     return %orig;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"CARRIER-CHECK", [NSString stringWithFormat:@"Zalo đọc Multi-SIM -> [%@ | MCC:%@ MNC:%@ ISO:%@]",
+                  [ZTSettings sharedSettings].carrierName ?: @"Viettel",
+                  [ZTSettings sharedSettings].carrierMCC ?: @"452",
+                  [ZTSettings sharedSettings].carrierMNC ?: @"04",
+                  [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
+    }
     return %orig;
 }
 
@@ -1311,14 +1325,20 @@ static void update_cached_locale_and_tz(void) {
     if (!s_cachedLocale) {
         update_cached_locale_and_tz();
     }
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc NSLocale currentLocale -> [TRẢ VỀ %@]", [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN"]);
+    }
     return s_cachedLocale ?: %orig;
 }
 
 + (NSArray<NSString *> *)preferredLanguages {
     if (!is_tweak_active()) return %orig;
     NSArray *langs = [ZTSettings sharedSettings].preferredLanguages;
-    if (langs && langs.count > 0) return langs;
-    return @[@"vi-VN", @"en-VN"];
+    NSArray *res = (langs && langs.count > 0) ? langs : @[@"vi-VN", @"en-VN"];
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc preferredLanguages -> [TRẢ VỀ %@]", [res componentsJoinedByString:@", "]]);
+    }
+    return res;
 }
 
 %end
@@ -1330,6 +1350,13 @@ static void update_cached_locale_and_tz(void) {
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
     }
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
+        int hours = (int)(gmtSec / 3600);
+        int mins = abs((int)((gmtSec % 3600) / 60));
+        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
+    }
     return s_cachedTimeZone ?: %orig;
 }
 
@@ -1338,6 +1365,13 @@ static void update_cached_locale_and_tz(void) {
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
     }
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
+        int hours = (int)(gmtSec / 3600);
+        int mins = abs((int)((gmtSec % 3600) / 60));
+        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
+    }
     return s_cachedTimeZone ?: %orig;
 }
 
@@ -1345,6 +1379,13 @@ static void update_cached_locale_and_tz(void) {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
+    }
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
+        int hours = (int)(gmtSec / 3600);
+        int mins = abs((int)((gmtSec % 3600) / 60));
+        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
     }
     return s_cachedTimeZone ?: %orig;
 }
@@ -3125,15 +3166,62 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu
         if ([ZTSettings sharedSettings].enableAuditLog) {
+            ZTSettings *s = [ZTSettings sharedSettings];
             logAudit(@"SYSTEM-INIT", [NSString stringWithFormat:@"Khởi động ZaloTweak v1.0 | Môi trường: %@ | App: %@ | Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Bản quyền: %@",
                       envDesc,
                       [[NSBundle mainBundle] bundleIdentifier],
-                      [ZTSettings sharedSettings].deviceMachine,
-                      [ZTSettings sharedSettings].screenWidth,
-                      [ZTSettings sharedSettings].screenHeight,
-                      [ZTSettings sharedSettings].screenScale,
-                      [ZTSettings sharedSettings].spoofedIDFV,
+                      s.deviceMachine,
+                      s.screenWidth,
+                      s.screenHeight,
+                      s.screenScale,
+                      s.spoofedIDFV,
                       [[ZTSecurityManager sharedManager] getLicenseStatusText]]);
+
+            // 1. Đồng bộ Vùng, Ngôn ngữ & Múi giờ
+            NSString *langStr = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
+            NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
+            int gmtH = (int)(gmtSec / 3600);
+            int gmtM = abs((int)((gmtSec % 3600) / 60));
+            NSString *gmtStr = gmtM > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🌍 [VÙNG / MÚI GIỜ] Region: %@ | Locale: %@ | TimeZone: %@ (%@) | Ngôn ngữ: [%@]",
+                      s.regionMode ?: @"VN",
+                      s.localeIdentifier ?: @"vi_VN",
+                      s.timeZoneName ?: @"Asia/Ho_Chi_Minh",
+                      gmtStr,
+                      langStr]);
+
+            // 2. Nhà mạng di động & Cellular
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"📶 [NHÀ MẠNG SIM] Mạng: %@ | MCC: %@ | MNC: %@ | ISO: %@ | Radio: LTE",
+                      s.carrierName ?: @"Viettel",
+                      s.carrierMCC ?: @"452",
+                      s.carrierMNC ?: @"04",
+                      s.carrierCountryCode ?: @"vn"]);
+
+            // 3. Phần cứng & Radar tập lệnh / Cache
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"⚙️ [RADAR PHẦN CỨNG] hw.product: %@ | L2Cache: %u MB | PageSize: 16KB | ProcTranslated: 0",
+                      s.deviceMachine ?: @"iPhone9,1",
+                      (unsigned int)(s.l2cacheSize / (1024 * 1024))]);
+
+            // 4. Thời gian khởi tạo hệ thống file & Boot Time
+            time_t fake_ctime = (time_t)(s.bootTimeSec > 0 ? (s.bootTimeSec - 864000) : 0);
+            struct tm b_tm, boot_tm;
+            gmtime_r(&fake_ctime, &b_tm);
+            time_t btime_sec = (time_t)s.bootTimeSec;
+            gmtime_r(&btime_sec, &boot_tm);
+            char bTimeBuf[32] = {0};
+            char bootBuf[32] = {0};
+            snprintf(bTimeBuf, sizeof(bTimeBuf), "%04d-%02d-%02d %02d:%02d:%02d UTC",
+                     b_tm.tm_year + 1900, b_tm.tm_mon + 1, b_tm.tm_mday,
+                     b_tm.tm_hour, b_tm.tm_min, b_tm.tm_sec);
+            snprintf(bootBuf, sizeof(bootBuf), "%04d-%02d-%02d %02d:%02d:%02d UTC",
+                     boot_tm.tm_year + 1900, boot_tm.tm_mon + 1, boot_tm.tm_mday,
+                     boot_tm.tm_hour, boot_tm.tm_min, boot_tm.tm_sec);
+
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🕒 [THỜI GIAN/Ổ ĐĨA] st_birthtime: %s (%llu) | BootTime: %s | Disk: %llu GB",
+                      bTimeBuf,
+                      (unsigned long long)fake_ctime,
+                      bootBuf,
+                      s.diskTotalSize / (1000000000ULL)]);
         }
     }
 }
