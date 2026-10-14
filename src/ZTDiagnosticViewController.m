@@ -323,7 +323,7 @@
         warnLbl.numberOfLines = 0;
         warnLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
         warnLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
-        warnLbl.text = @"⚠️ LƯU Ý BẮT BUỘC: Bạn chưa đổi IP mạng 4G. Hãy vuốt Control Center, bật Chế Độ Máy Bay trong 5 giây rồi tắt đi, sau đó bấm Kiểm Tra lại!";
+        warnLbl.text = @"⚠️ TRÙNG IP: IP hiện tại trùng với IP trước khi Wipe!\n• Nếu dùng 4G: Bật/Tắt Chế Độ Máy Bay trong 5 giây.\n• Nếu dùng Wi-Fi Proxy: Xoay IP trên bảng điều khiển Proxy rồi bấm Kiểm Tra lại!";
         [warnBox addSubview:warnLbl];
 
         [NSLayoutConstraint activateConstraints:@[

@@ -69,17 +69,55 @@ static NSString *generate_random_mac_prefs(void) {
 }
 
 static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
-    NSURL *url = [NSURL URLWithString:@"https://api.ipify.org"];
-    NSURLRequest *req = [NSURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:3.5];
-    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+    uint64_t now = (uint64_t)[[NSDate date] timeIntervalSince1970];
+    NSString *urlStr = [NSString stringWithFormat:@"https://api.ipify.org?format=text&_t=%llu", (unsigned long long)now];
+
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.URLCache = nil;
+    config.requestCachePolicy = NSURLRequestReloadIgnoringLocalAndRemoteCacheData;
+    config.timeoutIntervalForRequest = 6.0;
+    config.timeoutIntervalForResource = 6.0;
+    config.HTTPShouldSetCookies = NO;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]
+                                                       cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                                                   timeoutInterval:6.0];
+    [req setValue:@"close" forHTTPHeaderField:@"Connection"];
+    [req setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
+    [req setValue:@"no-cache" forHTTPHeaderField:@"Pragma"];
+
+    [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSString *ipStr = nil;
-        if (data) {
+        if (data && !error) {
             ipStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             ipStr = [ipStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            completion(ipStr ?: @"Không xác định");
-        });
+        if (ipStr.length >= 7 && ([ipStr containsString:@"."] || [ipStr containsString:@":"])) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [session finishTasksAndInvalidate];
+                completion(ipStr);
+            });
+            return;
+        }
+
+        NSMutableURLRequest *backupReq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://icanhazip.com?_t=%llu", (unsigned long long)now]]
+                                                                 cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                                                             timeoutInterval:6.0];
+        [backupReq setValue:@"close" forHTTPHeaderField:@"Connection"];
+        [backupReq setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
+
+        [[session dataTaskWithRequest:backupReq completionHandler:^(NSData * _Nullable bdata, NSURLResponse * _Nullable bresp, NSError * _Nullable berr) {
+            NSString *bip = nil;
+            if (bdata && !berr) {
+                bip = [[NSString alloc] initWithData:bdata encoding:NSUTF8StringEncoding];
+                bip = [bip stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [session finishTasksAndInvalidate];
+                completion((bip.length >= 7 && ([bip containsString:@"."] || [bip containsString:@":"])) ? bip : @"Không xác định");
+            });
+        }] resume];
     }] resume];
 }
 
