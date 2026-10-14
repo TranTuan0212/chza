@@ -149,6 +149,9 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
                     }
                 }
             }
+        }
+    }
+
     // 5. Fallback đọc từ CFPreferences (cfprefsd - hỗ trợ vượt rào sandbox hoàn hảo)
     if (!dict) {
         CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));

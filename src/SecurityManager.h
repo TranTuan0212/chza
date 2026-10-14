@@ -26,6 +26,12 @@ NS_ASSUME_NONNULL_BEGIN
 // Xóa thông tin bản quyền (đổi key)
 - (void)resetLicense;
 
+// Đường dẫn lưu file bản quyền
+- (NSString *)getLicenseFilePath;
+
+// Lưu thông tin bản quyền và đồng bộ
+- (void)saveLicenseWithKey:(NSString *)key expiresAt:(NSString *)expiryStr token:(NSString *)token;
+
 @end
 
 NS_ASSUME_NONNULL_END
