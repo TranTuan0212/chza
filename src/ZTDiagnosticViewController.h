@@ -44,6 +44,24 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL keychainIsolated;
 @property (nonatomic, copy) NSString *runtimeEnvDesc;
 
+// Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ
+@property (nonatomic, copy) NSString *localeIdentifier;
+@property (nonatomic, copy) NSString *timeZoneName;
+@property (nonatomic, copy) NSString *timeZoneGMT;
+@property (nonatomic, copy) NSString *preferredLanguages;
+@property (nonatomic, assign) BOOL regionSyncPassed;
+
+// Phần cứng Radar mới
+@property (nonatomic, copy) NSString *hwProduct;
+@property (nonatomic, assign) uint32_t l2CacheSizeMB;
+@property (nonatomic, assign) uint32_t pageSizeKB;
+@property (nonatomic, assign) int procTranslated;
+@property (nonatomic, assign) BOOL sysctlPassed;
+
+// Ngày giờ cụ thể cho Ổ đĩa & Boot Time
+@property (nonatomic, copy) NSString *birthTimeText;
+@property (nonatomic, copy) NSString *bootTimeText;
+
 @end
 
 @interface ZTDiagnosticViewController : UIViewController

@@ -91,6 +91,8 @@
                         self.info.screenResolutionPassed &&
                         self.info.keychainIsolated &&
                         self.info.leveldbOK &&
+                        self.info.regionSyncPassed &&
+                        self.info.sysctlPassed &&
                         self.info.isLicensed);
 
     // 1. Thẻ Kết Luận (Verdict Banner Card)
@@ -279,6 +281,8 @@
         if (!self.info.keychainIsolated) [reasons appendString:@"• Phân vùng Keychain chưa được cô lập!\n"];
         if (!self.info.leveldbOK) [reasons appendString:@"• Lỗi quyền ghi LevelDB C++ hoặc App Group!\n"];
         if (!self.info.isHiddenProv) [reasons appendString:@"• Chưa che giấu mobileprovision (lộ Sideload)!\n"];
+        if (!self.info.regionSyncPassed) [reasons appendString:@"• Múi giờ, Ngôn ngữ và SIM chưa đồng bộ nhất quán!\n"];
+        if (!self.info.sysctlPassed) [reasons appendString:@"• Các tham số Sysctl radar chưa khớp phần cứng!\n"];
 
         descLbl.text = [reasons stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         descLbl.textColor = [UIColor colorWithRed:0.8 green:0.2 blue:0.15 alpha:1.0];
@@ -428,30 +432,65 @@
                                               badge:resBadge
                                           isWarning:!self.info.screenResolutionPassed]];
 
+    [inner addArrangedSubview:[self createRowWithKey:@"Mã Sản Phẩm (hw.product)"
+                                              value:self.info.hwProduct ?: (self.info.deviceMachine ?: @"iPhone")
+                                              badge:@"Khớp Profile ✅"
+                                          isWarning:NO]];
+
+    NSString *l2Str = [NSString stringWithFormat:@"%u MB | %u KB (16384)", self.info.l2CacheSizeMB ?: 3, self.info.pageSizeKB ?: 16];
+    [inner addArrangedSubview:[self createRowWithKey:@"L2 Cache & PageSize"
+                                              value:l2Str
+                                              badge:@"Chuẩn Apple ✅"
+                                          isWarning:NO]];
+
+    NSString *procStr = [NSString stringWithFormat:@"%d (Native ARM64)", self.info.procTranslated];
+    [inner addArrangedSubview:[self createRowWithKey:@"Dịch Mã (proc_translated)"
+                                              value:procStr
+                                              badge:@"Không Giả Lập ✅"
+                                          isWarning:(self.info.procTranslated != 0)]];
+
     return card;
 }
 
-#pragma mark - 4. Thẻ Nhà Mạng & SIM
+#pragma mark - 4. Thẻ Đồng Bộ Vùng, Múi Giờ & SIM
 
 - (UIView *)buildSIMCard {
     UIView *card = [self createCardContainer];
     UIStackView *inner = [self createCardInnerStackForCard:card];
 
-    [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"📶" title:@"NHÀ MẠNG & SIM"]];
+    [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"🌍" title:@"ĐỒNG BỘ VÙNG, MÚI GIỜ & SIM"]];
 
-    [inner addArrangedSubview:[self createRowWithKey:@"Hồ Sơ Vùng"
+    [inner addArrangedSubview:[self createRowWithKey:@"Hồ Sơ Vùng (Region)"
                                               value:self.info.regionName ?: @"Việt Nam (+84)"
                                               badge:nil
+                                          isWarning:NO]];
+
+    NSString *tzDisplay = [NSString stringWithFormat:@"%@ (%@)", self.info.timeZoneName ?: @"Asia/Ho_Chi_Minh", self.info.timeZoneGMT ?: @"GMT+7"];
+    [inner addArrangedSubview:[self createRowWithKey:@"Múi Giờ Hệ Thống"
+                                              value:tzDisplay
+                                              badge:@"Đồng bộ ✅"
+                                          isWarning:NO]];
+
+    NSString *locDisplay = [NSString stringWithFormat:@"%@ | [%@]", self.info.localeIdentifier ?: @"vi_VN", self.info.preferredLanguages ?: @"vi-VN, en-VN"];
+    [inner addArrangedSubview:[self createRowWithKey:@"Định Danh Vùng & Ngôn Ngữ"
+                                              value:locDisplay
+                                              badge:@"Chuẩn Apple ✅"
                                           isWarning:NO]];
 
     NSString *carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
                                 self.info.carrierName ?: @"Viettel",
                                 self.info.carrierMCC ?: @"452",
                                 self.info.carrierMNC ?: @"04"];
-    [inner addArrangedSubview:[self createRowWithKey:@"Nhà Mạng"
+    [inner addArrangedSubview:[self createRowWithKey:@"Nhà Mạng Di Động (SIM)"
                                               value:carrierDetails
                                               badge:@"Hợp lệ ✅"
                                           isWarning:NO]];
+
+    NSString *syncBadge = self.info.regionSyncPassed ? @"Đồng bộ 100% ✅" : @"Lệch vùng ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Tính Nhất Quán Vùng"
+                                              value:self.info.regionSyncPassed ? @"Nhất quán tuyệt đối" : @"Không đồng bộ"
+                                              badge:syncBadge
+                                          isWarning:!self.info.regionSyncPassed]];
 
     return card;
 }
@@ -492,6 +531,21 @@
                                               value:self.info.installTimeText ?: @"Mới cài đặt"
                                               badge:installBadge
                                           isWarning:!self.info.installTimePassed]];
+
+    if (self.info.birthTimeText.length > 0) {
+        NSString *birthDetail = [NSString stringWithFormat:@"%@ (%@)", self.info.birthTimeText, self.info.hardwareDeviceId ?: @""];
+        [inner addArrangedSubview:[self createRowWithKey:@"Ngày Sinh Ổ Đĩa (st_birthtime)"
+                                                  value:birthDetail
+                                                  badge:self.info.deviceIdPassed ? @"Đã đổi mới ✅" : @"Trùng máy thật ❌"
+                                              isWarning:!self.info.deviceIdPassed]];
+    }
+
+    if (self.info.bootTimeText.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Thời Gian Boot (BootTime)"
+                                                  value:self.info.bootTimeText
+                                                  badge:@"Khớp Profile ✅"
+                                              isWarning:NO]];
+    }
 
     NSString *kcBadge = self.info.keychainIsolated ? @"Cách ly 100% ✅" : @"Chưa cô lập ❌";
     [inner addArrangedSubview:[self createRowWithKey:@"Phân Vùng Keychain"

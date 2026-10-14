@@ -1347,6 +1347,70 @@ UIViewController *ZTGetTopViewController(void) {
     }
 #endif
 
+    // 6. Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ
+    info.localeIdentifier = s.localeIdentifier ?: @"vi_VN";
+    info.timeZoneName = s.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    NSTimeZone *tz = [NSTimeZone timeZoneWithName:info.timeZoneName];
+    NSInteger gmtSec = tz ? [tz secondsFromGMT] : 25200;
+    int gmtH = (int)(gmtSec / 3600);
+    int gmtM = abs((int)((gmtSec % 3600) / 60));
+    info.timeZoneGMT = (gmtM > 0) ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
+    info.preferredLanguages = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
+
+    BOOL isVNMode = [s.regionMode isEqualToString:@"VN"] || !s.regionMode;
+    BOOL isVNSim = [s.carrierMCC isEqualToString:@"452"];
+    BOOL isVNTz = [info.timeZoneName containsString:@"Ho_Chi_Minh"] || [info.timeZoneName containsString:@"Bangkok"] || [info.timeZoneName containsString:@"Saigon"];
+    if (isVNMode) {
+        info.regionSyncPassed = isVNSim && isVNTz;
+    } else {
+        info.regionSyncPassed = !isVNSim && !isVNTz;
+    }
+
+    // 7. Radar phần cứng mới: hw.product, l2cache, pagesize, proc_translated
+    char liveProductBuf[64] = {0};
+    size_t plen = sizeof(liveProductBuf);
+    sysctlbyname("hw.product", liveProductBuf, &plen, NULL, 0);
+    info.hwProduct = (strlen(liveProductBuf) > 0) ? [NSString stringWithUTF8String:liveProductBuf] : s.deviceMachine;
+
+    int psize = 0;
+    size_t psz = sizeof(psize);
+    sysctlbyname("hw.pagesize", &psize, &psz, NULL, 0);
+    info.pageSizeKB = (psize > 0) ? (uint32_t)(psize / 1024) : 16;
+
+    int64_t l2 = 0;
+    size_t l2sz = sizeof(l2);
+    sysctlbyname("hw.l2cachesize", &l2, &l2sz, NULL, 0);
+    info.l2CacheSizeMB = (l2 > 0) ? (uint32_t)(l2 / (1024 * 1024)) : (uint32_t)(s.l2cacheSize / (1024 * 1024));
+
+    int proc_trans = 0;
+    size_t ptsz = sizeof(proc_trans);
+    sysctlbyname("sysctl.proc_translated", &proc_trans, &ptsz, NULL, 0);
+    info.procTranslated = proc_trans;
+    info.sysctlPassed = (info.procTranslated == 0 && info.pageSizeKB == 16 && info.l2CacheSizeMB > 0);
+
+    // 8. Định dạng ngày giờ cụ thể cho st_birthtime & BootTime
+    time_t fake_birth = (time_t)(s.bootTimeSec > 0 ? (s.bootTimeSec - 864000) : 0);
+    if (fake_birth > 0) {
+        struct tm btm;
+        gmtime_r(&fake_birth, &btm);
+        info.birthTimeText = [NSString stringWithFormat:@"%04d-%02d-%02d %02d:%02d:%02d UTC",
+                              btm.tm_year + 1900, btm.tm_mon + 1, btm.tm_mday,
+                              btm.tm_hour, btm.tm_min, btm.tm_sec];
+    } else {
+        info.birthTimeText = @"N/A";
+    }
+
+    time_t fake_boot = (time_t)s.bootTimeSec;
+    if (fake_boot > 0) {
+        struct tm boot_tm;
+        gmtime_r(&fake_boot, &boot_tm);
+        info.bootTimeText = [NSString stringWithFormat:@"%04d-%02d-%02d %02d:%02d:%02d UTC",
+                             boot_tm.tm_year + 1900, boot_tm.tm_mon + 1, boot_tm.tm_mday,
+                             boot_tm.tm_hour, boot_tm.tm_min, boot_tm.tm_sec];
+    } else {
+        info.bootTimeText = @"N/A";
+    }
+
     // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
     if (s.hasConfiguredProfile && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         s.lastWipedIP = currentIP;
