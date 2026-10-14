@@ -82,7 +82,16 @@
     BOOL isDifferentIP = (hasWipedHistory && ![self.info.currentIP isEqualToString:self.info.lastWipedIP]);
     BOOL isDuplicateIDFV = (self.info.lastWipedIDFV.length > 0 && [self.info.currentIDFV isEqualToString:self.info.lastWipedIDFV]);
     
-    BOOL isAllPassed = (self.info.hasConfiguredProfile && !isSameIP && !isDuplicateIDFV && self.info.leveldbOK && self.info.isLicensed);
+    BOOL isAllPassed = (self.info.hasConfiguredProfile &&
+                        !isSameIP &&
+                        !isDuplicateIDFV &&
+                        self.info.deviceIdPassed &&
+                        self.info.armCpuPassed &&
+                        self.info.installTimePassed &&
+                        self.info.screenResolutionPassed &&
+                        self.info.keychainIsolated &&
+                        self.info.leveldbOK &&
+                        self.info.isLicensed);
 
     // 1. Thẻ Kết Luận (Verdict Banner Card)
     [contentStack addArrangedSubview:[self buildVerdictCardWithPassed:isAllPassed isSameIP:isSameIP isDuplicateIDFV:isDuplicateIDFV]];
@@ -263,6 +272,11 @@
         if (!self.info.hasConfiguredProfile) [reasons appendString:@"• Chưa bấm Deep Wipe! (App đang dùng phần cứng thật, cần bấm Deep Wipe để cấp máy mới)\n"];
         if (isSameIP) [reasons appendString:@"• Trùng IP 4G lần trước! (Cần gạt Chế Độ Máy Bay 5 giây)\n"];
         if (isDuplicateIDFV) [reasons appendString:@"• Trùng IDFV cũ! (Cần bấm Deep Wipe để cấp máy mới)\n"];
+        if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id trùng timestamp phần cứng gốc (Chưa fake birthtime)!\n"];
+        if (!self.info.armCpuPassed) [reasons appendString:@"• Tập lệnh ARM CPU chưa đồng bộ với kiến trúc chip!\n"];
+        if (!self.info.installTimePassed) [reasons appendString:@"• Thời gian cài đặt app bị cũ hoặc lệch mốc Profile!\n"];
+        if (!self.info.screenResolutionPassed) [reasons appendString:@"• Độ phân giải màn hình không khớp thông số Apple!\n"];
+        if (!self.info.keychainIsolated) [reasons appendString:@"• Phân vùng Keychain chưa được cô lập!\n"];
         if (!self.info.leveldbOK) [reasons appendString:@"• Lỗi quyền ghi LevelDB C++ hoặc App Group!\n"];
         if (!self.info.isHiddenProv) [reasons appendString:@"• Chưa che giấu mobileprovision (lộ Sideload)!\n"];
 
@@ -396,6 +410,24 @@
                                               badge:hwBadge
                                           isWarning:hwWarning]];
 
+    NSString *devIdBadge = self.info.deviceIdPassed ? @"Mới cấp (Boot Time) ✅" : @"Trùng máy thật ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Mã device_id (Hardware)"
+                                              value:self.info.hardwareDeviceId ?: @"Chưa cấp"
+                                              badge:devIdBadge
+                                          isWarning:!self.info.deviceIdPassed]];
+
+    NSString *armBadge = self.info.armCpuPassed ? @"Chuẩn A-Series ✅" : @"Lệch vi kiến trúc ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"ARM Features Radar"
+                                              value:self.info.armFeaturesSummary ?: @"FEAT_AES, SHA1, SHA256"
+                                              badge:armBadge
+                                          isWarning:!self.info.armCpuPassed]];
+
+    NSString *resBadge = self.info.screenResolutionPassed ? @"Khớp Apple Specs ✅" : @"Lệch độ phân giải ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Độ Phân Giải Màn Hình"
+                                              value:self.info.screenResolutionText ?: @"Chuẩn Apple"
+                                              badge:resBadge
+                                          isWarning:!self.info.screenResolutionPassed]];
+
     return card;
 }
 
@@ -455,12 +487,31 @@
                                               badge:self.info.leveldbOK ? @"✅" : @"❌"
                                           isWarning:!self.info.leveldbOK]];
 
+    NSString *installBadge = self.info.installTimePassed ? @"Đồng bộ Profile ✅" : @"Dữ liệu cũ ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Thời Gian Cài Đặt App"
+                                              value:self.info.installTimeText ?: @"Mới cài đặt"
+                                              badge:installBadge
+                                          isWarning:!self.info.installTimePassed]];
+
+    NSString *kcBadge = self.info.keychainIsolated ? @"Cách ly 100% ✅" : @"Chưa cô lập ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Phân Vùng Keychain"
+                                              value:self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định hệ thống"
+                                              badge:kcBadge
+                                          isWarning:!self.info.keychainIsolated]];
+
     if (self.info.diskTotalGB > 0) {
         NSString *diskStr = [NSString stringWithFormat:@"%.1f GB / %.1f GB (Uptime: %lluh)",
                              self.info.diskFreeGB, self.info.diskTotalGB, self.info.uptimeHours];
         [inner addArrangedSubview:[self createRowWithKey:@"Ổ Cứng & Uptime"
                                                   value:diskStr
                                                   badge:nil
+                                              isWarning:NO]];
+    }
+
+    if (self.info.runtimeEnvDesc.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Môi Trường Thực Thi"
+                                                  value:self.info.runtimeEnvDesc
+                                                  badge:@"An toàn ✅"
                                               isWarning:NO]];
     }
 

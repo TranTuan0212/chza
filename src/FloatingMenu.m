@@ -1216,6 +1216,109 @@ UIViewController *ZTGetTopViewController(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
+    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec)
+    struct stat st_hw;
+    memset(&st_hw, 0, sizeof(st_hw));
+    if (stat("/var/mobile", &st_hw) == 0 || (home && stat([home UTF8String], &st_hw) == 0)) {
+        uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        
+        BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
+        if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
+            uint64_t expectedMs = (s.bootTimeSec - 864000ULL) * 1000ULL;
+            info.deviceIdPassed = (!isStaticHardware && (birthMs == expectedMs || (birthMs > 0 && !isStaticHardware)));
+        } else {
+            info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
+        }
+    } else {
+        info.hardwareDeviceId = @"Chưa cấp (Cần Wipe)";
+        info.deviceIdPassed = NO;
+    }
+
+    // 2. Tập lệnh vi kiến trúc CPU (ARM Features Radar)
+    int f_aes = 0, f_sha1 = 0, f_sha256 = 0, f_fp16 = 0;
+    size_t f_sz = sizeof(int);
+    sysctlbyname("hw.optional.arm.FEAT_AES", &f_aes, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_SHA1", &f_sha1, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_SHA256", &f_sha256, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_FP16", &f_fp16, &f_sz, NULL, 0);
+
+    info.armFeaturesSummary = [NSString stringWithFormat:@"AES:%d SHA1:%d SHA256:%d FP16:%d", f_aes, f_sha1, f_sha256, f_fp16];
+    info.armCpuPassed = (f_aes == 1 && f_sha1 == 1 && f_sha256 == 1);
+
+    // 3. Độ phân giải màn hình chuẩn Apple Specs (Chống hybrid 780x1688)
+    UIScreen *screen = [UIScreen mainScreen];
+    CGRect screenBounds = [screen bounds];
+    CGFloat screenScale = [screen scale];
+    CGFloat realWidth = screenBounds.size.width * screenScale;
+    CGFloat realHeight = screenBounds.size.height * screenScale;
+    info.screenResolutionText = [NSString stringWithFormat:@"%.0f × %.0f (@%.0fx)", realWidth, realHeight, screenScale];
+
+    BOOL isStandardRes = NO;
+    if ((realWidth == 750 && realHeight == 1334) ||
+        (realWidth == 1080 && realHeight == 1920) ||
+        (realWidth == 1242 && realHeight == 2208) ||
+        (realWidth == 1125 && realHeight == 2436) ||
+        (realWidth == 828 && realHeight == 1792) ||
+        (realWidth == 1242 && realHeight == 2688) ||
+        (realWidth == 1080 && realHeight == 2340) ||
+        (realWidth == 1170 && realHeight == 2532) ||
+        (realWidth == 1284 && realHeight == 2778) ||
+        (realWidth == 1179 && realHeight == 2556) ||
+        (realWidth == 1290 && realHeight == 2796)) {
+        isStandardRes = YES;
+    }
+    if (s.hasConfiguredProfile && s.screenWidth > 0 && s.screenHeight > 0) {
+        CGFloat expectedW = s.screenWidth * (s.screenScale > 0 ? s.screenScale : screenScale);
+        CGFloat expectedH = s.screenHeight * (s.screenScale > 0 ? s.screenScale : screenScale);
+        BOOL matchesProfile = (fabs(realWidth - expectedW) < 2.0 && fabs(realHeight - expectedH) < 2.0);
+        info.screenResolutionPassed = (isStandardRes && matchesProfile);
+    } else {
+        info.screenResolutionPassed = isStandardRes;
+    }
+
+    // 4. Thời gian cài đặt ứng dụng (App Install Time / Creation Date)
+    NSDate *installDate = nil;
+    if (home) {
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:home error:nil];
+        installDate = [attrs fileCreationDate];
+    }
+    if (!installDate && docDir) {
+        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:docDir error:nil];
+        installDate = [attrs fileCreationDate];
+    }
+    if (installDate) {
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setDateFormat:@"yyyy-MM-dd HH:mm"];
+        info.installTimeText = [df stringFromDate:installDate];
+        if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
+            NSTimeInterval diff = fabs([installDate timeIntervalSince1970] - (NSTimeInterval)(s.bootTimeSec - 864000));
+            info.installTimePassed = (diff < 3600.0 * 24.0);
+        } else {
+            info.installTimePassed = s.hasConfiguredProfile;
+        }
+    } else {
+        info.installTimeText = @"Mới cấp theo Profile";
+        info.installTimePassed = s.hasConfiguredProfile;
+    }
+
+    // 5. Phân vùng Keychain & Môi trường thực thi
+    info.keychainIsolated = s.hasConfiguredProfile && (s.profileId.length > 0);
+
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE)
+    info.runtimeEnvDesc = @"🛡️ Roothide (DEB)";
+#elif defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    info.runtimeEnvDesc = @"⚡ Rootless (DEB)";
+#else
+    if (dlsym(RTLD_DEFAULT, "jbrand") != NULL ||
+        dlsym(RTLD_DEFAULT, "jbroot") != NULL ||
+        dlsym(RTLD_DEFAULT, "roothide_check_path") != NULL) {
+        info.runtimeEnvDesc = @"🛡️ Roothide (DEB)";
+    } else {
+        info.runtimeEnvDesc = @"🟢 An toàn (Đang tiêm dylib)";
+    }
+#endif
+
     // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
     if (s.hasConfiguredProfile && s.lastWipedIP.length == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         s.lastWipedIP = currentIP;

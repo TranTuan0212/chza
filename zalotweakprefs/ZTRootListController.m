@@ -1010,6 +1010,79 @@ static NSString *findAuditLogPath(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
+    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec)
+    uint64_t btime = [dict[@"bootTimeSec"] unsignedLongLongValue];
+    if (hasConfigured && btime > 0) {
+        uint64_t birthMs = (btime - 864000ULL) * 1000ULL;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        info.deviceIdPassed = YES;
+    } else {
+        info.hardwareDeviceId = @"Chưa cấp (Cần Deep Wipe)";
+        info.deviceIdPassed = NO;
+    }
+
+    // 2. Tập lệnh vi kiến trúc CPU (ARM Features Radar)
+    int f_aes = 0, f_sha1 = 0, f_sha256 = 0, f_fp16 = 0;
+    size_t f_sz = sizeof(int);
+    sysctlbyname("hw.optional.arm.FEAT_AES", &f_aes, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_SHA1", &f_sha1, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_SHA256", &f_sha256, &f_sz, NULL, 0);
+    sysctlbyname("hw.optional.arm.FEAT_FP16", &f_fp16, &f_sz, NULL, 0);
+
+    info.armFeaturesSummary = [NSString stringWithFormat:@"AES:%d SHA1:%d SHA256:%d FP16:%d", f_aes, f_sha1, f_sha256, f_fp16];
+    info.armCpuPassed = (f_aes == 1 && f_sha1 == 1 && f_sha256 == 1);
+
+    // 3. Độ phân giải màn hình chuẩn Apple Specs (Chống hybrid 780x1688)
+    UIScreen *screen = [UIScreen mainScreen];
+    CGRect screenBounds = [screen bounds];
+    CGFloat screenScale = [screen scale];
+    CGFloat realWidth = screenBounds.size.width * screenScale;
+    CGFloat realHeight = screenBounds.size.height * screenScale;
+    info.screenResolutionText = [NSString stringWithFormat:@"%.0f × %.0f (@%.0fx)", realWidth, realHeight, screenScale];
+
+    BOOL isStandardRes = NO;
+    if ((realWidth == 750 && realHeight == 1334) ||
+        (realWidth == 1080 && realHeight == 1920) ||
+        (realWidth == 1242 && realHeight == 2208) ||
+        (realWidth == 1125 && realHeight == 2436) ||
+        (realWidth == 828 && realHeight == 1792) ||
+        (realWidth == 1242 && realHeight == 2688) ||
+        (realWidth == 1080 && realHeight == 2340) ||
+        (realWidth == 1170 && realHeight == 2532) ||
+        (realWidth == 1284 && realHeight == 2778) ||
+        (realWidth == 1179 && realHeight == 2556) ||
+        (realWidth == 1290 && realHeight == 2796)) {
+        isStandardRes = YES;
+    }
+    CGFloat cfgW = [dict[@"screenWidth"] doubleValue];
+    CGFloat cfgH = [dict[@"screenHeight"] doubleValue];
+    CGFloat cfgScale = [dict[@"screenScale"] doubleValue];
+    if (hasConfigured && cfgW > 0 && cfgH > 0) {
+        CGFloat expectedW = cfgW * (cfgScale > 0 ? cfgScale : screenScale);
+        CGFloat expectedH = cfgH * (cfgScale > 0 ? cfgScale : screenScale);
+        BOOL matchesProfile = (fabs(realWidth - expectedW) < 2.0 && fabs(realHeight - expectedH) < 2.0);
+        info.screenResolutionPassed = (isStandardRes && matchesProfile);
+    } else {
+        info.screenResolutionPassed = isStandardRes;
+    }
+
+    // 4. Thời gian cài đặt ứng dụng (Install Time / Profile Creation Date)
+    if (hasConfigured && btime > 0) {
+        NSDate *profileDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)(btime - 864000)];
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setDateFormat:@"yyyy-MM-dd HH:mm"];
+        info.installTimeText = [df stringFromDate:profileDate];
+        info.installTimePassed = YES;
+    } else {
+        info.installTimeText = @"Chưa đồng bộ Profile";
+        info.installTimePassed = NO;
+    }
+
+    // 5. Phân vùng Keychain & Môi trường thực thi
+    NSString *pid = dict[@"profileId"];
+    info.keychainIsolated = (hasConfigured && pid.length > 0);
+    info.runtimeEnvDesc = [self getRuntimeEnvironmentDisplayValue:nil];
+
     // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
     if (hasConfigured && [dict[@"lastWipedIP"] length] == 0 && currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         NSMutableDictionary *m = [dict mutableCopy] ?: [NSMutableDictionary dictionary];

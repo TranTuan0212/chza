@@ -29,6 +29,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) uint64_t uptimeHours;
 @property (nonatomic, assign) BOOL hasConfiguredProfile;
 
+@property (nonatomic, copy) NSString *hardwareDeviceId;
+@property (nonatomic, assign) BOOL deviceIdPassed;
+
+@property (nonatomic, copy) NSString *armFeaturesSummary;
+@property (nonatomic, assign) BOOL armCpuPassed;
+
+@property (nonatomic, copy) NSString *installTimeText;
+@property (nonatomic, assign) BOOL installTimePassed;
+
+@property (nonatomic, copy) NSString *screenResolutionText;
+@property (nonatomic, assign) BOOL screenResolutionPassed;
+
+@property (nonatomic, assign) BOOL keychainIsolated;
+@property (nonatomic, copy) NSString *runtimeEnvDesc;
+
 @end
 
 @interface ZTDiagnosticViewController : UIViewController
