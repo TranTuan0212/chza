@@ -8,6 +8,7 @@
 #import <sys/utsname.h>
 #import <sys/stat.h>
 #import <sys/mount.h>
+#import <sys/attr.h>
 #import <ifaddrs.h>
 #import <net/if.h>
 #import <sys/socket.h>
@@ -1516,7 +1517,7 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
     return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
 }
 
-// Hook POSIX stat, lstat & fstat để làm mới device_id và st_birthtimespec
+// Hook POSIX stat, lstat, fstat & getattrlist để làm mới device_id và st_birthtimespec
 static inline BOOL should_fake_stat_path(const char *path) {
     if (!path) return NO;
     if (strstr(path, "zaloaudit.log") || strstr(path, "zalotraffic.har") || strstr(path, "zalotweak")) {
@@ -1530,7 +1531,9 @@ static inline BOOL should_fake_stat_path(const char *path) {
         strstr(path, "mobile") ||
         strcmp(path, "/") == 0 ||
         strcmp(path, "/private") == 0 ||
-        strcmp(path, "/private/var") == 0) {
+        strcmp(path, "/private/var") == 0 ||
+        strcmp(path, ".") == 0 ||
+        strcmp(path, "..") == 0) {
         return YES;
     }
     return NO;
@@ -1577,6 +1580,56 @@ static int my_lstat(const char *path, struct stat *buf) {
         }
     }
     s_in_lstat = NO;
+    return ret;
+}
+
+static int (*orig_fstat)(int fd, struct stat *buf);
+static int my_fstat(int fd, struct stat *buf) {
+    static __thread BOOL s_in_fstat = NO;
+    if (s_in_fstat) return orig_fstat ? orig_fstat(fd, buf) : fstat(fd, buf);
+    s_in_fstat = YES;
+
+    int ret = orig_fstat ? orig_fstat(fd, buf) : fstat(fd, buf);
+    if (ret == 0 && is_tweak_active() && buf) {
+        char filePath[1024];
+        BOOL shouldFake = NO;
+        if (fcntl(fd, F_GETPATH, filePath) >= 0) {
+            shouldFake = should_fake_stat_path(filePath);
+        } else {
+            shouldFake = S_ISDIR(buf->st_mode) || (buf->st_birthtimespec.tv_sec > 1500000000);
+        }
+        if (shouldFake) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                buf->st_birthtimespec.tv_sec = fake_ctime;
+                buf->st_mtimespec.tv_sec = fake_ctime;
+                buf->st_ctimespec.tv_sec = fake_ctime;
+            }
+        }
+    }
+    s_in_fstat = NO;
+    return ret;
+}
+
+static int (*orig_getattrlist)(const char *path, struct attrlist *attrList, void *attrBuf, size_t attrBufSize, unsigned int options);
+static int my_getattrlist(const char *path, struct attrlist *attrList, void *attrBuf, size_t attrBufSize, unsigned int options) {
+    int ret = orig_getattrlist ? orig_getattrlist(path, attrList, attrBuf, attrBufSize, options) : getattrlist(path, attrList, attrBuf, attrBufSize, options);
+    if (ret == 0 && is_tweak_active() && attrList && attrBuf && path) {
+        if (should_fake_stat_path(path) && (attrList->commonattr & (ATTR_CMN_CRTIME | ATTR_CMN_MODTIME | ATTR_CMN_CHGTIME | ATTR_CMN_ACCTIME))) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                size_t words = attrBufSize / sizeof(uint64_t);
+                uint64_t *ptr64 = (uint64_t *)attrBuf;
+                for (size_t i = 0; i < words; ++i) {
+                    if (ptr64[i] >= 1500000000ULL && ptr64[i] <= 2500000000ULL) {
+                        ptr64[i] = (uint64_t)fake_ctime;
+                    }
+                }
+            }
+        }
+    }
     return ret;
 }
 
@@ -1820,7 +1873,10 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 - (NSDictionary<NSFileAttributeKey, id> *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error {
     NSDictionary *attrs = %orig;
     if (is_tweak_active() && attrs && path) {
-        if ([path containsString:@"Containers"] || [path containsString:@"Documents"] || [path containsString:@"Library"] || [path containsString:@"/var/mobile"]) {
+        if ([path containsString:@"Containers"] || [path containsString:@"Documents"] ||
+            [path containsString:@"Library"] || [path containsString:@"mobile"] ||
+            [path containsString:@"var"] || [path isEqualToString:@"/"] ||
+            [path isEqualToString:@"/private"]) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
                 time_t fake_ctime = (time_t)(btime - 864000);
@@ -1870,6 +1926,55 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
         }
     }
     return %orig;
+}
+
+%end
+
+// ==========================================
+// HOOK NSURL: Trả về ngày tạo file theo thời gian BootTime giả lập
+// ==========================================
+%hook NSURL
+
+- (BOOL)getResourceValue:(id *)value forKey:(NSURLResourceKey)key error:(NSError **)error {
+    BOOL ret = %orig;
+    if (is_tweak_active() && value && key) {
+        if ([key isEqualToString:NSURLCreationDateKey] || [key isEqualToString:NSURLContentModificationDateKey] || [key isEqualToString:NSURLAttributeModificationDateKey]) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                *value = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+                return YES;
+            }
+        }
+    }
+    return ret;
+}
+
+- (NSDictionary<NSURLResourceKey, id> *)resourceValuesForKeys:(NSArray<NSURLResourceKey> *)keys error:(NSError **)error {
+    NSDictionary<NSURLResourceKey, id> *values = %orig;
+    if (is_tweak_active() && values && keys) {
+        uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+        if (btime > 0) {
+            time_t fake_ctime = (time_t)(btime - 864000);
+            NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+            NSMutableDictionary *m = [values mutableCopy];
+            BOOL changed = NO;
+            if ([keys containsObject:NSURLCreationDateKey]) {
+                m[NSURLCreationDateKey] = fakeDate;
+                changed = YES;
+            }
+            if ([keys containsObject:NSURLContentModificationDateKey]) {
+                m[NSURLContentModificationDateKey] = fakeDate;
+                changed = YES;
+            }
+            if ([keys containsObject:NSURLAttributeModificationDateKey]) {
+                m[NSURLAttributeModificationDateKey] = fakeDate;
+                changed = YES;
+            }
+            if (changed) return m;
+        }
+    }
+    return values;
 }
 
 %end
@@ -2253,6 +2358,33 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     append_to_har_file(harEntry);
 }
 
+// ==========================================
+// HOOK NSJSONSerialization: Khử rò rỉ device_id phần cứng trong Payload JSON gửi lên ZAID
+// ==========================================
+%hook NSJSONSerialization
+
++ (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error {
+    if (is_tweak_active() && [obj isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *dict = (NSDictionary *)obj;
+        if (dict[@"device_id"]) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                uint64_t fakeBirthMs = (btime - 864000ULL) * 1000ULL;
+                NSString *fakeDeviceId = [NSString stringWithFormat:@"%llu-0-0", fakeBirthMs];
+                if (![dict[@"device_id"] isEqualToString:fakeDeviceId]) {
+                    NSMutableDictionary *m = [dict mutableCopy];
+                    m[@"device_id"] = fakeDeviceId;
+                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Bắt device_id phần cứng '%@' -> [ĐÃ FAKE DEVICE_ID ZAID] %@", dict[@"device_id"], fakeDeviceId]);
+                    return %orig(m, opt, error);
+                }
+            }
+        }
+    }
+    return %orig;
+}
+
+%end
+
 %hook NSURLSession
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
@@ -2551,12 +2683,15 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         }
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
+        universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
+        universal_hook_c_function("getattrlist", (void *)getattrlist, (void *)my_getattrlist, (void **)&orig_getattrlist);
         if (!dynamic_MSHookFunction) {
             struct rebinding inode64_rebs[] = {
                 { "stat$INODE64", (void *)my_stat, NULL },
-                { "lstat$INODE64", (void *)my_lstat, NULL }
+                { "lstat$INODE64", (void *)my_lstat, NULL },
+                { "fstat$INODE64", (void *)my_fstat, NULL }
             };
-            rebind_symbols(inode64_rebs, 2);
+            rebind_symbols(inode64_rebs, 3);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
