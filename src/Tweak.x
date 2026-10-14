@@ -2921,11 +2921,6 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 extModified = YES;
             }
         }
-        if ([newExt containsString:@"\"mno\":\"\""] && settings.carrierMNC.length > 0) {
-            NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierMNC];
-            [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
-            extModified = YES;
-        }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
             modified = YES;
@@ -2944,36 +2939,23 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
         modified = YES;
     }
 
-    // 3. Bẻ lái Body nếu gửi lên centralized.zaloapp.com/sdk/mobile/ios hoặc id/mobile/ios
+    // 3. Khử rò rỉ model máy thật trong Body nếu gửi lên centralized.zaloapp.com
     NSString *urlStr = origReq.URL.absoluteString ?: @"";
     if ([urlStr containsString:@"centralized.zaloapp.com"]) {
         NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
         if (body && body.length > 0) {
             NSString *bodyStr = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
-            NSString *realM = get_real_hardware_machine();
-            BOOL bodyModified = NO;
-            if (bodyStr && bodyStr.length > 0) {
+            // TUYỆT ĐỐI KHÔNG sửa body nếu request đã ký chữ ký điện tử (chứa sig= hoặc "sig":)
+            // Việc thay đổi bất kỳ ký tự nào sau khi Zalo đã ký sẽ làm hỏng hash -> server trả về error -31 "Invalid signature"
+            if (bodyStr && bodyStr.length > 0 && ![bodyStr containsString:@"sig="] && ![bodyStr containsString:@"\"sig\":"]) {
+                NSString *realM = get_real_hardware_machine();
+                BOOL bodyModified = NO;
                 NSMutableString *mutBody = [bodyStr mutableCopy];
                 if (realM.length > 0 && [mutBody containsString:realM]) {
                     if (![realM isEqualToString:settings.deviceMachine]) {
                         [mutBody replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, mutBody.length)];
                         bodyModified = YES;
                         logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
-                    } else {
-                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Model máy trùng khớp với Profile hiện tại: %@ (Không cần thay thế)", settings.deviceMachine]);
-                    }
-                }
-                // Điền MNC nếu body có "mno":"" hoặc %22mno%22%3A%22%22
-                if (settings.carrierMNC.length > 0) {
-                    if ([mutBody containsString:@"\"mno\":\"\""]) {
-                        NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierMNC];
-                        [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                    }
-                    if ([mutBody containsString:@"%22mno%22%3A%22%22"]) {
-                        NSString *targetEncMno = [NSString stringWithFormat:@"%%22mno%%22%%3A%%22%@%%22", settings.carrierMNC];
-                        [mutBody replaceOccurrencesOfString:@"%22mno%22%3A%22%22" withString:targetEncMno options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
                     }
                 }
                 if (bodyModified) {

@@ -411,8 +411,8 @@ static NSString *detect_real_system_machine(void) {
     profile.profileId = [[NSUUID UUID] UUIDString];
     profile.bootSessionUUID = [[NSUUID UUID] UUIDString];
 
-    // Uptime ngẫu nhiên (từ 6 giờ đến 12 ngày trước) kèm jitter giây lẻ
-    uint32_t randomOffset = 21600 + (arc4random_uniform(1036800)) + arc4random_uniform(59);
+    // Uptime ngẫu nhiên tự nhiên cho máy vừa kích hoạt/khởi động (từ 2 giờ đến 36 giờ trước) kèm jitter giây lẻ
+    uint32_t randomOffset = 7200 + arc4random_uniform(122400) + arc4random_uniform(59);
     profile.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
 
     // Ngày sinh ổ đĩa chuẩn xác theo vòng đời sản xuất của Apple
