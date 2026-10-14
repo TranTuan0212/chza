@@ -84,7 +84,9 @@ static uint64_t get_directory_size(NSString *path) {
             [lower containsString:@"appsmanager"] ||
             [lower containsString:@"com.sonhu.zalotweak"] ||
             [lower isEqualToString:@"zaloaudit.log"] ||
-            [lower isEqualToString:@"zalotraffic.har"]) {
+            [lower isEqualToString:@"zalotraffic.har"] ||
+            [lower hasSuffix:@".db-wal"] ||
+            [lower hasSuffix:@".db-shm"]) {
             continue;
         }
         NSString *full = [path stringByAppendingPathComponent:sub];

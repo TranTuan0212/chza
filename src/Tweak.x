@@ -34,8 +34,7 @@ static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result
 static inline void universal_hook_c_function(const char *name, void *symbol, void *replace, void **result) {
     if (dynamic_MSHookFunction && symbol) {
         dynamic_MSHookFunction(symbol, replace, result);
-    }
-    if (name) {
+    } else if (name) {
         struct rebinding r = { name, replace, result };
         rebind_symbols(&r, 1);
     }

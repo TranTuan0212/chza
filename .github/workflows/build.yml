@@ -17,7 +17,7 @@ jobs:
 
       - name: Setup Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git ~/theos
+          git clone --recursive https://github.com/roothide/theos.git ~/theos
           # Tải iOS SDK
           git clone --depth=1 https://github.com/theos/sdks.git ~/theos/sdks
           echo "THEOS=~/theos" >> $GITHUB_ENV

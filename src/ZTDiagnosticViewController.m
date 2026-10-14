@@ -434,9 +434,9 @@
 
     NSString *cleanBadge;
     BOOL isWarning = NO;
-    if (self.info.sandboxKB < 1024.0) { // Dưới 1MB là sạch 100% (chỉ còn khung rỗng hệ thống iOS)
+    if (self.info.sandboxKB < 3072.0) { // Dưới 3MB là sạch 100% (khung rỗng hệ thống iOS & SQLite WAL)
         cleanBadge = @"Sạch 100% ✅";
-    } else if (self.info.sandboxKB < 5120.0) { // 1MB - 5MB: Cache nhẹ
+    } else if (self.info.sandboxKB < 6144.0) { // 3MB - 6MB: Cache nhẹ
         cleanBadge = @"Cache nhẹ 🟡";
     } else {
         cleanBadge = @"Dữ liệu cũ ❌ (Cần Wipe)";
