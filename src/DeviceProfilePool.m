@@ -237,25 +237,22 @@ static NSString *detect_real_system_machine(void) {
 
     NSMutableArray *candidateSpecs = [NSMutableArray array];
     if (matchedBaseSpec != NULL) {
-        // Ưu tiên 1: Cùng family dòng máy (iPhone 7 chỉ fake sang iPhone 7 khác; iPhone 13 chỉ fake sang iPhone 13 khác)
+        // Khóa chặt: Chỉ fake sang các biến thể CÙNG FAMILY dòng máy với thiết bị vật lý
+        // (vd: iPhone 8 chỉ fake sang iPhone 8 khác; iPhone 13 chỉ fake sang iPhone 13 khác)
         for (size_t i = 0; i < specCount; i++) {
             if (strcmp(kAppleDeviceSpecs[i].family, matchedBaseSpec->family) == 0) {
                 [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
             }
         }
-        // Nếu cùng family ít biến thể, mở rộng sang các dòng có CÙNG CHÍNH XÁC thông số màn hình và số nhân CPU
-        if (candidateSpecs.count <= 1) {
-            for (size_t i = 0; i < specCount; i++) {
-                if (fabs(kAppleDeviceSpecs[i].width - matchedBaseSpec->width) < 1.0 &&
-                    fabs(kAppleDeviceSpecs[i].height - matchedBaseSpec->height) < 1.0 &&
-                    fabs(kAppleDeviceSpecs[i].scale - matchedBaseSpec->scale) < 0.1 &&
-                    kAppleDeviceSpecs[i].ncpu == matchedBaseSpec->ncpu) {
-                    NSValue *val = [NSValue valueWithPointer:&kAppleDeviceSpecs[i]];
-                    if (![candidateSpecs containsObject:val]) {
-                        [candidateSpecs addObject:val];
-                    }
-                }
-            }
+    }
+
+    // Tuyệt đối không fallback sang danh sách máy thuộc dòng khác!
+    if (candidateSpecs.count == 0) {
+        if (matchedBaseSpec != NULL) {
+            [candidateSpecs addObject:[NSValue valueWithPointer:matchedBaseSpec]];
+        } else {
+            // Mặc định an toàn cho máy iPhone 7
+            [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[0]]];
         }
     }
 
