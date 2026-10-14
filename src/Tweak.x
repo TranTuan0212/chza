@@ -1748,6 +1748,21 @@ static inline BOOL should_fake_stat_path(const char *path) {
     return NO;
 }
 
+static inline void fake_stat_timespec(struct stat *buf, uint64_t btime) {
+    if (!buf || btime == 0) return;
+    time_t fake_birth = (time_t)(btime - 864000);
+    time_t fake_mtime = (time_t)(fake_birth + 1435);
+    time_t fake_ctime = fake_mtime;
+    long nsec_birth = (long)(((fake_birth * 2654435761ULL) % 900 + 100) * 1000000L);
+    long nsec_mtime = (long)(((fake_mtime * 2246822519ULL) % 900 + 100) * 1000000L);
+    buf->st_birthtimespec.tv_sec = fake_birth;
+    buf->st_birthtimespec.tv_nsec = nsec_birth;
+    buf->st_mtimespec.tv_sec = fake_mtime;
+    buf->st_mtimespec.tv_nsec = nsec_mtime;
+    buf->st_ctimespec.tv_sec = fake_ctime;
+    buf->st_ctimespec.tv_nsec = nsec_mtime;
+}
+
 static int (*orig_stat)(const char *path, struct stat *buf);
 static int my_stat(const char *path, struct stat *buf) {
     static __thread BOOL s_in_stat = NO;
@@ -1759,10 +1774,7 @@ static int my_stat(const char *path, struct stat *buf) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
-                buf->st_birthtimespec.tv_sec = fake_ctime;
-                buf->st_mtimespec.tv_sec = fake_ctime;
-                buf->st_ctimespec.tv_sec = fake_ctime;
+                fake_stat_timespec(buf, btime);
             }
         }
     }
@@ -1781,10 +1793,7 @@ static int my_lstat(const char *path, struct stat *buf) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
-                buf->st_birthtimespec.tv_sec = fake_ctime;
-                buf->st_mtimespec.tv_sec = fake_ctime;
-                buf->st_ctimespec.tv_sec = fake_ctime;
+                fake_stat_timespec(buf, btime);
             }
         }
     }
@@ -1810,10 +1819,7 @@ static int my_fstat(int fd, struct stat *buf) {
         if (shouldFake) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
-                buf->st_birthtimespec.tv_sec = fake_ctime;
-                buf->st_mtimespec.tv_sec = fake_ctime;
-                buf->st_ctimespec.tv_sec = fake_ctime;
+                fake_stat_timespec(buf, btime);
             }
         }
     }
@@ -1828,12 +1834,13 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
         if (should_fake_stat_path(path) && (attrList->commonattr & (ATTR_CMN_CRTIME | ATTR_CMN_MODTIME | ATTR_CMN_CHGTIME | ATTR_CMN_ACCTIME))) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
+                time_t fake_birth = (time_t)(btime - 864000);
+                time_t fake_mtime = (time_t)(fake_birth + 1435);
                 size_t words = attrBufSize / sizeof(uint64_t);
                 uint64_t *ptr64 = (uint64_t *)attrBuf;
                 for (size_t i = 0; i < words; ++i) {
                     if (ptr64[i] >= 1500000000ULL && ptr64[i] <= 2500000000ULL) {
-                        ptr64[i] = (uint64_t)fake_ctime;
+                        ptr64[i] = (uint64_t)fake_birth;
                     }
                 }
             }
@@ -2601,15 +2608,21 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     if (is_tweak_active() && [obj isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)obj;
         if (dict[@"device_id"]) {
+            NSString *devId = [dict[@"device_id"] description];
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0) {
-                uint64_t fakeBirthMs = (btime - 864000ULL) * 1000ULL;
-                NSString *fakeDeviceId = [NSString stringWithFormat:@"%llu-0-0", fakeBirthMs];
-                if (![dict[@"device_id"] isEqualToString:fakeDeviceId]) {
+                uint64_t fakeBirth = (btime - 864000ULL);
+                uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
+                uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
+                uint64_t ms3 = ms2;
+                NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
+                if ([devId containsString:@"-0-0"] || [devId isEqualToString:@"0"] || devId.length < 10) {
                     NSMutableDictionary *m = [dict mutableCopy];
-                    m[@"device_id"] = fakeDeviceId;
-                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Bắt device_id phần cứng '%@' -> [ĐÃ FAKE DEVICE_ID ZAID] %@", dict[@"device_id"], fakeDeviceId]);
+                    m[@"device_id"] = cleanDeviceId;
+                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Khử chữ ký dị thường '-0-0' trong device_id '%@' -> [ĐÃ CHUẨN HOÁ TỰ NHIÊN] %@", devId, cleanDeviceId]);
                     return %orig(m, opt, error);
+                } else {
+                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Gửi device_id phần cứng tự nhiên: %@", devId]);
                 }
             }
         }

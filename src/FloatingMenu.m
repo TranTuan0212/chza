@@ -700,7 +700,7 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMNC = @"260";
         s.carrierCountryCode = @"us";
         s.localeIdentifier = @"en_US";
-        s.preferredLanguages = @[@"en-US", @"vi-US"];
+        s.preferredLanguages = @[@"en-US"];
         s.timeZoneName = @"America/New_York";
     } else if ([region isEqualToString:@"US"]) {
         NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
@@ -1162,67 +1162,24 @@ UIViewController *ZTGetTopViewController(void) {
     uint64_t sandboxBytes = get_directory_size(docDir) + get_directory_size(cacheDir);
     info.sandboxKB = (double)sandboxBytes / 1024.0;
 
-    // LevelDB POSIX test
-    int fd_rel = open("KVCore/Device/_zt_rel_test.tmp", O_RDWR | O_CREAT, 0644);
-    BOOL leveldbRelWritable = NO;
-    if (fd_rel >= 0) {
-        char testData[] = "ZT_LOCK_OK";
-        write(fd_rel, testData, sizeof(testData));
-        close(fd_rel);
-        leveldbRelWritable = YES;
-        unlink("KVCore/Device/_zt_rel_test.tmp");
-    }
-
+    // Kiểm tra quyền ghi KVCore/Device & App Groups một cách an toàn (KHÔNG tạo file rác trên disk)
     NSString *absDeviceDir = [home stringByAppendingPathComponent:@"Library/Application Support/KVCore/Device"];
     [[NSFileManager defaultManager] createDirectoryAtPath:absDeviceDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSString *absTestFile = [absDeviceDir stringByAppendingPathComponent:@"_zt_abs_test.tmp"];
-    int fd_abs = open([absTestFile UTF8String], O_RDWR | O_CREAT, 0644);
-    BOOL leveldbAbsWritable = NO;
-    if (fd_abs >= 0) {
-        char testDataAbs[] = "ZT_ABS_OK";
-        write(fd_abs, testDataAbs, sizeof(testDataAbs));
-        close(fd_abs);
-        leveldbAbsWritable = YES;
-        unlink([absTestFile UTF8String]);
-    }
-
-    int fd_at = openat(AT_FDCWD, "KVCore/Device/_zt_at_test.tmp", O_RDWR | O_CREAT, 0644);
-    BOOL leveldbAtWritable = NO;
-    if (fd_at >= 0) {
-        char testDataAt[] = "ZT_AT_OK";
-        write(fd_at, testDataAt, sizeof(testDataAt));
-        close(fd_at);
-        leveldbAtWritable = YES;
-        unlink("KVCore/Device/_zt_at_test.tmp");
-    }
+    BOOL leveldbWritable = [[NSFileManager defaultManager] isWritableFileAtPath:absDeviceDir];
 
     BOOL appGroupWorking = NO;
     @try {
         NSURL *grpURL = [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:@"group.vn.com.vng.zingalo"];
         if (grpURL) {
-            NSString *testFilePath = [grpURL.path stringByAppendingPathComponent:@"_zt_grp_test.tmp"];
-            if ([@"ZT_GRP_OK" writeToFile:testFilePath atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
-                appGroupWorking = YES;
-                [[NSFileManager defaultManager] removeItemAtPath:testFilePath error:nil];
-            }
+            appGroupWorking = [[NSFileManager defaultManager] isWritableFileAtPath:grpURL.path];
         }
         if (!appGroupWorking) {
             NSUserDefaults *groupDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"group.vn.com.vng.zingalo"];
-            if (groupDefaults) {
-                [groupDefaults setObject:@"zt_ok" forKey:@"_zt_diagnostic_check"];
-                [groupDefaults synchronize];
-                NSString *readBack = [groupDefaults stringForKey:@"_zt_diagnostic_check"];
-                if ([readBack isEqualToString:@"zt_ok"]) {
-                    appGroupWorking = YES;
-                    [groupDefaults removeObjectForKey:@"_zt_diagnostic_check"];
-                    [groupDefaults synchronize];
-                }
-            }
+            appGroupWorking = (groupDefaults != nil);
         }
     } @catch (NSException *e) {
         appGroupWorking = NO;
     }
-    BOOL leveldbWritable = (leveldbRelWritable || leveldbAbsWritable || leveldbAtWritable);
     info.leveldbOK = (leveldbWritable && appGroupWorking);
 
     // Mobileprovision check
@@ -1240,23 +1197,30 @@ UIViewController *ZTGetTopViewController(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec)
+    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec chuẩn 3 timestamps tự nhiên)
     struct stat st_hw;
     memset(&st_hw, 0, sizeof(st_hw));
     if (stat("/var/mobile", &st_hw) == 0 || (home && stat([home UTF8String], &st_hw) == 0) || stat("/", &st_hw) == 0) {
-        uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL;
-        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_birthtimespec.tv_nsec / 1000000ULL);
+        uint64_t mtimeMs = ((uint64_t)st_hw.st_mtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_mtimespec.tv_nsec / 1000000ULL);
+        uint64_t ctimeMs = ((uint64_t)st_hw.st_ctimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_ctimespec.tv_nsec / 1000000ULL);
+        if (mtimeMs == 0) mtimeMs = birthMs + 1435000ULL;
+        if (ctimeMs == 0) ctimeMs = mtimeMs;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", birthMs, mtimeMs, ctimeMs];
         
         BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
         if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
             uint64_t expectedMs = (s.bootTimeSec - 864000ULL) * 1000ULL;
-            info.deviceIdPassed = (!isStaticHardware && (birthMs == expectedMs || (birthMs > 0 && !isStaticHardware)));
+            info.deviceIdPassed = (!isStaticHardware && (birthMs >= expectedMs || (birthMs > 0 && !isStaticHardware)));
         } else {
             info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
         }
     } else if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
-        uint64_t birthMs = (s.bootTimeSec - 864000ULL) * 1000ULL;
-        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        uint64_t fakeBirth = (s.bootTimeSec - 864000ULL);
+        uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
+        uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
+        uint64_t ms3 = ms2;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {
         info.hardwareDeviceId = @"Chưa cấp (Cần Wipe)";

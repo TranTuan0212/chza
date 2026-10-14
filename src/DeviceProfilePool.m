@@ -341,7 +341,7 @@ static NSString *detect_real_system_machine(void) {
         profile.carrierMNC = c[@"mnc"];
         profile.carrierCountryCode = @"us";
         profile.localeIdentifier = @"en_US";
-        profile.preferredLanguages = @[@"en-US", @"vi-US"];
+        profile.preferredLanguages = @[@"en-US"];
         profile.timeZoneName = @"America/New_York";
     } else if ([curRegion isEqualToString:@"US"]) {
         NSArray *names = @[

@@ -1060,11 +1060,14 @@ static NSString *findAuditLogPath(void) {
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec)
+    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec chuẩn 3 timestamps tự nhiên)
     uint64_t btime = [dict[@"bootTimeSec"] unsignedLongLongValue];
     if (hasConfigured && btime > 0) {
-        uint64_t birthMs = (btime - 864000ULL) * 1000ULL;
-        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-0-0", birthMs];
+        uint64_t fakeBirth = (btime - 864000ULL);
+        uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
+        uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
+        uint64_t ms3 = ms2;
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {
         info.hardwareDeviceId = @"Chưa cấp (Cần Deep Wipe)";
