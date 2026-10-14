@@ -5,6 +5,7 @@
 #import <objc/runtime.h>
 #import <Security/Security.h>
 #import <sys/sysctl.h>
+#import <sys/stat.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <CFNetwork/CFNetwork.h>
