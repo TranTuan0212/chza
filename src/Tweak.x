@@ -571,7 +571,7 @@ static void purge_entire_sandbox_safely(void) {
             }
         }
 
-        if (self.hasConfiguredProfile && (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.spoofedSerial.length == 0)) {
+        if (self.hasConfiguredProfile && (!dict[@"spoofedIDFV"] || !dict[@"spoofedIDFA"] || !dict[@"profileId"] || self.bootTimeSec == 0 || self.birthTimeSec == 0 || self.spoofedSerial.length == 0)) {
             if (self.spoofedSerial.length == 0) {
                 extern NSString *generate_random_serial(void);
                 extern NSString *generate_random_mac(void);
@@ -580,9 +580,16 @@ static void purge_entire_sandbox_safely(void) {
                 self.spoofedBluetoothMAC = generate_random_mac();
             }
             if (self.bootTimeSec == 0) {
-                uint32_t randomOffset = 86400 + (arc4random_uniform(345600));
+                uint32_t randomOffset = 86400 + (arc4random_uniform(345600)) + arc4random_uniform(59);
                 self.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
                 self.bootSessionUUID = [[NSUUID UUID] UUIDString];
+            }
+            if (self.birthTimeSec == 0) {
+                uint64_t launch = 1632441600ULL;
+                self.birthTimeSec = launch + arc4random_uniform(90000000ULL);
+                if (self.birthTimeSec >= self.bootTimeSec) {
+                    self.birthTimeSec = self.bootTimeSec - (86400ULL * 30ULL + arc4random_uniform(86400 * 180) + arc4random_uniform(3599));
+                }
             }
             [self saveSettings];
         }
@@ -797,9 +804,46 @@ static NSString *getAuditLogPath(void) {
 static NSMutableSet *loggedAuditKeys = nil;
 static dispatch_queue_t auditQueue = nil;
 
+static NSString *mask_sensitive_data(NSString *input) {
+    if (!input || input.length == 0) return input;
+    NSMutableString *str = [input mutableCopy];
+
+    // Mask JSON tokens & keys: "(token|authToken|refreshToken|privateKey|sdkId|zaId)":"..."
+    NSRegularExpression *jwtRegex = [NSRegularExpression regularExpressionWithPattern:@"\"(token|authToken|refreshToken|privateKey|sdkId|zaId)\"\\s*:\\s*\"([^\"]+)\"" options:0 error:nil];
+    if (jwtRegex) {
+        NSArray *matches = [jwtRegex matchesInString:str options:0 range:NSMakeRange(0, str.length)];
+        for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
+            NSRange valRange = [match rangeAtIndex:2];
+            NSString *val = [str substringWithRange:valRange];
+            if (val.length > 8) {
+                NSString *masked = [NSString stringWithFormat:@"%@***%@", [val substringToIndex:4], [val substringFromIndex:val.length - 4]];
+                [str replaceCharactersInRange:valRange withString:masked];
+            }
+        }
+    }
+
+    // Mask query & header params: (api_key|sig|sdkId|X-Goog-Api-Key)
+    NSRegularExpression *paramRegex = [NSRegularExpression regularExpressionWithPattern:@"(api_key|sig|sdkId|X-Goog-Api-Key)[=:\\s]+([a-zA-Z0-9_-]{12,})" options:0 error:nil];
+    if (paramRegex) {
+        NSArray *matches = [paramRegex matchesInString:str options:0 range:NSMakeRange(0, str.length)];
+        for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
+            NSRange valRange = [match rangeAtIndex:2];
+            NSString *val = [str substringWithRange:valRange];
+            if (val.length > 8) {
+                NSString *masked = [NSString stringWithFormat:@"%@***", [val substringToIndex:6]];
+                [str replaceCharactersInRange:valRange withString:masked];
+            }
+        }
+    }
+
+    return str;
+}
+
 static void logAudit(NSString *category, NSString *detail) {
+    NSString *safeDetail = mask_sensitive_data(detail);
+
     // 1. Luôn in trực tiếp ra System Console để soi trực tiếp trên 3uTools Device Console
-    NSLog(@"[ZaloAudit] [%@] %@", category, detail);
+    NSLog(@"[ZaloAudit] [%@] %@", category, safeDetail);
 
     if (![ZTSettings sharedSettings].enableAuditLog) return;
 
@@ -808,7 +852,7 @@ static void logAudit(NSString *category, NSString *detail) {
         auditQueue = dispatch_queue_create("com.sonhu.zalotweak.auditQueue", DISPATCH_QUEUE_SERIAL);
     }
 
-    NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, detail];
+    NSString *dedupKey = [NSString stringWithFormat:@"%@:%@", category, safeDetail];
     dispatch_async(auditQueue, ^{
         BOOL isNetworkEvent = [category containsString:@"HTTP"] || [category containsString:@"HAR"] || [category containsString:@"NET"];
         if (!isNetworkEvent) {
@@ -822,7 +866,7 @@ static void logAudit(NSString *category, NSString *detail) {
         [df setDateFormat:@"HH:mm:ss"];
         NSString *timeStr = [df stringFromDate:[NSDate date]];
 
-        NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, detail];
+        NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, safeDetail];
         NSString *path = getAuditLogPath();
 
         NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
@@ -1219,6 +1263,79 @@ static int my_uname(struct utsname *buf) {
 %end
 
 // ==========================================
+// ĐỒNG BỘ OS VERSION & BUILD: NSProcessInfo
+// ==========================================
+%hook NSProcessInfo
+
+- (NSString *)operatingSystemVersionString {
+    if (!is_tweak_active()) return %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.systemVersion.length > 0 && s.kernOsVersion.length > 0) {
+        return [NSString stringWithFormat:@"Version %@ (Build %@)", s.systemVersion, s.kernOsVersion];
+    }
+    return %orig;
+}
+
+- (NSOperatingSystemVersion)operatingSystemVersion {
+    if (!is_tweak_active()) return %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.systemVersion.length > 0) {
+        NSArray *components = [s.systemVersion componentsSeparatedByString:@"."];
+        NSOperatingSystemVersion v;
+        v.majorVersion = components.count > 0 ? [components[0] integerValue] : 18;
+        v.minorVersion = components.count > 1 ? [components[1] integerValue] : 1;
+        v.patchVersion = components.count > 2 ? [components[2] integerValue] : 0;
+        return v;
+    }
+    return %orig;
+}
+
+%end
+
+// ==========================================
+// CHẶN ĐỌC FILE HỆ THỐNG SystemVersion.plist
+// ==========================================
+%hook NSDictionary
+
++ (NSDictionary *)dictionaryWithContentsOfFile:(NSString *)path {
+    if (is_tweak_active() && path && [path isEqualToString:@"/System/Library/CoreServices/SystemVersion.plist"]) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        NSDictionary *orig = %orig;
+        NSMutableDictionary *dict = orig ? [orig mutableCopy] : [NSMutableDictionary dictionary];
+        if (s.systemVersion.length > 0) {
+            dict[@"ProductVersion"] = s.systemVersion;
+            dict[@"ProductUserVisibleVersion"] = s.systemVersion;
+        }
+        if (s.kernOsVersion.length > 0) {
+            dict[@"ProductBuildVersion"] = s.kernOsVersion;
+        }
+        dict[@"ProductName"] = @"iPhone OS";
+        return dict;
+    }
+    return %orig;
+}
+
+- (NSDictionary *)initWithContentsOfFile:(NSString *)path {
+    if (is_tweak_active() && path && [path isEqualToString:@"/System/Library/CoreServices/SystemVersion.plist"]) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        NSDictionary *orig = %orig;
+        NSMutableDictionary *dict = orig ? [orig mutableCopy] : [NSMutableDictionary dictionary];
+        if (s.systemVersion.length > 0) {
+            dict[@"ProductVersion"] = s.systemVersion;
+            dict[@"ProductUserVisibleVersion"] = s.systemVersion;
+        }
+        if (s.kernOsVersion.length > 0) {
+            dict[@"ProductBuildVersion"] = s.kernOsVersion;
+        }
+        dict[@"ProductName"] = @"iPhone OS";
+        return dict;
+    }
+    return %orig;
+}
+
+%end
+
+// ==========================================
 // BẢO VỆ DANH TÍNH QUẢNG CÁO: IDFA & APP TRACKING
 // ==========================================
 %hook ASIdentifierManager
@@ -1357,7 +1474,8 @@ static int my_uname(struct utsname *buf) {
                   [ZTSettings sharedSettings].carrierMNC ?: @"04",
                   [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
     }
-    return %orig;
+    CTCarrier *origCarrier = %orig;
+    return origCarrier ?: [[CTCarrier alloc] init];
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
@@ -1369,7 +1487,10 @@ static int my_uname(struct utsname *buf) {
                   [ZTSettings sharedSettings].carrierMNC ?: @"04",
                   [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
     }
-    return %orig;
+    NSDictionary *origDict = %orig;
+    if (origDict && origDict.count > 0) return origDict;
+    CTCarrier *carrier = [[CTCarrier alloc] init];
+    return @{@"0000000100000001": carrier};
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {
@@ -1816,6 +1937,36 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
     return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
 }
 
+// Hook _CFCopySystemVersionDictionary & _CFCopyServerVersionDictionary để đồng bộ OS Build Version cho Firebase / Crashlytics
+static CFDictionaryRef (*orig_CFCopySystemVersionDictionary)(void) = NULL;
+static CFDictionaryRef my_CFCopySystemVersionDictionary(void) {
+    if (!is_tweak_active()) {
+        return orig_CFCopySystemVersionDictionary ? orig_CFCopySystemVersionDictionary() : NULL;
+    }
+    CFDictionaryRef origDict = orig_CFCopySystemVersionDictionary ? orig_CFCopySystemVersionDictionary() : NULL;
+    NSMutableDictionary *dict = origDict ? [(__bridge NSDictionary *)origDict mutableCopy] : [NSMutableDictionary dictionary];
+    if (origDict) CFRelease(origDict);
+
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.systemVersion.length > 0) {
+        dict[@"ProductVersion"] = s.systemVersion;
+        dict[@"ProductUserVisibleVersion"] = s.systemVersion;
+    }
+    if (s.kernOsVersion.length > 0) {
+        dict[@"ProductBuildVersion"] = s.kernOsVersion;
+    }
+    dict[@"ProductName"] = @"iPhone OS";
+    return (__bridge_retained CFDictionaryRef)dict;
+}
+
+static CFDictionaryRef (*orig_CFCopyServerVersionDictionary)(void) = NULL;
+static CFDictionaryRef my_CFCopyServerVersionDictionary(void) {
+    if (!is_tweak_active()) {
+        return orig_CFCopyServerVersionDictionary ? orig_CFCopyServerVersionDictionary() : NULL;
+    }
+    return my_CFCopySystemVersionDictionary();
+}
+
 // Hook POSIX stat, lstat, fstat & getattrlist để làm mới device_id và st_birthtimespec
 static inline BOOL should_fake_stat_path(const char *path) {
     if (!path) return NO;
@@ -1828,9 +1979,11 @@ static inline BOOL should_fake_stat_path(const char *path) {
         strstr(path, "Library") ||
         strstr(path, "Application") ||
         strstr(path, "mobile") ||
+        strstr(path, "/private") ||
         strcmp(path, "/") == 0 ||
         strcmp(path, "/private") == 0 ||
         strcmp(path, "/private/var") == 0 ||
+        strcmp(path, "/private/var/mobile") == 0 ||
         strcmp(path, ".") == 0 ||
         strcmp(path, "..") == 0) {
         return YES;
@@ -1841,7 +1994,7 @@ static inline BOOL should_fake_stat_path(const char *path) {
 static inline void fake_stat_timespec(struct stat *buf, uint64_t btime) {
     if (!buf) return;
     ZTSettings *s = [ZTSettings sharedSettings];
-    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 864000 ? (btime - 864000) : 1568160000ULL));
+    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
     time_t fake_mtime = (time_t)(fake_birth + 1435);
     time_t fake_ctime = (time_t)(fake_birth + 1555);
     long nsec_birth = (long)(((fake_birth * 2654435761ULL) % 900 + 100) * 1000000L);
@@ -1925,7 +2078,7 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
     if (ret == 0 && is_tweak_active() && attrList && attrBuf && path) {
         if (should_fake_stat_path(path) && (attrList->commonattr & (ATTR_CMN_CRTIME | ATTR_CMN_MODTIME | ATTR_CMN_CHGTIME | ATTR_CMN_ACCTIME))) {
             ZTSettings *s = [ZTSettings sharedSettings];
-            uint64_t birthSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 1568160000ULL);
+            uint64_t birthSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
             size_t words = attrBufSize / sizeof(uint64_t);
             uint64_t *ptr64 = (uint64_t *)attrBuf;
             int timeIdx = 0;
@@ -2209,7 +2362,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t btime = s.bootTimeSec;
             if (btime > 0 || s.birthTimeSec > 0) {
-                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 864000 ? (btime - 864000) : 1568160000ULL));
+                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
                 NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
                 NSDate *fakeModDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)(fake_ctime + 1435)];
                 NSMutableDictionary *m = [attrs mutableCopy];
@@ -2270,9 +2423,10 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     BOOL ret = %orig;
     if (is_tweak_active() && value && key) {
         if ([key isEqualToString:NSURLCreationDateKey] || [key isEqualToString:NSURLContentModificationDateKey] || [key isEqualToString:NSURLAttributeModificationDateKey]) {
-            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
+            ZTSettings *s = [ZTSettings sharedSettings];
+            uint64_t btime = s.bootTimeSec;
+            if (btime > 0 || s.birthTimeSec > 0) {
+                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
                 *value = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
                 return YES;
             }
@@ -2284,9 +2438,10 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 - (NSDictionary<NSURLResourceKey, id> *)resourceValuesForKeys:(NSArray<NSURLResourceKey> *)keys error:(NSError **)error {
     NSDictionary<NSURLResourceKey, id> *values = %orig;
     if (is_tweak_active() && values && keys) {
-        uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-        if (btime > 0) {
-            time_t fake_ctime = (time_t)(btime - 864000);
+        ZTSettings *s = [ZTSettings sharedSettings];
+        uint64_t btime = s.bootTimeSec;
+        if (btime > 0 || s.birthTimeSec > 0) {
+            time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
             NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
             NSMutableDictionary *m = [values mutableCopy];
             BOOL changed = NO;
@@ -2725,24 +2880,16 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
         if (dict[@"device_id"]) {
             NSString *devId = [NSString stringWithFormat:@"%@", dict[@"device_id"]];
             ZTSettings *s = [ZTSettings sharedSettings];
-            uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000ULL) : 1568160000ULL);
+            uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
             uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
             uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
             uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
             NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
-            NSArray *parts = [devId componentsSeparatedByString:@"-"];
-            BOOL isUnnatural = NO;
-            if (parts.count >= 3 && [parts[0] isEqualToString:parts[1]] && [parts[1] isEqualToString:parts[2]]) {
-                isUnnatural = YES;
-            }
-            if ([devId containsString:@"-0-0"] || [devId isEqualToString:@"0"] || devId.length < 10 || isUnnatural) {
-                NSMutableDictionary *m = [dict mutableCopy];
-                m[@"device_id"] = cleanDeviceId;
-                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Khử chữ ký dị thường '%@' -> [ĐÃ CHUẨN HOÁ TỰ NHIÊN] %@", devId, cleanDeviceId]);
-                return %orig(m, opt, error);
-            } else {
-                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Gửi device_id phần cứng tự nhiên: %@", devId]);
-            }
+            
+            NSMutableDictionary *m = [dict mutableCopy];
+            m[@"device_id"] = cleanDeviceId;
+            logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Đã chuẩn hoá device_id tự nhiên: %@ (gốc: %@)", cleanDeviceId, devId]);
+            return %orig(m, opt, error);
         }
     }
     return %orig;
@@ -2750,9 +2897,6 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
-// ==========================================
-// BỘ ĐỆNH TUYẾN VÀ GHI LOG PHẢN HỒI CHO DELEGATE CỦA NSURLSession
-// ==========================================
 // ==========================================
 // BỘ ĐỊNH TUYẾN, LÀM SẠCH VÀ REWRITE GÓI TIN MẠNG ZALO
 // ==========================================
@@ -2767,32 +2911,80 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
 
     // 1. Kiểm tra và bẻ lái Header extInfo
     NSString *extInfo = [mutReq valueForHTTPHeaderField:@"extInfo"];
-    if (extInfo && [extInfo containsString:@"\"mod\":"]) {
+    if (extInfo) {
+        NSMutableString *newExt = [extInfo mutableCopy];
+        BOOL extModified = NO;
         NSString *realM = get_real_hardware_machine();
-        if (realM.length > 0 && [extInfo containsString:realM]) {
-            NSString *newExt = [extInfo stringByReplacingOccurrencesOfString:realM withString:settings.deviceMachine];
+        if (realM.length > 0 && settings.deviceMachine.length > 0 && [newExt containsString:realM]) {
+            if (![realM isEqualToString:settings.deviceMachine]) {
+                [newExt replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, newExt.length)];
+                extModified = YES;
+            }
+        }
+        if ([newExt containsString:@"\"mno\":\"\""] && settings.carrierMNC.length > 0) {
+            NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierMNC];
+            [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
+            extModified = YES;
+        }
+        if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
             modified = YES;
         }
     }
 
-    // 2. Bẻ lái Body nếu gửi lên centralized.zaloapp.com/sdk/mobile/ios hoặc id/mobile/ios
+    // 2. Khử rò rỉ OS Build Version trong Crashlytics Header
+    NSString *crashBuild = [mutReq valueForHTTPHeaderField:@"X-Crashlytics-OS-Build-Version"];
+    if (crashBuild && settings.kernOsVersion.length > 0 && ![crashBuild isEqualToString:settings.kernOsVersion]) {
+        [mutReq setValue:settings.kernOsVersion forHTTPHeaderField:@"X-Crashlytics-OS-Build-Version"];
+        modified = YES;
+    }
+    NSString *crashDisplay = [mutReq valueForHTTPHeaderField:@"X-Crashlytics-OS-Display-Version"];
+    if (crashDisplay && settings.systemVersion.length > 0 && ![crashDisplay isEqualToString:settings.systemVersion]) {
+        [mutReq setValue:settings.systemVersion forHTTPHeaderField:@"X-Crashlytics-OS-Display-Version"];
+        modified = YES;
+    }
+
+    // 3. Bẻ lái Body nếu gửi lên centralized.zaloapp.com/sdk/mobile/ios hoặc id/mobile/ios
     NSString *urlStr = origReq.URL.absoluteString ?: @"";
     if ([urlStr containsString:@"centralized.zaloapp.com"]) {
         NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
         if (body && body.length > 0) {
             NSString *bodyStr = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
             NSString *realM = get_real_hardware_machine();
-            if (bodyStr && realM.length > 0 && [bodyStr containsString:realM]) {
-                bodyStr = [bodyStr stringByReplacingOccurrencesOfString:realM withString:settings.deviceMachine];
-                NSData *newBody = [bodyStr dataUsingEncoding:NSUTF8StringEncoding];
-                if (ioBodyData && *ioBodyData) {
-                    *ioBodyData = newBody;
-                } else {
-                    mutReq.HTTPBody = newBody;
+            BOOL bodyModified = NO;
+            if (bodyStr && bodyStr.length > 0) {
+                NSMutableString *mutBody = [bodyStr mutableCopy];
+                if (realM.length > 0 && [mutBody containsString:realM]) {
+                    if (![realM isEqualToString:settings.deviceMachine]) {
+                        [mutBody replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
+                    } else {
+                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Model máy trùng khớp với Profile hiện tại: %@ (Không cần thay thế)", settings.deviceMachine]);
+                    }
                 }
-                modified = YES;
-                logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
+                // Điền MNC nếu body có "mno":"" hoặc %22mno%22%3A%22%22
+                if (settings.carrierMNC.length > 0) {
+                    if ([mutBody containsString:@"\"mno\":\"\""]) {
+                        NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierMNC];
+                        [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                    }
+                    if ([mutBody containsString:@"%22mno%22%3A%22%22"]) {
+                        NSString *targetEncMno = [NSString stringWithFormat:@"%%22mno%%22%%3A%%22%@%%22", settings.carrierMNC];
+                        [mutBody replaceOccurrencesOfString:@"%22mno%22%3A%22%22" withString:targetEncMno options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                    }
+                }
+                if (bodyModified) {
+                    NSData *newBody = [mutBody dataUsingEncoding:NSUTF8StringEncoding];
+                    if (ioBodyData && *ioBodyData) {
+                        *ioBodyData = newBody;
+                    } else {
+                        mutReq.HTTPBody = newBody;
+                    }
+                    modified = YES;
+                }
             }
         }
     }
@@ -3359,6 +3551,16 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             universal_hook_c_function("MGCopyAnswer", mgFunc, (void *)my_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
         }
 
+        // Hook CoreFoundation SystemVersion Dictionary (Khử rò rỉ OS Build Version lên Crashlytics/GoogleUtilities)
+        void *cfSysVer = dlsym(RTLD_DEFAULT, "_CFCopySystemVersionDictionary");
+        if (cfSysVer) {
+            universal_hook_c_function("_CFCopySystemVersionDictionary", cfSysVer, (void *)my_CFCopySystemVersionDictionary, (void **)&orig_CFCopySystemVersionDictionary);
+        }
+        void *cfSrvVer = dlsym(RTLD_DEFAULT, "_CFCopyServerVersionDictionary");
+        if (cfSrvVer) {
+            universal_hook_c_function("_CFCopyServerVersionDictionary", cfSrvVer, (void *)my_CFCopyServerVersionDictionary, (void **)&orig_CFCopyServerVersionDictionary);
+        }
+
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
             NSLog(@"[ZaloTweak] ❌ BẢN QUYỀN CHƯA KÍCH HOẠT HOẶC ĐÃ HẾT HẠN! Vui lòng vào Cài đặt để kích hoạt.");
         } else {
@@ -3438,7 +3640,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
                       (unsigned int)(s.l2cacheSize / (1024 * 1024))]);
 
             // 4. Thời gian khởi tạo hệ thống file & Boot Time
-            time_t fake_ctime = (time_t)(s.bootTimeSec > 0 ? (s.bootTimeSec - 864000) : 0);
+            time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
             struct tm b_tm, boot_tm;
             gmtime_r(&fake_ctime, &b_tm);
             time_t btime_sec = (time_t)s.bootTimeSec;

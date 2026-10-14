@@ -411,8 +411,8 @@ static NSString *detect_real_system_machine(void) {
     profile.profileId = [[NSUUID UUID] UUIDString];
     profile.bootSessionUUID = [[NSUUID UUID] UUIDString];
 
-    // Uptime ngẫu nhiên (từ 6 giờ đến 12 ngày trước)
-    uint32_t randomOffset = 21600 + (arc4random_uniform(1036800));
+    // Uptime ngẫu nhiên (từ 6 giờ đến 12 ngày trước) kèm jitter giây lẻ
+    uint32_t randomOffset = 21600 + (arc4random_uniform(1036800)) + arc4random_uniform(59);
     profile.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
 
     // Ngày sinh ổ đĩa chuẩn xác theo vòng đời sản xuất của Apple
@@ -420,6 +420,10 @@ static NSString *detect_real_system_machine(void) {
     uint64_t eol = spec.eolTimestamp ?: (launch + 94608000ULL);
     uint64_t span = (eol > launch) ? (eol - launch) : 86400ULL;
     profile.birthTimeSec = launch + arc4random_uniform((uint32_t)span);
+    // Đảm bảo ngày xuất xưởng / cài đặt luôn xảy ra trước BootTime ít nhất vài tuần và không trùng giây
+    if (profile.birthTimeSec >= profile.bootTimeSec) {
+        profile.birthTimeSec = profile.bootTimeSec - (86400ULL * 30ULL + arc4random_uniform(86400 * 180) + arc4random_uniform(3599));
+    }
 
     // Pin ngẫu nhiên (50% - 96%) và không cắm sạc
     profile.batteryLevel = 0.50f + ((float)arc4random_uniform(46)) / 100.0f;

@@ -389,7 +389,9 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     [df setDateFormat:@"dd/MM/yyyy HH:mm"];
     NSString *dateStr = [df stringFromDate:self.expiryDate];
 
-    if (days > 0) {
+    if (days > 3650) {
+        return @"🟢 Hợp lệ: Bản quyền Doanh Nghiệp (Không giới hạn)";
+    } else if (days > 0) {
         return [NSString stringWithFormat:@"🟢 Hợp lệ: Còn %ld ngày %ld giờ (Hết: %@)", (long)days, (long)hours, dateStr];
     } else {
         NSInteger mins = (NSInteger)(((uint64_t)diff % 3600) / 60);

@@ -1261,13 +1261,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         
         BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
         if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
-            uint64_t expectedSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000ULL ? (s.bootTimeSec - 864000ULL) : 0);
+            uint64_t expectedSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 0);
             info.deviceIdPassed = (!isStaticHardware && (birthMs >= expectedSec * 1000ULL || (birthMs > 0 && !isStaticHardware)));
         } else {
             info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
         }
     } else if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
-        uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000ULL ? (s.bootTimeSec - 864000ULL) : 1568160000ULL);
+        uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
         uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
         uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
         uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
@@ -1321,8 +1321,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
 
     // 4. Thời gian cài đặt ứng dụng (App Install Time / Creation Date)
-    if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
-        time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 1568160000ULL));
+    if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
+        time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
         NSDate *expectedDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
         NSDateFormatter *df = [[NSDateFormatter alloc] init];
         [df setDateFormat:@"yyyy-MM-dd HH:mm"];
@@ -1392,7 +1392,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.sysctlPassed = (info.procTranslated == 0 && info.pageSizeKB == 16 && info.l2CacheSizeMB > 0);
 
     // 8. Định dạng ngày giờ cụ thể cho st_birthtime & BootTime
-    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 0));
+    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 0));
     if (fake_birth > 0) {
         struct tm btm;
         gmtime_r(&fake_birth, &btm);
