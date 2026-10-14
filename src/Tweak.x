@@ -1529,7 +1529,6 @@ static int my_stat(const char *path, struct stat *buf) {
                 buf->st_birthtimespec.tv_sec = fake_ctime;
                 buf->st_mtimespec.tv_sec = fake_ctime;
                 buf->st_ctimespec.tv_sec = fake_ctime;
-                logAudit(@"STAT-BIRTH", [NSString stringWithFormat:@"stat('%s') -> [ĐÃ FAKE BIRTHTIME] %lld-0-0", path, (long long)fake_ctime * 1000LL]);
             }
         }
     }
@@ -1552,7 +1551,6 @@ static int my_lstat(const char *path, struct stat *buf) {
                 buf->st_birthtimespec.tv_sec = fake_ctime;
                 buf->st_mtimespec.tv_sec = fake_ctime;
                 buf->st_ctimespec.tv_sec = fake_ctime;
-                logAudit(@"STAT-BIRTH", [NSString stringWithFormat:@"lstat('%s') -> [ĐÃ FAKE BIRTHTIME] %lld-0-0", path, (long long)fake_ctime * 1000LL]);
             }
         }
     }
@@ -2514,9 +2512,14 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
             universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
-        universal_hook_c_function("stat$INODE64", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
-        universal_hook_c_function("lstat$INODE64", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
+        if (!dynamic_MSHookFunction) {
+            struct rebinding inode64_rebs[] = {
+                { "stat$INODE64", (void *)my_stat, NULL },
+                { "lstat$INODE64", (void *)my_lstat, NULL }
+            };
+            rebind_symbols(inode64_rebs, 2);
+        }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
             universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
