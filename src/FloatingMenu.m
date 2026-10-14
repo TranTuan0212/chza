@@ -456,8 +456,8 @@ UIViewController *ZTGetTopViewController(void) {
     } else {
         guidance = @"📋 QUY TRÌNH REG ACC CHUẨN:\n"
                    @"▶️ Bước 1: Bấm [1️⃣ Deep Wipe Sạch & Cấp Máy Mới] (Chọn SIM -> App tự dọn sạch & thoát)\n"
-                   @"▶️ Bước 2: Bật/Tắt Chế Độ Máy Bay trong 5 giây để đổi IP 4G -> Mở lại Zalo\n"
-                   @"▶️ Bước 3: Bấm [2️⃣ Kiểm Tra Độ Sạch Trước Khi Reg] -> Thấy 🟢 là Reg acc an toàn!";
+                   @"▶️ Bước 2: Bật/Tắt Chế Độ Máy Bay trong 5 giây để đổi IP 4G (hoặc bật Proxy)\n"
+                   @"▶️ Bước 3: Bấm [2️⃣ Đối Chiếu SĐT + Proxy] -> Dán SĐT & Proxy -> Thấy 🟢 là Reg acc an toàn!";
     }
 
     NSString *deviceDisplay;
@@ -493,8 +493,8 @@ UIViewController *ZTGetTopViewController(void) {
         [self confirmDeepWipeFrom:top];
     }]];
 
-    // Nút 2: Kiểm Tra Độ Sạch Trước Khi Reg
-    NSString *diagButtonTitle = isLicensed ? @"🔍 [2️⃣] Kiểm Tra Độ Sạch Trước Khi Reg (Checklist)" : @"🔒 [2️⃣] Kiểm Tra Độ Sạch Toàn Diện (Cần Key)";
+    // Nút 2: Đối Chiếu SĐT + Proxy & Kiểm Tra Độ Sạch Trước Khi Reg
+    NSString *diagButtonTitle = isLicensed ? @"🎯 [2️⃣] Đối Chiếu SĐT + Proxy & Kiểm Tra Toàn Diện" : @"🔒 [2️⃣] Đối Chiếu SĐT + Proxy (Cần Key)";
     [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {

@@ -62,6 +62,41 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *birthTimeText;
 @property (nonatomic, copy) NSString *bootTimeText;
 
+// Thông tin Kiểm Tra Mạng & IP Nâng Cao
+@property (nonatomic, copy, nullable) NSString *testedIP;
+@property (nonatomic, copy, nullable) NSString *ipCountry;
+@property (nonatomic, copy, nullable) NSString *ipCountryCode;
+@property (nonatomic, copy, nullable) NSString *ipRegionName;
+@property (nonatomic, copy, nullable) NSString *ipCity;
+@property (nonatomic, copy, nullable) NSString *ipTimezone;
+@property (nonatomic, copy, nullable) NSString *ipISP;
+@property (nonatomic, copy, nullable) NSString *ipOrg;
+@property (nonatomic, copy, nullable) NSString *ipASN;
+@property (nonatomic, assign) BOOL ipIsHosting;
+@property (nonatomic, assign) BOOL ipIsProxy;
+@property (nonatomic, assign) BOOL ipIsMobile;
+@property (nonatomic, copy, nullable) NSString *ipTypeDesc;
+@property (nonatomic, assign) BOOL ipCheckCompleted;
+@property (nonatomic, assign) BOOL ipCleanPassed;
+
+// Thông tin Đối Chiếu Số Điện Thoại
+@property (nonatomic, copy, nullable) NSString *inputPhone;
+@property (nonatomic, copy, nullable) NSString *phoneCountryCode;
+@property (nonatomic, copy, nullable) NSString *phoneCountryName;
+@property (nonatomic, copy, nullable) NSString *phoneCarrierName;
+@property (nonatomic, copy, nullable) NSString *phoneLineType;
+@property (nonatomic, assign) BOOL phoneIsVoIP;
+@property (nonatomic, assign) BOOL phoneCheckCompleted;
+@property (nonatomic, assign) BOOL phonePassed;
+
+// Kết quả Đối Chiếu Chéo 3 Chiều
+@property (nonatomic, assign) BOOL matchGeoPassed;
+@property (nonatomic, copy, nullable) NSString *matchGeoReason;
+@property (nonatomic, assign) BOOL matchTimezonePassed;
+@property (nonatomic, copy, nullable) NSString *matchTimezoneReason;
+@property (nonatomic, assign) BOOL matchProfilePassed;
+@property (nonatomic, copy, nullable) NSString *matchProfileReason;
+
 @end
 
 @interface ZTDiagnosticViewController : UIViewController
