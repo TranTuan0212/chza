@@ -389,30 +389,30 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     BOOL isDifferentIP = (hasWipedHistory && ![self.info.currentIP isEqualToString:self.info.lastWipedIP]);
     BOOL isDuplicateIDFV = (self.info.lastWipedIDFV.length > 0 && [self.info.currentIDFV isEqualToString:self.info.lastWipedIDFV]);
 
-    BOOL ipClean = (!self.info.ipCheckCompleted || self.info.ipCleanPassed);
-    BOOL geoMatched = (!self.info.phoneCheckCompleted || self.info.matchGeoPassed);
-    BOOL tzMatched = (!self.info.ipCheckCompleted || self.info.matchTimezonePassed);
-    BOOL phoneCompatible = (!self.info.phoneCheckCompleted || self.info.phonePassed);
+    BOOL hardwarePassed = (self.info.hasConfiguredProfile &&
+                           !isSameIP &&
+                           !isDuplicateIDFV &&
+                           self.info.deviceIdPassed &&
+                           self.info.armCpuPassed &&
+                           self.info.installTimePassed &&
+                           self.info.screenResolutionPassed &&
+                           self.info.keychainIsolated &&
+                           self.info.leveldbOK &&
+                           self.info.regionSyncPassed &&
+                           self.info.sysctlPassed &&
+                           self.info.isLicensed);
 
-    BOOL isAllPassed = (self.info.hasConfiguredProfile &&
-                        !isSameIP &&
-                        !isDuplicateIDFV &&
-                        self.info.deviceIdPassed &&
-                        self.info.armCpuPassed &&
-                        self.info.installTimePassed &&
-                        self.info.screenResolutionPassed &&
-                        self.info.keychainIsolated &&
-                        self.info.leveldbOK &&
-                        self.info.regionSyncPassed &&
-                        self.info.sysctlPassed &&
-                        self.info.isLicensed &&
-                        ipClean &&
-                        geoMatched &&
-                        tzMatched &&
-                        phoneCompatible);
+    BOOL phoneTestedAndPassed = (self.info.phoneCheckCompleted &&
+                                 self.info.phonePassed &&
+                                 self.info.matchGeoPassed &&
+                                 (!self.info.ipCheckCompleted || self.info.matchTimezonePassed) &&
+                                 (!self.info.ipCheckCompleted || self.info.ipCleanPassed));
+
+    BOOL isPendingPhone = hardwarePassed && !self.info.phoneCheckCompleted;
+    BOOL isAllPassed = hardwarePassed && phoneTestedAndPassed;
 
     // 2. Thẻ Kết Luận Tổng Thể (Verdict Banner)
-    [self.contentStack addArrangedSubview:[self buildVerdictCardWithPassed:isAllPassed isSameIP:isSameIP isDuplicateIDFV:isDuplicateIDFV]];
+    [self.contentStack addArrangedSubview:[self buildVerdictCardWithPassed:isAllPassed isPendingPhone:isPendingPhone isSameIP:isSameIP isDuplicateIDFV:isDuplicateIDFV]];
 
     // 3. Thẻ Phân Tích Số Điện Thoại (Nếu đã nhập số)
     if (self.info.inputPhone.length > 0 || self.info.phoneCheckCompleted) {
@@ -934,7 +934,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
 #pragma mark - 1. Thẻ Kết Luận Tổng Thể (Verdict Banner Card)
 
-- (UIView *)buildVerdictCardWithPassed:(BOOL)passed isSameIP:(BOOL)isSameIP isDuplicateIDFV:(BOOL)isDuplicateIDFV {
+- (UIView *)buildVerdictCardWithPassed:(BOOL)passed isPendingPhone:(BOOL)isPendingPhone isSameIP:(BOOL)isSameIP isDuplicateIDFV:(BOOL)isDuplicateIDFV {
     UIView *card = [[UIView alloc] init];
     card.translatesAutoresizingMaskIntoConstraints = NO;
     card.layer.cornerRadius = 14;
@@ -943,6 +943,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     if (passed) {
         card.backgroundColor = [UIColor colorWithRed:0.1 green:0.75 blue:0.35 alpha:0.12];
         card.layer.borderColor = [UIColor colorWithRed:0.12 green:0.65 blue:0.3 alpha:0.7].CGColor;
+    } else if (isPendingPhone) {
+        card.backgroundColor = [UIColor colorWithRed:0.98 green:0.75 blue:0.1 alpha:0.12];
+        card.layer.borderColor = [UIColor colorWithRed:0.95 green:0.65 blue:0.1 alpha:0.8].CGColor;
     } else {
         card.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.2 alpha:0.10];
         card.layer.borderColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:0.7].CGColor;
@@ -953,17 +956,25 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     UILabel *headerLbl = [[UILabel alloc] init];
     headerLbl.font = [UIFont systemFontOfSize:17 weight:UIFontWeightHeavy];
-    headerLbl.text = passed ? @"🟢 ĐỦ ĐIỀU KIỆN REG AN TOÀN (100% SẠCH)" : @"🔴 CHƯA ĐƯỢC REG! CẦN XỬ LÝ LỖI DƯỚI ĐÂY";
-    headerLbl.textColor = passed ? [UIColor colorWithRed:0.1 green:0.65 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
 
     UILabel *descLbl = [[UILabel alloc] init];
     descLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     descLbl.numberOfLines = 0;
 
     if (passed) {
+        headerLbl.text = @"🟢 ĐỦ ĐIỀU KIỆN REG AN TOÀN (100% SẠCH)";
+        headerLbl.textColor = [UIColor colorWithRed:0.1 green:0.65 blue:0.25 alpha:1.0];
         descLbl.text = @"Mọi thông số Phần cứng, Múi giờ, Loại IP Dân cư và Số điện thoại đã khớp hoàn hảo 100%. Bạn có thể mở Zalo và đăng ký ngay!";
         descLbl.textColor = [UIColor colorWithRed:0.12 green:0.55 blue:0.25 alpha:1.0];
+    } else if (isPendingPhone) {
+        headerLbl.text = @"🟡 CHỜ NHẬP SĐT ĐỂ ĐỐI CHIẾU";
+        headerLbl.textColor = [UIColor colorWithRed:0.85 green:0.55 blue:0.0 alpha:1.0];
+        descLbl.text = @"Phần cứng thiết bị đã sạch và sẵn sàng! Vui lòng nhập Số điện thoại dự định đăng ký ở trên và bấm [🔍 KIỂM TRA ĐỘ KHỚP] để hệ thống đối chiếu SĐT với IP & Múi giờ trước khi Reg.";
+        descLbl.textColor = [UIColor colorWithRed:0.75 green:0.48 blue:0.0 alpha:1.0];
     } else {
+        headerLbl.text = @"🔴 CHƯA ĐƯỢC REG! CẦN XỬ LÝ LỖI DƯỚI ĐÂY";
+        headerLbl.textColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
+
         NSMutableString *reasons = [NSMutableString string];
         if (!self.info.isLicensed) [reasons appendString:@"• Bản quyền Tweak chưa được kích hoạt hoặc đã hết hạn!\n"];
         if (!self.info.hasConfiguredProfile) [reasons appendString:@"• Chưa bấm 'Deep Wipe & Cấp Máy Mới'!\n"];
