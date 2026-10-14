@@ -703,9 +703,81 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     }
 }
 
+static void query_live_public_ip(void (^completion)(NSString *ip)) {
+    uint64_t now = (uint64_t)[[NSDate date] timeIntervalSince1970];
+    NSString *urlStr = [NSString stringWithFormat:@"https://api.ipify.org?format=text&_t=%llu", (unsigned long long)now];
+
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.URLCache = nil;
+    config.requestCachePolicy = NSURLRequestReloadIgnoringLocalAndRemoteCacheData;
+    config.timeoutIntervalForRequest = 5.0;
+    config.timeoutIntervalForResource = 5.0;
+    config.HTTPShouldSetCookies = NO;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]
+                                                       cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                                                   timeoutInterval:5.0];
+    [req setValue:@"close" forHTTPHeaderField:@"Connection"];
+    [req setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
+    [req setValue:@"no-cache" forHTTPHeaderField:@"Pragma"];
+
+    [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        NSString *ipStr = nil;
+        if (data && !error) {
+            ipStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+            ipStr = [ipStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+        if (ipStr.length >= 7 && ([ipStr containsString:@"."] || [ipStr containsString:@":"])) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [session finishTasksAndInvalidate];
+                completion(ipStr);
+            });
+            return;
+        }
+
+        // Dự phòng: icanhazip.com
+        NSMutableURLRequest *backupReq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://icanhazip.com?_t=%llu", (unsigned long long)now]]
+                                                                 cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                                                             timeoutInterval:5.0];
+        [backupReq setValue:@"close" forHTTPHeaderField:@"Connection"];
+        [backupReq setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
+        [[session dataTaskWithRequest:backupReq completionHandler:^(NSData * _Nullable bdata, NSURLResponse * _Nullable bresp, NSError * _Nullable berr) {
+            NSString *bIp = nil;
+            if (bdata && !berr) {
+                bIp = [[NSString alloc] initWithData:bdata encoding:NSUTF8StringEncoding];
+                bIp = [bIp stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [session finishTasksAndInvalidate];
+                completion((bIp.length >= 7 && ([bIp containsString:@"."] || [bIp containsString:@":"])) ? bIp : nil);
+            });
+        }] resume];
+    }] resume];
+}
+
 - (void)fetchCurrentMachineIP {
-    self.proxyField.text = self.info.currentIP ?: @"";
-    self.statusLabel.text = [NSString stringWithFormat:@"Đã nạp IP máy: %@", self.info.currentIP ?: @""];
+    [self.spinner startAnimating];
+    self.fetchIpBtn.enabled = NO;
+    self.statusLabel.text = @"⚡ Đang truy vấn IP mạng trực tiếp...";
+
+    __weak typeof(self) weakSelf = self;
+    query_live_public_ip(^(NSString *liveIP) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) return;
+
+        [strongSelf.spinner stopAnimating];
+        strongSelf.fetchIpBtn.enabled = YES;
+
+        if (liveIP.length > 0) {
+            strongSelf.info.currentIP = liveIP;
+            strongSelf.proxyField.text = liveIP;
+            strongSelf.statusLabel.text = [NSString stringWithFormat:@"✅ Đã nạp IP máy trực tiếp: %@", liveIP];
+            [strongSelf reloadCardViews];
+        } else {
+            strongSelf.statusLabel.text = @"❌ Lỗi lấy IP! Hãy kiểm tra kết nối 4G/WiFi.";
+        }
+    });
 }
 
 - (void)onCheckButtonTapped {
