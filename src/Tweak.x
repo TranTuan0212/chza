@@ -1260,23 +1260,11 @@ static int my_uname(struct utsname *buf) {
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    CTCarrier *c = %orig;
-    if (!c) {
-        c = [[%c(CTCarrier) alloc] init];
-    }
-    return c;
+    return %orig;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    NSDictionary *origDict = %orig;
-    if (origDict && origDict.count > 0) {
-        return origDict;
-    }
-    CTCarrier *c = [[%c(CTCarrier) alloc] init];
-    if (c) {
-        return @{@"0000000100000001": c};
-    }
     return %orig;
 }
 
@@ -1299,24 +1287,31 @@ static int my_uname(struct utsname *buf) {
 // ĐỒNG BỘ VÙNG / QUỐC GIA: NSLocale & NSTimeZone
 // ==========================================
 
+static NSLocale *s_cachedLocale = nil;
+static NSTimeZone *s_cachedTimeZone = nil;
+static __thread BOOL s_in_locale_hook = NO;
+static __thread BOOL s_in_tz_hook = NO;
+
+static void update_cached_locale_and_tz(void) {
+    if (s_in_locale_hook || s_in_tz_hook) return;
+    s_in_locale_hook = YES;
+    s_in_tz_hook = YES;
+    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
+    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    s_cachedLocale = [NSLocale localeWithLocaleIdentifier:locId];
+    s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
+    s_in_tz_hook = NO;
+    s_in_locale_hook = NO;
+}
+
 %hook NSLocale
 
 + (NSLocale *)currentLocale {
-    if (!is_tweak_active()) return %orig;
-    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
-    return [NSLocale localeWithLocaleIdentifier:locId];
-}
-
-+ (NSLocale *)autoupdatingCurrentLocale {
-    if (!is_tweak_active()) return %orig;
-    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
-    return [NSLocale localeWithLocaleIdentifier:locId];
-}
-
-+ (NSLocale *)systemLocale {
-    if (!is_tweak_active()) return %orig;
-    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
-    return [NSLocale localeWithLocaleIdentifier:locId];
+    if (!is_tweak_active() || s_in_locale_hook) return %orig;
+    if (!s_cachedLocale) {
+        update_cached_locale_and_tz();
+    }
+    return s_cachedLocale ?: %orig;
 }
 
 + (NSArray<NSString *> *)preferredLanguages {
@@ -1331,24 +1326,27 @@ static int my_uname(struct utsname *buf) {
 %hook NSTimeZone
 
 + (NSTimeZone *)systemTimeZone {
-    if (!is_tweak_active()) return %orig;
-    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
-    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
-    return tz ?: %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    return s_cachedTimeZone ?: %orig;
 }
 
 + (NSTimeZone *)localTimeZone {
-    if (!is_tweak_active()) return %orig;
-    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
-    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
-    return tz ?: %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    return s_cachedTimeZone ?: %orig;
 }
 
 + (NSTimeZone *)defaultTimeZone {
-    if (!is_tweak_active()) return %orig;
-    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
-    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
-    return tz ?: %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    return s_cachedTimeZone ?: %orig;
 }
 
 %end
@@ -2588,8 +2586,13 @@ typedef void (*zt_didCompleteWithError_imp)(id, SEL, NSURLSession *, NSURLSessio
 
 static NSMutableDictionary<NSString *, NSValue *> *s_orig_didReceiveData_map = nil;
 static NSMutableDictionary<NSString *, NSValue *> *s_orig_didCompleteWithError_map = nil;
+static __thread BOOL s_in_did_receive_data = NO;
+static __thread BOOL s_in_did_complete = NO;
 
 static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *dataTask, NSData *data) {
+    if (s_in_did_receive_data) return;
+    s_in_did_receive_data = YES;
+
     if (dataTask && data) {
         NSMutableData *accum = objc_getAssociatedObject(dataTask, "zt_resp_data");
         if (accum) {
@@ -2606,14 +2609,17 @@ static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, 
     }
     if (val) {
         zt_didReceiveData_imp origFunc = (zt_didReceiveData_imp)[val pointerValue];
-        if (origFunc) {
+        if (origFunc && (IMP)origFunc != (IMP)zt_didReceiveData_handler) {
             origFunc(self, _cmd, session, dataTask, data);
-            return;
         }
     }
+    s_in_did_receive_data = NO;
 }
 
 static void zt_didCompleteWithError_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
+    if (s_in_did_complete) return;
+    s_in_did_complete = YES;
+
     if (task) {
         NSNumber *alreadyRecorded = objc_getAssociatedObject(task, "zt_har_recorded");
         if (![alreadyRecorded boolValue]) {
@@ -2637,11 +2643,11 @@ static void zt_didCompleteWithError_handler(id self, SEL _cmd, NSURLSession *ses
     }
     if (val) {
         zt_didCompleteWithError_imp origFunc = (zt_didCompleteWithError_imp)[val pointerValue];
-        if (origFunc) {
+        if (origFunc && (IMP)origFunc != (IMP)zt_didCompleteWithError_handler) {
             origFunc(self, _cmd, session, task, error);
-            return;
         }
     }
+    s_in_did_complete = NO;
 }
 
 static void swizzle_session_delegate_class(Class cls) {
@@ -2660,18 +2666,42 @@ static void swizzle_session_delegate_class(Class cls) {
     SEL selData = @selector(URLSession:dataTask:didReceiveData:);
     Method mData = class_getInstanceMethod(cls, selData);
     if (mData) {
-        IMP origImp = method_setImplementation(mData, (IMP)zt_didReceiveData_handler);
-        @synchronized(s_orig_didReceiveData_map) {
-            s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+        IMP currentImp = method_getImplementation(mData);
+        if (currentImp != (IMP)zt_didReceiveData_handler) {
+            const char *types = method_getTypeEncoding(mData);
+            if (class_addMethod(cls, selData, (IMP)zt_didReceiveData_handler, types)) {
+                @synchronized(s_orig_didReceiveData_map) {
+                    s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
+                }
+            } else {
+                IMP origImp = method_setImplementation(mData, (IMP)zt_didReceiveData_handler);
+                if (origImp && origImp != (IMP)zt_didReceiveData_handler) {
+                    @synchronized(s_orig_didReceiveData_map) {
+                        s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+                    }
+                }
+            }
         }
     }
 
     SEL selComplete = @selector(URLSession:task:didCompleteWithError:);
     Method mComplete = class_getInstanceMethod(cls, selComplete);
     if (mComplete) {
-        IMP origImp = method_setImplementation(mComplete, (IMP)zt_didCompleteWithError_handler);
-        @synchronized(s_orig_didCompleteWithError_map) {
-            s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+        IMP currentImp = method_getImplementation(mComplete);
+        if (currentImp != (IMP)zt_didCompleteWithError_handler) {
+            const char *types = method_getTypeEncoding(mComplete);
+            if (class_addMethod(cls, selComplete, (IMP)zt_didCompleteWithError_handler, types)) {
+                @synchronized(s_orig_didCompleteWithError_map) {
+                    s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
+                }
+            } else {
+                IMP origImp = method_setImplementation(mComplete, (IMP)zt_didCompleteWithError_handler);
+                if (origImp && origImp != (IMP)zt_didCompleteWithError_handler) {
+                    @synchronized(s_orig_didCompleteWithError_map) {
+                        s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+                    }
+                }
+            }
         }
     }
 }
@@ -2686,9 +2716,6 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    if (self.delegate) {
-        swizzle_session_delegate_class([self.delegate class]);
-    }
     NSURLSessionDataTask *task = %orig;
     if (task && request) {
         objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -2742,9 +2769,6 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    if (self.delegate) {
-        swizzle_session_delegate_class([self.delegate class]);
-    }
     NSURLSessionUploadTask *task = %orig;
     if (task && request) {
         objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -2966,6 +2990,7 @@ static NSString *get_runtime_environment_desc(void) {
 
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     [[ZTSettings sharedSettings] loadSettings];
+    update_cached_locale_and_tz();
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([ZTSettings sharedSettings].showFloatingMenu) {
             [[ZTMenuManager sharedManager] setupInAppMenu];
@@ -2985,6 +3010,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         harQueue = dispatch_queue_create("com.sonhu.zalotweak.harQueue", DISPATCH_QUEUE_SERIAL);
 
         [ZTSettings sharedSettings];
+        update_cached_locale_and_tz();
         [[ZTSecurityManager sharedManager] isLicenseValid];
 
         // 2. Kích hoạt toàn bộ hook Objective-C của Logos sau khi cấu hình đã sẵn sàng
