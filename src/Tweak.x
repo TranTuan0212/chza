@@ -160,6 +160,7 @@ static inline BOOL is_system_caller(void *addr0, void *addr1) {
 }
 
 #define GLOBAL_PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
+#define GLOBAL_AUDIT_LOG_PATH @"/var/mobile/Library/Preferences/ZaloAudit.log"
 
 static NSString *get_roothide_prefs_path(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
@@ -353,12 +354,65 @@ static void purge_directory_recursively_safely(NSString *targetPath) {
     }
 }
 
+static BOOL s_is_cold_boot_phase = YES;
+
+static void clear_all_network_caches(void) {
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    NSHTTPCookieStorage *cookieStorage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+    for (NSHTTPCookie *cookie in [cookieStorage cookies]) {
+        [cookieStorage deleteCookie:cookie];
+    }
+    if ([NSURLSessionConfiguration respondsToSelector:@selector(defaultSessionConfiguration)]) {
+        NSURLSessionConfiguration *def = [NSURLSessionConfiguration defaultSessionConfiguration];
+        [def.URLCache removeAllCachedResponses];
+        if (def.HTTPCookieStorage) {
+            for (NSHTTPCookie *c in [def.HTTPCookieStorage cookies]) {
+                [def.HTTPCookieStorage deleteCookie:c];
+            }
+        }
+    }
+}
+
+static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
+    NSString *home = NSHomeDirectory();
+    if (!home) return;
+    NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
+    NSString *auditPath = [docDir stringByAppendingPathComponent:@"ZaloAudit.log"];
+    NSString *harPath = [docDir stringByAppendingPathComponent:@"ZaloTraffic.har"];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm removeItemAtPath:harPath error:nil];
+
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    [df setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
+    NSString *timeStr = [df stringFromDate:[NSDate date]];
+
+    NSString *header = [NSString stringWithFormat:
+        @"================================================================================\n"
+        @"🚀 [SYSTEM-INIT] === BẮT ĐẦU PHIÊN AUDIT MỚI SAU DEEP WIPE ===\n"
+        @"🕒 Thời gian kích hoạt: %@\n"
+        @"📱 Thiết bị: %@ | IDFV: %@\n"
+        @"================================================================================\n\n",
+        timeStr, machine ?: @"iPhone", idfv ?: @"N/A"];
+
+    [header writeToFile:auditPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    chmod([auditPath UTF8String], 0666);
+
+    if (is_device_jailbroken()) {
+        [header writeToFile:GLOBAL_AUDIT_LOG_PATH atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        chmod([GLOBAL_AUDIT_LOG_PATH UTF8String], 0666);
+    }
+}
+
 static void purge_entire_sandbox_safely(void) {
     NSString *home = NSHomeDirectory();
     if (!home || home.length < 5) return;
     NSFileManager *fm = [NSFileManager defaultManager];
 
     NSLog(@"[ZaloAudit] [COLD-BOOT] 🧹 Bắt đầu dọn dẹp sạch toàn bộ Sandbox tại Cold-Boot (App chưa khóa file)...");
+
+    // Xả sạch cache mạng bộ nhớ RAM trước
+    clear_all_network_caches();
 
     NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
     NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
@@ -489,25 +543,31 @@ static void purge_entire_sandbox_safely(void) {
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
         self.needsSandboxPurge = [dict[@"needsSandboxPurge"] boolValue];
         if (self.needsNewProfile || self.needsSandboxPurge) {
-            if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
-                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
-                purge_entire_sandbox_safely();
-                self.needsNewProfile = NO;
-                self.needsSandboxPurge = NO;
-                self.justGeneratedColdBoot = YES;
-                if (dict[@"showFloatingMenu"] != nil) {
-                    self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+            if (s_is_cold_boot_phase) {
+                if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
+                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🧹 Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
+                    purge_entire_sandbox_safely();
+                    self.needsNewProfile = NO;
+                    self.needsSandboxPurge = NO;
+                    self.justGeneratedColdBoot = YES;
+                    if (dict[@"showFloatingMenu"] != nil) {
+                        self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+                    } else {
+                        self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
+                    }
+                    self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
+                    [self generateNewProfile];
+                    reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
+                    return;
                 } else {
-                    self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
+                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
+                    self.needsNewProfile = NO;
+                    self.needsSandboxPurge = NO;
+                    [self saveSettings];
                 }
-                self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
-                [self generateNewProfile];
-                return;
             } else {
-                logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] Chưa có bản quyền hợp lệ -> Từ chối cấp Profile mới!");
-                self.needsNewProfile = NO;
-                self.needsSandboxPurge = NO;
-                [self saveSettings];
+                // Đang trong runtime của app, bảo toàn cờ để dành cho Cold-Boot thực sự khi khởi động lại!
+                return;
             }
         }
 
@@ -724,7 +784,6 @@ NSString *generate_random_mac(void) {
 // ==========================================
 // HỆ THỐNG AUDIT LOG (KIỂM TOÁN HÀNH VI ZALO)
 // ==========================================
-#define GLOBAL_AUDIT_LOG_PATH @"/var/mobile/Library/Preferences/ZaloAudit.log"
 
 static NSString *getAuditLogPath(void) {
     NSString *home = NSHomeDirectory();
@@ -2138,17 +2197,24 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 - (NSDictionary<NSFileAttributeKey, id> *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error {
     NSDictionary *attrs = %orig;
     if (is_tweak_active() && attrs && path) {
-        if ([path containsString:@"Containers"] || [path containsString:@"Documents"] ||
-            [path containsString:@"Library"] || [path containsString:@"mobile"] ||
-            [path containsString:@"var"] || [path isEqualToString:@"/"] ||
-            [path isEqualToString:@"/private"]) {
-            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
-                time_t fake_ctime = (time_t)(btime - 864000);
+        NSString *lower = [path lowercaseString];
+        if ([lower containsString:@"container"] ||
+            [lower containsString:@"document"] ||
+            [lower containsString:@"library"] ||
+            [lower containsString:@"mobile"] ||
+            [lower containsString:@"var"] ||
+            [lower containsString:@"application"] ||
+            [lower isEqualToString:@"/"] ||
+            [lower isEqualToString:@"/private"]) {
+            ZTSettings *s = [ZTSettings sharedSettings];
+            uint64_t btime = s.bootTimeSec;
+            if (btime > 0 || s.birthTimeSec > 0) {
+                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 864000 ? (btime - 864000) : 1568160000ULL));
                 NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+                NSDate *fakeModDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)(fake_ctime + 1435)];
                 NSMutableDictionary *m = [attrs mutableCopy];
                 m[NSFileCreationDate] = fakeDate;
-                m[NSFileModificationDate] = fakeDate;
+                m[NSFileModificationDate] = fakeModDate;
                 return m;
             }
         }
@@ -3194,6 +3260,9 @@ static NSString *get_runtime_environment_desc(void) {
 }
 
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    if ([ZTSettings sharedSettings].isShuttingDownForDeepWipe) {
+        return;
+    }
     [[ZTSettings sharedSettings] loadSettings];
     update_cached_locale_and_tz();
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -3208,6 +3277,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
 %ctor {
     @autoreleasepool {
+        s_is_cold_boot_phase = YES;
         // 1. Khởi tạo toàn bộ dữ liệu cấu hình, bộ nhớ hàng đợi và xác thực bản quyền TRƯỚC KHI BẬT HOOK
         // Đảm bảo không bị deadlock re-entrant
         loggedAuditKeys = [[NSMutableSet alloc] init];
@@ -3217,6 +3287,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         [ZTSettings sharedSettings];
         update_cached_locale_and_tz();
         [[ZTSecurityManager sharedManager] isLicenseValid];
+        s_is_cold_boot_phase = NO;
 
         // 2. Kích hoạt toàn bộ hook Objective-C của Logos sau khi cấu hình đã sẵn sàng
         %init;

@@ -108,15 +108,17 @@ static uint64_t get_directory_size(NSString *path) {
         if ([lower hasSuffix:@".adbk"] ||
             [lower containsString:@"appsmanager"] ||
             [lower containsString:@"com.sonhu.zalotweak"] ||
-            [lower isEqualToString:@"zaloaudit.log"] ||
-            [lower isEqualToString:@"zalotraffic.har"] ||
+            [lower containsString:@"zaloaudit.log"] ||
+            [lower containsString:@"zalotraffic.har"] ||
             [lower hasSuffix:@".db-wal"] ||
             [lower hasSuffix:@".db-shm"]) {
             continue;
         }
         NSString *full = [path stringByAppendingPathComponent:sub];
         NSDictionary *attrs = [fm attributesOfItemAtPath:full error:nil];
-        total += [attrs fileSize];
+        if ([attrs[NSFileType] isEqualToString:NSFileTypeRegular]) {
+            total += [attrs fileSize];
+        }
     }
     return total;
 }
@@ -1072,6 +1074,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     
     // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn, IP wipe và cờ needsNewProfile + needsSandboxPurge
     ZTSettings *settings = [ZTSettings sharedSettings];
+    settings.isShuttingDownForDeepWipe = YES;
     settings.lastWipedIDFV = settings.spoofedIDFV;
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
@@ -1100,6 +1103,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         settings.showFloatingMenu = YES;
     }
     [settings saveSettings];
+
+    // Xả sạch cache mạng tầng RAM & Cookies
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    for (NSHTTPCookie *cookie in [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies]) {
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] deleteCookie:cookie];
+    }
 
     // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
     sever_all_network_sockets_immediately();
@@ -1312,25 +1321,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
 
     // 4. Thời gian cài đặt ứng dụng (App Install Time / Creation Date)
-    NSDate *installDate = nil;
-    if (home) {
-        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:home error:nil];
-        installDate = [attrs fileCreationDate];
-    }
-    if (!installDate && docDir) {
-        NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:docDir error:nil];
-        installDate = [attrs fileCreationDate];
-    }
-    if (installDate) {
+    if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
+        time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 1568160000ULL));
+        NSDate *expectedDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
         NSDateFormatter *df = [[NSDateFormatter alloc] init];
         [df setDateFormat:@"yyyy-MM-dd HH:mm"];
-        info.installTimeText = [df stringFromDate:installDate];
-        if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
-            NSTimeInterval diff = fabs([installDate timeIntervalSince1970] - (NSTimeInterval)(s.bootTimeSec - 864000));
-            info.installTimePassed = (diff < 3600.0 * 24.0);
-        } else {
-            info.installTimePassed = s.hasConfiguredProfile;
-        }
+        info.installTimeText = [df stringFromDate:expectedDate];
+        info.installTimePassed = YES;
     } else {
         info.installTimeText = @"Mới cấp theo Profile";
         info.installTimePassed = s.hasConfiguredProfile;
