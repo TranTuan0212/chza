@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 #import <Security/Security.h>
 #import <CFNetwork/CFNetwork.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
@@ -2208,6 +2209,18 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
         purpose = @"📜 [Zalo Đăng Ký: Tải chính sách & điều khoản đồng ý người dùng]";
     } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/phone/verify"]) {
         purpose = @"🔑 [Zalo Xác Thực: Gửi số điện thoại yêu cầu mã OTP đăng nhập/đăng ký]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/accounts"]) {
+        purpose = @"👤 [Zalo Đăng Ký: Gửi thông tin hoàn tất tạo tài khoản mới]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/otp/verify"]) {
+        purpose = @"🔢 [Zalo OTP: Xác thực mã OTP người dùng nhập]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v2/login/otp"]) {
+        purpose = @"📩 [Zalo OTP: Yêu cầu máy chủ gửi mã OTP về máy]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/name"]) {
+        purpose = @"🏷️ [Zalo Đăng Ký: Xác thực tên hiển thị tài khoản]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/dob"]) {
+        purpose = @"🎂 [Zalo Đăng Ký: Xác thực ngày sinh & giới tính]";
+    } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/settings/common"]) {
+        purpose = @"⚙️ [Zalo Cấu Hình: Tải tham số hệ thống & máy chủ]";
     } else if ([urlStr containsString:@"register.zaloapp.com/api/register/getSupportCountry"]) {
         purpose = @"🌍 [Zalo Quốc Gia: Tải danh sách mã quốc gia hỗ trợ đăng ký]";
     } else if ([urlStr containsString:@"register.zaloapp.com/api/helper/getDefaultCountry"]) {
@@ -2284,6 +2297,19 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
         respBodyStr = [[NSString alloc] initWithData:respData encoding:NSUTF8StringEncoding];
         if (respBodyStr) {
             [logText appendFormat:@"\n%@", respBodyStr];
+            if ([respBodyStr containsString:@"error"]) {
+                NSData *jd = [respBodyStr dataUsingEncoding:NSUTF8StringEncoding];
+                if (jd) {
+                    id jObj = [NSJSONSerialization JSONObjectWithData:jd options:0 error:nil];
+                    if ([jObj isKindOfClass:[NSDictionary class]]) {
+                        NSInteger errCode = [jObj[@"error"] integerValue];
+                        NSString *errMsg = jObj[@"errorMsg"] ?: @"";
+                        if (errCode != 0 || errMsg.length > 0) {
+                            [logText appendFormat:@"\n🚨 [MÁY CHỦ BÁO LỖI NGHIỆP VỤ] ErrorCode: %ld | Thông báo: \"%@\"", (long)errCode, errMsg];
+                        }
+                    }
+                }
+            }
         } else {
             [logText appendFormat:@"\n(Dữ liệu nhị phân %lu bytes)", (unsigned long)respData.length];
         }
@@ -2385,9 +2411,121 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
+// ==========================================
+// BỘ ĐỆNH TUYẾN VÀ GHI LOG PHẢN HỒI CHO DELEGATE CỦA NSURLSession
+// ==========================================
+typedef void (*zt_didReceiveData_imp)(id, SEL, NSURLSession *, NSURLSessionDataTask *, NSData *);
+typedef void (*zt_didCompleteWithError_imp)(id, SEL, NSURLSession *, NSURLSessionTask *, NSError *);
+
+static NSMutableDictionary<NSString *, NSValue *> *s_orig_didReceiveData_map = nil;
+static NSMutableDictionary<NSString *, NSValue *> *s_orig_didCompleteWithError_map = nil;
+
+static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *dataTask, NSData *data) {
+    if (dataTask && data) {
+        NSMutableData *accum = objc_getAssociatedObject(dataTask, "zt_resp_data");
+        if (accum) {
+            @synchronized(accum) {
+                [accum appendData:data];
+            }
+        }
+    }
+    Class cur = [self class];
+    NSValue *val = nil;
+    while (cur && !val) {
+        val = s_orig_didReceiveData_map[NSStringFromClass(cur)];
+        if (!val) cur = class_getSuperclass(cur);
+    }
+    if (val) {
+        zt_didReceiveData_imp origFunc = (zt_didReceiveData_imp)[val pointerValue];
+        if (origFunc) {
+            origFunc(self, _cmd, session, dataTask, data);
+            return;
+        }
+    }
+}
+
+static void zt_didCompleteWithError_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
+    if (task) {
+        NSNumber *alreadyRecorded = objc_getAssociatedObject(task, "zt_har_recorded");
+        if (![alreadyRecorded boolValue]) {
+            objc_setAssociatedObject(task, "zt_har_recorded", @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            NSURLRequest *origReq = objc_getAssociatedObject(task, "zt_orig_req") ?: (task.currentRequest ?: task.originalRequest);
+            NSDate *startDate = objc_getAssociatedObject(task, "zt_start_date") ?: [NSDate date];
+            NSData *respData = objc_getAssociatedObject(task, "zt_resp_data");
+            NSURLResponse *response = task.response;
+            NSData *reqBody = origReq.HTTPBody ?: objc_getAssociatedObject(task, "zt_body_data");
+
+            if (origReq && [ZTSettings sharedSettings].enableAuditLog) {
+                record_har_traffic(origReq, reqBody, response, respData, error, startDate, [NSDate date]);
+            }
+        }
+    }
+    Class cur = [self class];
+    NSValue *val = nil;
+    while (cur && !val) {
+        val = s_orig_didCompleteWithError_map[NSStringFromClass(cur)];
+        if (!val) cur = class_getSuperclass(cur);
+    }
+    if (val) {
+        zt_didCompleteWithError_imp origFunc = (zt_didCompleteWithError_imp)[val pointerValue];
+        if (origFunc) {
+            origFunc(self, _cmd, session, task, error);
+            return;
+        }
+    }
+}
+
+static void swizzle_session_delegate_class(Class cls) {
+    if (!cls) return;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        s_orig_didReceiveData_map = [[NSMutableDictionary alloc] init];
+        s_orig_didCompleteWithError_map = [[NSMutableDictionary alloc] init];
+    });
+
+    NSString *clsName = NSStringFromClass(cls);
+    @synchronized(s_orig_didReceiveData_map) {
+        if (s_orig_didReceiveData_map[clsName] || s_orig_didCompleteWithError_map[clsName]) return;
+    }
+
+    SEL selData = @selector(URLSession:dataTask:didReceiveData:);
+    Method mData = class_getInstanceMethod(cls, selData);
+    if (mData) {
+        IMP origImp = method_setImplementation(mData, (IMP)zt_didReceiveData_handler);
+        @synchronized(s_orig_didReceiveData_map) {
+            s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+        }
+    }
+
+    SEL selComplete = @selector(URLSession:task:didCompleteWithError:);
+    Method mComplete = class_getInstanceMethod(cls, selComplete);
+    if (mComplete) {
+        IMP origImp = method_setImplementation(mComplete, (IMP)zt_didCompleteWithError_handler);
+        @synchronized(s_orig_didCompleteWithError_map) {
+            s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+        }
+    }
+}
+
 %hook NSURLSession
 
++ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
+    if (delegate) {
+        swizzle_session_delegate_class([delegate class]);
+    }
+    return %orig;
+}
+
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
+    if (self.delegate) {
+        swizzle_session_delegate_class([self.delegate class]);
+    }
+    NSURLSessionDataTask *task = %orig;
+    if (task && request) {
+        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
     if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
         NSString *urlStr = request.URL.absoluteString ?: @"";
         NSString *method = request.HTTPMethod ?: @"GET";
@@ -2396,12 +2534,22 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
             desc = @" 👉 [Zalo tải điều khoản đăng ký/sử dụng]";
         } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/phone/verify"]) {
             desc = @" 👉 [Zalo xác thực SĐT đăng nhập/OTP]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/accounts"]) {
+            desc = @" 👉 [Zalo tạo tài khoản mới]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/otp/verify"]) {
+            desc = @" 👉 [Zalo xác thực mã OTP]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v2/login/otp"]) {
+            desc = @" 👉 [Zalo gửi mã xác thực OTP về máy]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/name"]) {
+            desc = @" 👉 [Zalo xác thực tên hiển thị]";
+        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/dob"]) {
+            desc = @" 👉 [Zalo xác thực ngày sinh/giới tính]";
         } else if ([urlStr containsString:@"centralized.zaloapp.com"]) {
             desc = @" 👉 [Zalo gửi định danh thiết bị]";
         }
         logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [ASYNC DELEGATE] %@ %@%@", method, urlStr, desc]);
     }
-    return %orig;
+    return task;
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
@@ -2425,10 +2573,22 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
+    if (self.delegate) {
+        swizzle_session_delegate_class([self.delegate class]);
+    }
+    NSURLSessionUploadTask *task = %orig;
+    if (task && request) {
+        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (bodyData) {
+            objc_setAssociatedObject(task, "zt_body_data", bodyData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+    }
     if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
         logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-DELEGATE] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
     }
-    return %orig;
+    return task;
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
