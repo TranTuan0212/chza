@@ -920,6 +920,44 @@ UIViewController *ZTGetTopViewController(void) {
     [self performInAppDeepWipeWithRegion:targetRegion currentIP:nil];
 }
 
+static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPath) {
+    if (!dirPath || dirPath.length == 0) return;
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:dirPath isDirectory:&isDir]) return;
+
+    NSString *lower = [dirPath lowercaseString];
+    if ([lower hasSuffix:@".adbk"] ||
+        [lower containsString:@"appsmanager"] ||
+        [lower containsString:@"com.sonhu.zalotweak"] ||
+        [lower isEqualToString:@"zaloaudit.log"] ||
+        [lower isEqualToString:@"zalotraffic.har"]) {
+        return;
+    }
+
+    if (!isDir) {
+        [fm removeItemAtPath:dirPath error:nil];
+        return;
+    }
+
+    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
+    for (NSString *item in items) {
+        NSString *subLower = [item lowercaseString];
+        if ([subLower hasSuffix:@".adbk"] ||
+            [subLower containsString:@"appsmanager"] ||
+            [subLower containsString:@"com.sonhu.zalotweak"] ||
+            [subLower isEqualToString:@"zaloaudit.log"] ||
+            [subLower isEqualToString:@"zalotraffic.har"]) {
+            continue;
+        }
+        NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
+        wipe_directory_recursively_safely(fm, fullPath);
+    }
+    NSString *lastComp = [dirPath lastPathComponent];
+    if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
+        [fm removeItemAtPath:dirPath error:nil];
+    }
+}
+
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion currentIP:(NSString *)currentIP {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         return;
@@ -984,52 +1022,13 @@ UIViewController *ZTGetTopViewController(void) {
     }
     [stdUD synchronize];
     
-    // Hàm xóa đệ quy nội bộ có bảo vệ .adbk, ZaloAudit.log, ZaloTraffic.har và tất cả cấu hình/bản quyền tweak
-    __block void (^wipeDirSafely)(NSString *) = ^(NSString *dirPath) {
-        if (!dirPath || dirPath.length == 0) return;
-        BOOL isDir = NO;
-        if (![fm fileExistsAtPath:dirPath isDirectory:&isDir]) return;
-
-        NSString *lower = [dirPath lowercaseString];
-        if ([lower hasSuffix:@".adbk"] ||
-            [lower containsString:@"appsmanager"] ||
-            [lower containsString:@"com.sonhu.zalotweak"] ||
-            [lower isEqualToString:@"zaloaudit.log"] ||
-            [lower isEqualToString:@"zalotraffic.har"]) {
-            return;
-        }
-
-        if (!isDir) {
-            [fm removeItemAtPath:dirPath error:nil];
-            return;
-        }
-
-        NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
-        for (NSString *item in items) {
-            NSString *subLower = [item lowercaseString];
-            if ([subLower hasSuffix:@".adbk"] ||
-                [subLower containsString:@"appsmanager"] ||
-                [subLower containsString:@"com.sonhu.zalotweak"] ||
-                [subLower isEqualToString:@"zaloaudit.log"] ||
-                [subLower isEqualToString:@"zalotraffic.har"]) {
-                continue;
-            }
-            NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
-            wipeDirSafely(fullPath);
-        }
-        NSString *lastComp = [dirPath lastPathComponent];
-        if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
-            [fm removeItemAtPath:dirPath error:nil];
-        }
-    };
-    
     // 4. Quét dọn các thư mục dữ liệu trong Sandbox
     NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
     NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
     NSString *tmpDir = [home stringByAppendingPathComponent:@"tmp"];
     
-    wipeDirSafely(docDir);
-    wipeDirSafely(tmpDir);
+    wipe_directory_recursively_safely(fm, docDir);
+    wipe_directory_recursively_safely(fm, tmpDir);
     
     // Quét dọn toàn bộ các thư mục trong Library (WebKit, Cookies, HTTPStorages, Caches, Application Support...)
     NSArray *libItems = [fm contentsOfDirectoryAtPath:libDir error:nil];
@@ -1044,7 +1043,7 @@ UIViewController *ZTGetTopViewController(void) {
                 [fm removeItemAtPath:[subDir stringByAppendingPathComponent:pItem] error:nil];
             }
         } else {
-            wipeDirSafely(subDir);
+            wipe_directory_recursively_safely(fm, subDir);
         }
     }
 
@@ -1054,7 +1053,7 @@ UIViewController *ZTGetTopViewController(void) {
         NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
         if (groupURL) {
             NSString *groupPath = [groupURL path];
-            wipeDirSafely(groupPath);
+            wipe_directory_recursively_safely(fm, groupPath);
             NSString *grpLib = [groupPath stringByAppendingPathComponent:@"Library"];
             [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
             [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];

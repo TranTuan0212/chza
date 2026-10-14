@@ -1,7 +1,72 @@
 #import "ZTDiagnosticViewController.h"
-#import "Config.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
+#import <sys/stat.h>
+#import <dlfcn.h>
+
+static NSString *get_zt_prefs_filepath(void) {
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    const char *base = "/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist";
+    if (jbroot_fn) {
+        const char *p = jbroot_fn(base);
+        if (p) return [NSString stringWithUTF8String:p];
+    }
+    return [NSString stringWithUTF8String:base];
+}
+
+static BOOL is_zt_auto_sync_timezone_enabled(void) {
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+#pragma clang diagnostic pop
+            if (shared) {
+                id val = [shared valueForKey:@"autoSyncTimezoneWithIP"];
+                if (val != nil) return [val boolValue];
+            }
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (dict && dict[@"autoSyncTimezoneWithIP"] != nil) {
+        return [dict[@"autoSyncTimezoneWithIP"] boolValue];
+    }
+    return YES;
+}
+
+static void update_zt_synced_timezone_pref(NSString *tzName) {
+    if (!tzName || tzName.length == 0) return;
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+            if (shared) {
+                [shared setValue:tzName forKey:@"timeZoneName"];
+                SEL selSave = NSSelectorFromString(@"saveSettings");
+                if ([shared respondsToSelector:selSave]) {
+                    [shared performSelector:selSave];
+                }
+            }
+#pragma clang diagnostic pop
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
+    dict[@"timeZoneName"] = tzName;
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+    [dict writeToFile:path atomically:YES];
+    chmod([path UTF8String], 0666);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.sonhu.zalotweak/settingschanged"),
+                                         NULL, NULL, YES);
+}
 
 @implementation ZTDiagnosticInfo
 @end
@@ -719,10 +784,8 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                 strongSelf.info.ipIsProxy = [result[@"proxy"] boolValue];
                 strongSelf.info.ipIsMobile = [result[@"mobile"] boolValue];
 
-                ZTSettings *settings = [ZTSettings sharedSettings];
-                if (settings.autoSyncTimezoneWithIP && strongSelf.info.ipTimezone.length > 0) {
-                    settings.timeZoneName = strongSelf.info.ipTimezone;
-                    [settings saveSettings];
+                if (is_zt_auto_sync_timezone_enabled() && strongSelf.info.ipTimezone.length > 0) {
+                    update_zt_synced_timezone_pref(strongSelf.info.ipTimezone);
                     strongSelf.info.timeZoneName = strongSelf.info.ipTimezone;
                     NSTimeZone *tz = [NSTimeZone timeZoneWithName:strongSelf.info.timeZoneName];
                     NSInteger gmtSec = tz ? [tz secondsFromGMT] : 0;
