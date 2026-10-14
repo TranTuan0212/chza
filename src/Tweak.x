@@ -171,6 +171,24 @@ static NSString *getConfigPath(void) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:containerDoc]) {
             return containerDoc;
         }
+
+        // Kiểm tra file cấu hình toàn cục từ Cài Đặt Settings
+        NSArray *globalCandidates = @[
+            GLOBAL_PREFS_PATH,
+            @"/var/jb/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist",
+            @"/private/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
+        ];
+        for (NSString *candidate in globalCandidates) {
+            if ([[NSFileManager defaultManager] fileExistsAtPath:candidate]) {
+                NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:candidate];
+                if (d && d.count > 0) {
+                    [[NSFileManager defaultManager] createDirectoryAtPath:[containerPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                    [d writeToFile:containerPref atomically:YES];
+                    return containerPref;
+                }
+            }
+        }
+
         // Khi file chưa tồn tại (lần đầu chạy), luôn tạo trong Sandbox Library/Preferences
         return containerPref;
     }
@@ -403,16 +421,10 @@ static void purge_entire_sandbox_safely(void) {
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
             self.showFloatingMenu = NO;
+        } else if (dict[@"showFloatingMenu"] != nil) {
+            self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
-            BOOL isJailbreak = is_device_jailbroken();
-            if (!isJailbreak) {
-                // Trên máy Non-JB (Sideload / Clone) không có ứng dụng Cài Đặt iOS nên LUÔN BẬT nút nổi
-                self.showFloatingMenu = YES;
-            } else if (dict[@"showFloatingMenu"] != nil) {
-                self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
-            } else {
-                self.showFloatingMenu = NO; // Trên Jailbreak (Dopamine 2 / RootHide) có Settings nên mặc định ẩn nút nổi
-            }
+            self.showFloatingMenu = YES; // Mặc định luôn hiện nút nổi trên mọi môi trường (Jailbreak lẫn Sideload)
         }
 
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
@@ -424,13 +436,10 @@ static void purge_entire_sandbox_safely(void) {
                 self.needsNewProfile = NO;
                 self.needsSandboxPurge = NO;
                 self.justGeneratedColdBoot = YES;
-                BOOL isJB = is_device_jailbroken();
-                if (!isJB) {
-                    self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật trên Non-JB sau khi Wipe
-                } else if (dict[@"showFloatingMenu"] != nil) {
+                if (dict[@"showFloatingMenu"] != nil) {
                     self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
                 } else {
-                    self.showFloatingMenu = NO;
+                    self.showFloatingMenu = YES;
                 }
                 self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                 [self generateNewProfile];
@@ -577,6 +586,7 @@ NSString *generate_random_mac(void) {
 }
 
 - (void)generateNewProfile {
+    self.enabled = YES;
     self.hasConfiguredProfile = YES; // Kích hoạt cờ đã cấu hình profile
     // 1. Sinh profile thiết bị từ ngân hàng mẫu iPhone chuẩn phần cứng Apple khớp dòng máy thực tế
     ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN" baseMachine:get_real_hardware_machine()];
@@ -1709,6 +1719,24 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     return fakeAttrs;
 }
 
+- (NSDictionary<NSFileAttributeKey, id> *)attributesOfItemAtPath:(NSString *)path error:(NSError **)error {
+    NSDictionary *attrs = %orig;
+    if (is_tweak_active() && attrs && path) {
+        if ([path containsString:@"Containers"] || [path containsString:@"Documents"] || [path containsString:@"Library"] || [path containsString:@"/var/mobile"]) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+                NSMutableDictionary *m = [attrs mutableCopy];
+                m[NSFileCreationDate] = fakeDate;
+                m[NSFileModificationDate] = fakeDate;
+                return m;
+            }
+        }
+    }
+    return attrs;
+}
+
 // Cách ly Shared App Groups cho bản Clone khi thiếu quyền (Zalo gốc dùng App Group thật để Apps Manager backup)
 - (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     NSURL *origURL = %orig;
@@ -1825,15 +1853,14 @@ static BOOL s_in_bundle_hook = NO;
 %hook NSUserDefaults
 
 - (instancetype)initWithSuiteName:(NSString *)suitename {
-    if (is_original_zalo_app()) {
-        return %orig;
+    id orig = %orig;
+    if (orig) {
+        return orig;
     }
-    if (suitename && ([suitename containsString:@"zingalo"] || [suitename containsString:@"zalo"] || [suitename containsString:@"vng"])) {
-        logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"Điều hướng SuiteName '%@' vào Sandbox an toàn", suitename]);
-        NSString *safeSuite = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", suitename];
-        return %orig(safeSuite);
-    }
-    return %orig;
+    // Nếu ứng dụng (như bản Clone com.sonhu.zaloclone hoặc Sideload) không có App Group entitlement,
+    // iOS sẽ trả về nil gây lỗi đọc ghi Groups hoặc LevelDB. Điều hướng an toàn về standardUserDefaults!
+    logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"SuiteName '%@' trả về nil (thiếu App Group) -> Điều hướng an toàn về standardUserDefaults", suitename ?: @"(null)"]);
+    return [NSUserDefaults standardUserDefaults];
 }
 
 %end

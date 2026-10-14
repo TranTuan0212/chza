@@ -21,7 +21,8 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
         @"com.zing.zalo",
         @"com.vng.zalo",
         @"vn.com.vng.zingalo.clone",
-        @"com.vng.zalo.clone"
+        @"com.vng.zalo.clone",
+        @"com.sonhu.zaloclone"
     ];
 }
 
@@ -150,7 +151,7 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
         needSave = YES;
     }
     if (!dict[@"showFloatingMenu"]) {
-        dict[@"showFloatingMenu"] = @(NO);
+        dict[@"showFloatingMenu"] = @(YES);
         needSave = YES;
     }
     if (!dict[@"hasConfiguredProfile"]) {
@@ -392,10 +393,13 @@ static NSArray<NSString *> *get_zalo_data_container_paths(void) {
             NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
             NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
             NSString *ident = meta[@"MCMMetadataIdentifier"];
-            if (ident && [get_known_zalo_bundle_ids() containsObject:ident]) {
-                NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
-                if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
-                    [paths addObject:fullP];
+            if (ident) {
+                NSString *lower = [ident lowercaseString];
+                if ([lower containsString:@"zalo"] || [lower containsString:@"zingalo"] || [get_known_zalo_bundle_ids() containsObject:ident]) {
+                    NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+                    if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
+                        [paths addObject:fullP];
+                    }
                 }
             }
         }

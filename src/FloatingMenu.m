@@ -1200,7 +1200,7 @@ UIViewController *ZTGetTopViewController(void) {
     } @catch (NSException *e) {
         appGroupWorking = NO;
     }
-    info.leveldbOK = (leveldbRelWritable && leveldbAbsWritable && leveldbAtWritable && appGroupWorking);
+    info.leveldbOK = ((leveldbRelWritable || leveldbAbsWritable || leveldbAtWritable) && appGroupWorking);
 
     // Mobileprovision check
     NSString *provPath = [[NSBundle mainBundle] pathForResource:@"embedded" ofType:@"mobileprovision"];
