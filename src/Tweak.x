@@ -313,22 +313,43 @@ static void logAudit(NSString *category, NSString *detail);
     return instance;
 }
 
-static void purge_sandbox_dir_contents_safely(NSString *dirPath, BOOL isPrefDir) {
-    if (!dirPath || dirPath.length == 0) return;
+static void purge_directory_recursively_safely(NSString *targetPath) {
+    if (!targetPath || targetPath.length == 0) return;
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
-    for (NSString *item in items) {
-        NSString *lower = [item lowercaseString];
-        if ([lower hasSuffix:@".adbk"] ||
-            [lower containsString:@"appsmanager"] ||
-            [lower containsString:@"adbk"] ||
-            [lower isEqualToString:@"zaloaudit.log"] ||
-            [lower isEqualToString:@"zalotraffic.har"] ||
-            [lower containsString:@"com.sonhu.zalotweak"]) {
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:targetPath isDirectory:&isDir]) return;
+
+    NSString *lower = [targetPath lowercaseString];
+    if ([lower hasSuffix:@".adbk"] ||
+        [lower containsString:@"appsmanager"] ||
+        [lower containsString:@"com.sonhu.zalotweak"] ||
+        [lower containsString:@"zaloaudit.log"] ||
+        [lower containsString:@"zalotraffic.har"]) {
+        return;
+    }
+
+    if (!isDir) {
+        [fm removeItemAtPath:targetPath error:nil];
+        return;
+    }
+
+    NSArray *contents = [fm contentsOfDirectoryAtPath:targetPath error:nil];
+    for (NSString *sub in contents) {
+        NSString *subLower = [sub lowercaseString];
+        if ([subLower hasSuffix:@".adbk"] ||
+            [subLower containsString:@"appsmanager"] ||
+            [subLower containsString:@"com.sonhu.zalotweak"] ||
+            [subLower isEqualToString:@"zaloaudit.log"] ||
+            [subLower isEqualToString:@"zalotraffic.har"]) {
             continue;
         }
-        NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
-        [fm removeItemAtPath:fullPath error:nil];
+        NSString *fullSub = [targetPath stringByAppendingPathComponent:sub];
+        purge_directory_recursively_safely(fullSub);
+    }
+    // Không xoá chính thư mục gốc Library hoặc Documents
+    NSString *lastComp = [targetPath lastPathComponent];
+    if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
+        [fm removeItemAtPath:targetPath error:nil];
     }
 }
 
@@ -343,9 +364,9 @@ static void purge_entire_sandbox_safely(void) {
     NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
     NSString *tmpDir = [home stringByAppendingPathComponent:@"tmp"];
 
-    // 1. Quét dọn Documents và tmp
-    purge_sandbox_dir_contents_safely(docDir, NO);
-    purge_sandbox_dir_contents_safely(tmpDir, NO);
+    // 1. Quét dọn triệt để Documents và tmp
+    purge_directory_recursively_safely(docDir);
+    purge_directory_recursively_safely(tmpDir);
 
     // 2. Quét dọn toàn bộ các thư mục con trong Library (WebKit, Caches, Application Support, HTTPStorages, Cookies...)
     NSArray *libItems = [fm contentsOfDirectoryAtPath:libDir error:nil];
@@ -356,13 +377,13 @@ static void purge_entire_sandbox_safely(void) {
         NSString *subDir = [libDir stringByAppendingPathComponent:item];
         if ([lower isEqualToString:@"preferences"]) {
             // Preferences: chỉ xóa các file plist của app và zalo, giữ lại cấu hình tweak
-            purge_sandbox_dir_contents_safely(subDir, YES);
-        } else {
-            purge_sandbox_dir_contents_safely(subDir, NO);
-            NSArray *remain = [fm contentsOfDirectoryAtPath:subDir error:nil];
-            if (!remain || remain.count == 0) {
-                [fm removeItemAtPath:subDir error:nil];
+            NSArray *pItems = [fm contentsOfDirectoryAtPath:subDir error:nil];
+            for (NSString *pItem in pItems) {
+                if ([pItem.lowercaseString containsString:@"com.sonhu.zalotweak"]) continue;
+                [fm removeItemAtPath:[subDir stringByAppendingPathComponent:pItem] error:nil];
             }
+        } else {
+            purge_directory_recursively_safely(subDir);
         }
     }
 
@@ -372,7 +393,7 @@ static void purge_entire_sandbox_safely(void) {
         NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
         if (groupURL) {
             NSString *groupPath = [groupURL path];
-            purge_sandbox_dir_contents_safely(groupPath, NO);
+            purge_directory_recursively_safely(groupPath);
         }
     }
 
@@ -381,6 +402,8 @@ static void purge_entire_sandbox_safely(void) {
     [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"WebKit"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"HTTPStorages"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
 
     NSLog(@"[ZaloAudit] [COLD-BOOT] ✅ Hoàn tất dọn dẹp sạch toàn bộ Sandbox!");
@@ -427,6 +450,8 @@ static void purge_entire_sandbox_safely(void) {
         self.screenHeight = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
         self.screenScale = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
+        self.birthTimeSec = [dict[@"birthTimeSec"] unsignedLongLongValue] ?: 0;
+        self.autoSyncTimezoneWithIP = [dict[@"autoSyncTimezoneWithIP"] boolValue];
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
@@ -573,6 +598,8 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"screenHeight"] = @(self.screenHeight);
     dict[@"screenScale"] = @(self.screenScale);
     dict[@"bootTimeSec"] = @(self.bootTimeSec);
+    dict[@"birthTimeSec"] = @(self.birthTimeSec);
+    dict[@"autoSyncTimezoneWithIP"] = @(self.autoSyncTimezoneWithIP);
     dict[@"bootSessionUUID"] = self.bootSessionUUID ?: @"";
     dict[@"spoofedIDFV"] = self.spoofedIDFV;
     dict[@"spoofedIDFA"] = self.spoofedIDFA ?: @"00000000-0000-0000-0000-000000000000";
@@ -670,6 +697,7 @@ NSString *generate_random_mac(void) {
     self.batteryLevel = p.batteryLevel;
     self.batteryState = p.batteryState;
     self.bootTimeSec = p.bootTimeSec;
+    self.birthTimeSec = p.birthTimeSec;
     self.bootSessionUUID = p.bootSessionUUID;
     self.spoofedIDFV = p.spoofedIDFV;
     self.spoofedIDFA = p.spoofedIDFA;
@@ -1749,18 +1777,20 @@ static inline BOOL should_fake_stat_path(const char *path) {
 }
 
 static inline void fake_stat_timespec(struct stat *buf, uint64_t btime) {
-    if (!buf || btime == 0) return;
-    time_t fake_birth = (time_t)(btime - 864000);
+    if (!buf) return;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 864000 ? (btime - 864000) : 1568160000ULL));
     time_t fake_mtime = (time_t)(fake_birth + 1435);
-    time_t fake_ctime = fake_mtime;
+    time_t fake_ctime = (time_t)(fake_birth + 1555);
     long nsec_birth = (long)(((fake_birth * 2654435761ULL) % 900 + 100) * 1000000L);
     long nsec_mtime = (long)(((fake_mtime * 2246822519ULL) % 900 + 100) * 1000000L);
+    long nsec_ctime = (long)(((fake_ctime * 3266489917ULL) % 900 + 100) * 1000000L);
     buf->st_birthtimespec.tv_sec = fake_birth;
     buf->st_birthtimespec.tv_nsec = nsec_birth;
     buf->st_mtimespec.tv_sec = fake_mtime;
     buf->st_mtimespec.tv_nsec = nsec_mtime;
     buf->st_ctimespec.tv_sec = fake_ctime;
-    buf->st_ctimespec.tv_nsec = nsec_mtime;
+    buf->st_ctimespec.tv_nsec = nsec_ctime;
 }
 
 static int (*orig_stat)(const char *path, struct stat *buf);
@@ -1773,7 +1803,7 @@ static int my_stat(const char *path, struct stat *buf) {
     if (ret == 0 && is_tweak_active() && buf && path) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
+            if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
                 fake_stat_timespec(buf, btime);
             }
         }
@@ -1792,12 +1822,12 @@ static int my_lstat(const char *path, struct stat *buf) {
     if (ret == 0 && is_tweak_active() && buf && path) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
+            if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
                 fake_stat_timespec(buf, btime);
             }
         }
     }
-    s_in_lstat = NO;
+    s_in_stat = NO;
     return ret;
 }
 
@@ -1814,11 +1844,11 @@ static int my_fstat(int fd, struct stat *buf) {
         if (fcntl(fd, F_GETPATH, filePath) >= 0) {
             shouldFake = should_fake_stat_path(filePath);
         } else {
-            shouldFake = S_ISDIR(buf->st_mode) || (buf->st_birthtimespec.tv_sec > 1500000000);
+            shouldFake = S_ISDIR(buf->st_mode) || (buf->st_birthtimespec.tv_sec > 1400000000);
         }
         if (shouldFake) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
+            if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
                 fake_stat_timespec(buf, btime);
             }
         }
@@ -1832,15 +1862,32 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
     int ret = orig_getattrlist ? orig_getattrlist(path, attrList, attrBuf, attrBufSize, options) : getattrlist(path, attrList, attrBuf, attrBufSize, options);
     if (ret == 0 && is_tweak_active() && attrList && attrBuf && path) {
         if (should_fake_stat_path(path) && (attrList->commonattr & (ATTR_CMN_CRTIME | ATTR_CMN_MODTIME | ATTR_CMN_CHGTIME | ATTR_CMN_ACCTIME))) {
-            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
-                time_t fake_birth = (time_t)(btime - 864000);
-                size_t words = attrBufSize / sizeof(uint64_t);
-                uint64_t *ptr64 = (uint64_t *)attrBuf;
-                for (size_t i = 0; i < words; ++i) {
-                    if (ptr64[i] >= 1500000000ULL && ptr64[i] <= 2500000000ULL) {
-                        ptr64[i] = (uint64_t)fake_birth;
+            ZTSettings *s = [ZTSettings sharedSettings];
+            uint64_t birthSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 1568160000ULL);
+            size_t words = attrBufSize / sizeof(uint64_t);
+            uint64_t *ptr64 = (uint64_t *)attrBuf;
+            int timeIdx = 0;
+            for (size_t i = 0; i < words; ++i) {
+                if (ptr64[i] >= 1400000000ULL && ptr64[i] <= 2500000000ULL) {
+                    if (timeIdx == 0) {
+                        ptr64[i] = birthSec;
+                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
+                            ptr64[i + 1] = ((birthSec * 2654435761ULL) % 900ULL + 100ULL) * 1000000ULL;
+                        }
+                    } else if (timeIdx == 1) {
+                        uint64_t mSec = birthSec + 1435ULL;
+                        ptr64[i] = mSec;
+                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
+                            ptr64[i + 1] = ((mSec * 2246822519ULL) % 900ULL + 100ULL) * 1000000ULL;
+                        }
+                    } else {
+                        uint64_t cSec = birthSec + 1555ULL;
+                        ptr64[i] = cSec;
+                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
+                            ptr64[i + 1] = ((cSec * 3266489917ULL) % 900ULL + 100ULL) * 1000000ULL;
+                        }
                     }
+                    timeIdx++;
                 }
             }
         }
@@ -2607,22 +2654,24 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     if (is_tweak_active() && [obj isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)obj;
         if (dict[@"device_id"]) {
-            NSString *devId = [dict[@"device_id"] description];
-            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
-            if (btime > 0) {
-                uint64_t fakeBirth = (btime - 864000ULL);
-                uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
-                uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
-                uint64_t ms3 = ms2;
-                NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
-                if ([devId containsString:@"-0-0"] || [devId isEqualToString:@"0"] || devId.length < 10) {
-                    NSMutableDictionary *m = [dict mutableCopy];
-                    m[@"device_id"] = cleanDeviceId;
-                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Khử chữ ký dị thường '-0-0' trong device_id '%@' -> [ĐÃ CHUẨN HOÁ TỰ NHIÊN] %@", devId, cleanDeviceId]);
-                    return %orig(m, opt, error);
-                } else {
-                    logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Gửi device_id phần cứng tự nhiên: %@", devId]);
-                }
+            ZTSettings *s = [ZTSettings sharedSettings];
+            uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000ULL) : 1568160000ULL);
+            uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
+            uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
+            uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
+            NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
+            NSArray *parts = [devId componentsSeparatedByString:@"-"];
+            BOOL isUnnatural = NO;
+            if (parts.count >= 3 && [parts[0] isEqualToString:parts[1]] && [parts[1] isEqualToString:parts[2]]) {
+                isUnnatural = YES;
+            }
+            if ([devId containsString:@"-0-0"] || [devId isEqualToString:@"0"] || devId.length < 10 || isUnnatural) {
+                NSMutableDictionary *m = [dict mutableCopy];
+                m[@"device_id"] = cleanDeviceId;
+                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Khử chữ ký dị thường '%@' -> [ĐÃ CHUẨN HOÁ TỰ NHIÊN] %@", devId, cleanDeviceId]);
+                return %orig(m, opt, error);
+            } else {
+                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Gửi device_id phần cứng tự nhiên: %@", devId]);
             }
         }
     }
@@ -2634,6 +2683,96 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 // ==========================================
 // BỘ ĐỆNH TUYẾN VÀ GHI LOG PHẢN HỒI CHO DELEGATE CỦA NSURLSession
 // ==========================================
+// ==========================================
+// BỘ ĐỊNH TUYẾN, LÀM SẠCH VÀ REWRITE GÓI TIN MẠNG ZALO
+// ==========================================
+
+static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSData **ioBodyData) {
+    if (!origReq || !is_tweak_active()) return origReq;
+    ZTSettings *settings = [ZTSettings sharedSettings];
+    if (settings.deviceMachine.length == 0) return origReq;
+
+    NSMutableURLRequest *mutReq = [origReq mutableCopy];
+    BOOL modified = NO;
+
+    // 1. Kiểm tra và bẻ lái Header extInfo
+    NSString *extInfo = [mutReq valueForHTTPHeaderField:@"extInfo"];
+    if (extInfo && [extInfo containsString:@"\"mod\":"]) {
+        NSString *realM = get_real_hardware_machine();
+        if (realM.length > 0 && [extInfo containsString:realM]) {
+            NSString *newExt = [extInfo stringByReplacingOccurrencesOfString:realM withString:settings.deviceMachine];
+            [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
+            modified = YES;
+        }
+    }
+
+    // 2. Bẻ lái Body nếu gửi lên centralized.zaloapp.com/sdk/mobile/ios hoặc id/mobile/ios
+    NSString *urlStr = origReq.URL.absoluteString ?: @"";
+    if ([urlStr containsString:@"centralized.zaloapp.com"]) {
+        NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
+        if (body && body.length > 0) {
+            NSString *bodyStr = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
+            NSString *realM = get_real_hardware_machine();
+            if (bodyStr && realM.length > 0 && [bodyStr containsString:realM]) {
+                bodyStr = [bodyStr stringByReplacingOccurrencesOfString:realM withString:settings.deviceMachine];
+                NSData *newBody = [bodyStr dataUsingEncoding:NSUTF8StringEncoding];
+                if (ioBodyData && *ioBodyData) {
+                    *ioBodyData = newBody;
+                } else {
+                    mutReq.HTTPBody = newBody;
+                }
+                modified = YES;
+                logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
+            }
+        }
+    }
+
+    return modified ? mutReq : origReq;
+}
+
+static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, NSData *origRespData) {
+    if (!origRespData || origRespData.length == 0 || !is_tweak_active()) return origRespData;
+    NSString *url = req.URL.absoluteString ?: @"";
+    if (![url containsString:@"register.zaloapp.com/api/helper/getDefaultCountry"]) return origRespData;
+
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.carrierMCC.length == 0 || s.carrierMNC.length == 0) return origRespData;
+
+    NSError *err = nil;
+    id jsonObj = [NSJSONSerialization JSONObjectWithData:origRespData options:NSJSONReadingMutableContainers error:&err];
+    if ([jsonObj isKindOfClass:[NSMutableDictionary class]]) {
+        NSMutableDictionary *root = (NSMutableDictionary *)jsonObj;
+        id dataObj = root[@"data"];
+        if ([dataObj isKindOfClass:[NSMutableDictionary class]]) {
+            NSMutableDictionary *dataDict = (NSMutableDictionary *)dataObj;
+            id mccObj = dataDict[@"mcc_mnc"];
+            NSMutableDictionary *mccDict = [mccObj isKindOfClass:[NSDictionary class]] ? [mccObj mutableCopy] : [NSMutableDictionary dictionary];
+
+            NSString *oldMnc = mccDict[@"mnc"] ?: @"";
+            mccDict[@"mcc"] = s.carrierMCC;
+            mccDict[@"mnc"] = s.carrierMNC;
+
+            if ([s.regionMode isEqualToString:@"US"] || [s.regionMode isEqualToString:@"US_STUDENT"]) {
+                mccDict[@"isocountrycodes"] = @"US/USA";
+                mccDict[@"countrycode"] = @(1);
+                mccDict[@"country"] = @"United States";
+            } else {
+                mccDict[@"isocountrycodes"] = @"VN/VNM";
+                mccDict[@"countrycode"] = @(84);
+                mccDict[@"country"] = @"Viet Nam";
+            }
+            dataDict[@"mcc_mnc"] = mccDict;
+
+            NSData *newData = [NSJSONSerialization dataWithJSONObject:root options:0 error:nil];
+            if (newData) {
+                logAudit(@"MNC-NORMALIZER", [NSString stringWithFormat:@"getDefaultCountry GeoIP mnc '%@' -> [ĐÃ ÉP KHỚP SIM PROFILE] %@/%@ (%@)", oldMnc, s.carrierMCC, s.carrierMNC, s.carrierName]);
+                return newData;
+            }
+        }
+    }
+    return origRespData;
+}
+
 typedef void (*zt_didReceiveData_imp)(id, SEL, NSURLSession *, NSURLSessionDataTask *, NSData *);
 typedef void (*zt_didCompleteWithError_imp)(id, SEL, NSURLSession *, NSURLSessionTask *, NSError *);
 
@@ -2647,6 +2786,8 @@ static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, 
     s_in_did_receive_data = YES;
 
     if (dataTask && data) {
+        NSURLRequest *origReq = objc_getAssociatedObject(dataTask, "zt_orig_req") ?: (dataTask.currentRequest ?: dataTask.originalRequest);
+        data = rewrite_getDefaultCountry_response_if_needed(origReq, data);
         NSMutableData *accum = objc_getAssociatedObject(dataTask, "zt_resp_data");
         if (accum) {
             @synchronized(accum) {
@@ -2769,7 +2910,8 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    NSURLSessionDataTask *task = %orig;
+    request = sanitize_outbound_zalo_request(request, NULL);
+    NSURLSessionDataTask *task = %orig(request);
     if (task && request) {
         objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -2802,6 +2944,7 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    request = sanitize_outbound_zalo_request(request, NULL);
     NSDate *startDate = [NSDate date];
     NSData *reqBody = request.HTTPBody;
 
@@ -2813,6 +2956,7 @@ static void swizzle_session_delegate_class(Class cls) {
     }
 
     void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        data = rewrite_getDefaultCountry_response_if_needed(request, data);
         NSDate *finishDate = [NSDate date];
         record_har_traffic(request, reqBody, response, data, error, startDate, finishDate);
         completionHandler(data, response, error);
@@ -2822,7 +2966,8 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    NSURLSessionUploadTask *task = %orig;
+    request = sanitize_outbound_zalo_request(request, &bodyData);
+    NSURLSessionUploadTask *task = %orig(request, bodyData);
     if (task && request) {
         objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -2838,6 +2983,7 @@ static void swizzle_session_delegate_class(Class cls) {
 }
 
 - (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    request = sanitize_outbound_zalo_request(request, &bodyData);
     NSDate *startDate = [NSDate date];
 
     if (!completionHandler) {
@@ -2848,6 +2994,7 @@ static void swizzle_session_delegate_class(Class cls) {
     }
 
     void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        data = rewrite_getDefaultCountry_response_if_needed(request, data);
         NSDate *finishDate = [NSDate date];
         record_har_traffic(request, bodyData, response, data, error, startDate, finishDate);
         completionHandler(data, response, error);

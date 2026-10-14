@@ -19,6 +19,8 @@
 @property (nonatomic, assign) CGFloat screenHeight;        // pt height (vd: 844.0)
 @property (nonatomic, assign) CGFloat screenScale;         // scale (vd: 3.0)
 @property (nonatomic, assign) uint64_t bootTimeSec;        // kern.boottime sec
+@property (nonatomic, assign) uint64_t birthTimeSec;       // st_birthtime sec (theo vòng đời Apple)
+@property (nonatomic, assign) BOOL autoSyncTimezoneWithIP; // Tự động đồng bộ timezone theo GeoIP của Proxy
 @property (nonatomic, strong) NSString *bootSessionUUID;   // kern.bootsessionuuid
 @property (nonatomic, strong) NSString *spoofedIDFV;       // identifierForVendor UUID
 @property (nonatomic, strong) NSString *spoofedIDFA;       // advertisingIdentifier IDFA

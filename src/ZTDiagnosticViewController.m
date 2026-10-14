@@ -1,4 +1,5 @@
 #import "ZTDiagnosticViewController.h"
+#import "Config.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
 
@@ -718,6 +719,18 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                 strongSelf.info.ipIsProxy = [result[@"proxy"] boolValue];
                 strongSelf.info.ipIsMobile = [result[@"mobile"] boolValue];
 
+                ZTSettings *settings = [ZTSettings sharedSettings];
+                if (settings.autoSyncTimezoneWithIP && strongSelf.info.ipTimezone.length > 0) {
+                    settings.timeZoneName = strongSelf.info.ipTimezone;
+                    [settings saveSettings];
+                    strongSelf.info.timeZoneName = strongSelf.info.ipTimezone;
+                    NSTimeZone *tz = [NSTimeZone timeZoneWithName:strongSelf.info.timeZoneName];
+                    NSInteger gmtSec = tz ? [tz secondsFromGMT] : 0;
+                    int gmtH = (int)(gmtSec / 3600);
+                    int gmtM = abs((int)((gmtSec % 3600) / 60));
+                    strongSelf.info.timeZoneGMT = (gmtM > 0) ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
+                }
+
                 if (strongSelf.info.ipIsHosting) {
                     strongSelf.info.ipTypeDesc = @"Datacenter / Hosting / VPS ❌";
                     strongSelf.info.ipCleanPassed = NO;
@@ -769,10 +782,10 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
             if (strongSelf.info.ipCheckCompleted && strongSelf.info.timeZoneName.length > 0) {
                 if ([strongSelf.info.ipTimezone isEqualToString:strongSelf.info.timeZoneName]) {
                     strongSelf.info.matchTimezonePassed = YES;
-                    strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"Khớp múi giờ hoàn hảo: %@ ✅", strongSelf.info.timeZoneName];
+                    strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"Khớp múi giờ hoàn hảo: %@ (%@) ✅", strongSelf.info.timeZoneName, strongSelf.info.timeZoneGMT ?: @""];
                 } else {
                     strongSelf.info.matchTimezonePassed = NO;
-                    strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"LỆCH MÚI GIỜ: IP là [%@] nhưng Máy là [%@]! ❌", strongSelf.info.ipTimezone ?: @"", strongSelf.info.timeZoneName];
+                    strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"LỆCH MÚI GIỜ: IP là [%@] nhưng Máy là [%@] (%@)! ❌", strongSelf.info.ipTimezone ?: @"", strongSelf.info.timeZoneName, strongSelf.info.timeZoneGMT ?: @""];
                 }
             } else {
                 strongSelf.info.matchTimezonePassed = YES;

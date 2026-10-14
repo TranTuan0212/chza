@@ -27,6 +27,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) float batteryLevel;         // Mức pin (0.50 - 0.95)
 @property (nonatomic, assign) NSInteger batteryState;     // 1 (Unplugged)
 @property (nonatomic, assign) uint64_t bootTimeSec;        // Uptime timestamp
+@property (nonatomic, assign) uint64_t birthTimeSec;       // APFS filesystem birthtime sec (chuẩn vòng đời Apple)
 @property (nonatomic, copy) NSString *bootSessionUUID;   // Boot session UUID
 @property (nonatomic, copy) NSString *spoofedIDFV;       // IDFV duy nhất
 @property (nonatomic, copy) NSString *spoofedIDFA;       // "00000000-0000-0000-0000-000000000000"

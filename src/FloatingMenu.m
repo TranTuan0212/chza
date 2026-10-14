@@ -2,6 +2,7 @@
 #import "Config.h"
 #import "SecurityManager.h"
 #import "ZTDiagnosticViewController.h"
+#import <WebKit/WebKit.h>
 #import <objc/runtime.h>
 #import <Security/Security.h>
 #import <sys/sysctl.h>
@@ -936,11 +937,22 @@ UIViewController *ZTGetTopViewController(void) {
     // 2. Xóa sạch Keychain của Zalo trong sandbox này
     NSArray *secClasses = @[
         (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecClassInternetPassword
+        (__bridge id)kSecClassInternetPassword,
+        (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecClassKey,
+        (__bridge id)kSecClassIdentity
     ];
     for (id secClass in secClasses) {
         NSDictionary *query = @{(__bridge id)kSecClass: secClass};
         SecItemDelete((__bridge CFDictionaryRef)query);
+    }
+
+    // Xoá sạch bộ nhớ đệm mạng WebKit và URLCache
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    if (@available(iOS 9.0, *)) {
+        NSSet *websiteDataTypes = [WKWebsiteDataStore allWebsiteDataTypes];
+        NSDate *dateFrom = [NSDate dateWithTimeIntervalSince1970:0];
+        [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:websiteDataTypes modifiedSince:dateFrom completionHandler:^{}];
     }
 
     // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites để ngăn cfprefsd ghi ngược ra đĩa
@@ -972,21 +984,42 @@ UIViewController *ZTGetTopViewController(void) {
     }
     [stdUD synchronize];
     
-    // Hàm xóa nội bộ có bảo vệ .adbk, ZaloAudit.log, ZaloTraffic.har và tất cả cấu hình/bản quyền tweak
-    void (^wipeDirSafely)(NSString *) = ^(NSString *dirPath) {
+    // Hàm xóa đệ quy nội bộ có bảo vệ .adbk, ZaloAudit.log, ZaloTraffic.har và tất cả cấu hình/bản quyền tweak
+    __block void (^wipeDirSafely)(NSString *) = ^(NSString *dirPath) {
+        if (!dirPath || dirPath.length == 0) return;
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:dirPath isDirectory:&isDir]) return;
+
+        NSString *lower = [dirPath lowercaseString];
+        if ([lower hasSuffix:@".adbk"] ||
+            [lower containsString:@"appsmanager"] ||
+            [lower containsString:@"com.sonhu.zalotweak"] ||
+            [lower isEqualToString:@"zaloaudit.log"] ||
+            [lower isEqualToString:@"zalotraffic.har"]) {
+            return;
+        }
+
+        if (!isDir) {
+            [fm removeItemAtPath:dirPath error:nil];
+            return;
+        }
+
         NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:nil];
         for (NSString *item in items) {
-            NSString *lower = [item lowercaseString];
-            if ([lower hasSuffix:@".adbk"] ||
-                [lower containsString:@"appsmanager"] ||
-                [lower containsString:@"adbk"] ||
-                [lower isEqualToString:@"zaloaudit.log"] ||
-                [lower isEqualToString:@"zalotraffic.har"] ||
-                [lower containsString:@"com.sonhu.zalotweak"]) {
+            NSString *subLower = [item lowercaseString];
+            if ([subLower hasSuffix:@".adbk"] ||
+                [subLower containsString:@"appsmanager"] ||
+                [subLower containsString:@"com.sonhu.zalotweak"] ||
+                [subLower isEqualToString:@"zaloaudit.log"] ||
+                [subLower isEqualToString:@"zalotraffic.har"]) {
                 continue;
             }
             NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
-            [fm removeItemAtPath:fullPath error:nil];
+            wipeDirSafely(fullPath);
+        }
+        NSString *lastComp = [dirPath lastPathComponent];
+        if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
+            [fm removeItemAtPath:dirPath error:nil];
         }
     };
     
@@ -1004,7 +1037,15 @@ UIViewController *ZTGetTopViewController(void) {
         NSString *lower = [item lowercaseString];
         if ([lower containsString:@"com.sonhu.zalotweak"]) continue;
         NSString *subDir = [libDir stringByAppendingPathComponent:item];
-        wipeDirSafely(subDir);
+        if ([lower isEqualToString:@"preferences"]) {
+            NSArray *pItems = [fm contentsOfDirectoryAtPath:subDir error:nil];
+            for (NSString *pItem in pItems) {
+                if ([pItem.lowercaseString containsString:@"com.sonhu.zalotweak"]) continue;
+                [fm removeItemAtPath:[subDir stringByAppendingPathComponent:pItem] error:nil];
+            }
+        } else {
+            wipeDirSafely(subDir);
+        }
     }
 
     // 4.1. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
@@ -1025,6 +1066,8 @@ UIViewController *ZTGetTopViewController(void) {
     [fm createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"WebKit"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"HTTPStorages"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     
@@ -1209,17 +1252,17 @@ UIViewController *ZTGetTopViewController(void) {
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", birthMs, mtimeMs, ctimeMs];
         
         BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
-        if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
-            uint64_t expectedMs = (s.bootTimeSec - 864000ULL) * 1000ULL;
-            info.deviceIdPassed = (!isStaticHardware && (birthMs >= expectedMs || (birthMs > 0 && !isStaticHardware)));
+        if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
+            uint64_t expectedSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000ULL ? (s.bootTimeSec - 864000ULL) : 0);
+            info.deviceIdPassed = (!isStaticHardware && (birthMs >= expectedSec * 1000ULL || (birthMs > 0 && !isStaticHardware)));
         } else {
             info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
         }
-    } else if (s.hasConfiguredProfile && s.bootTimeSec > 0) {
-        uint64_t fakeBirth = (s.bootTimeSec - 864000ULL);
+    } else if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
+        uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000ULL ? (s.bootTimeSec - 864000ULL) : 1568160000ULL);
         uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
         uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
-        uint64_t ms3 = ms2;
+        uint64_t ms3 = (fakeBirth + 1555ULL) * 1000ULL + ((fakeBirth * 3266489917ULL) % 900ULL + 100ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {
@@ -1353,7 +1396,7 @@ UIViewController *ZTGetTopViewController(void) {
     info.sysctlPassed = (info.procTranslated == 0 && info.pageSizeKB == 16 && info.l2CacheSizeMB > 0);
 
     // 8. Định dạng ngày giờ cụ thể cho st_birthtime & BootTime
-    time_t fake_birth = (time_t)(s.bootTimeSec > 0 ? (s.bootTimeSec - 864000) : 0);
+    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000) : 0));
     if (fake_birth > 0) {
         struct tm btm;
         gmtime_r(&fake_birth, &btm);
