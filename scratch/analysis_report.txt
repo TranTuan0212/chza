@@ -1,0 +1,67 @@
+==========================================
+=== 1. ZaloAudit (2).log Analysis ===
+==========================================
+Total log lines: 354
+DETECTION-RADAR events: 0
+sysctl events: 0
+MobileGestalt events: 0
+Bundle events: 5
+  [20:20:43] [BUNDLE-ID] Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]
+  • X-Ios-Bundle-Identifier: vn.com.vng.zingalo
+  [20:20:48] [SIDELOAD-CHECK] Zalo quét chứng chỉ '/private/var/containers/Bundle/Application/77E00ACE-D278-48DA-A9D3-9C27F1F54C8D/Zalo.app/embedded.mobileprovision' -> [ĐÃ ẨN - TRẢ VỀ NO]
+  • X-Ios-Bundle-Identifier: vn.com.vng.zingalo
+  • X-Ios-Bundle-Identifier: vn.com.vng.zingalo
+
+==========================================
+=== 2. ZaloTraffic (2).har Analysis ===
+==========================================
+Total entries: 18
+Status codes: {0: 6, -1000: 7, 200: 2, -1001: 3}
+User Agents seen: {'datatransport/Unknown fllsupport/UNKNOWN apple/', 'Zalo/261001 (iPhone; iOS 17.5.1; Scale/3.00)'}
+Device IDs seen: set()
+Model parameters in QoS: set()
+Non-200 responses (16):
+  [0] https://register.zaloapp.com/api/register/getSupportCountry?&api_key=3bb9d514148 (Pending/Unknown)
+  [-1000] https://centralized.zaloapp.com/sdk/mobile/ios (URL không hợp lệ)
+  [-1000] https://centralized.zaloapp.com/id/mobile/ios (URL không hợp lệ)
+  [-1000] https://centralized.zaloapp.com/apps/mobile/ios?pl=ios (URL không hợp lệ)
+  [0] https://register.zaloapp.com/api/helper/getDefaultCountry? (Pending/Unknown)
+  [-1000] https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog (URL không hợp lệ)
+  [-1000] https://firebase-settings.crashlytics.com/spi/v2/platforms/ios/gmp/1:9127139036: (URL không hợp lệ)
+  [0] https://app-analytics-services.com/sdk-exp (Pending/Unknown)
+  [0] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16 (Pending/Unknown)
+  [0] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16 (Pending/Unknown)
+  [0] https://register.zaloapp.com/api/v1/login/phone/verify (Pending/Unknown)
+  [-1001] https://firebaseremoteconfig.googleapis.com/v1/projects/zalo-io/namespaces/firep (Yêu cầu hết thời gian chờ.)
+  [-1001] https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog (Yêu cầu hết thời gian chờ.)
+  [-1001] https://centralized.zaloapp.com/apps/mobile/ios?pl=ios (Yêu cầu hết thời gian chờ.)
+  [-1000] https://firebaseremoteconfig.googleapis.com/v1/projects/zalo-io/namespaces/firep (URL không hợp lệ)
+
+==========================================
+=== 3. ProxyPin10-12_20_22_45.har Analysis ===
+==========================================
+Total entries: 12
+Status codes: {200: 6, -4: 6}
+User Agents seen: {'datatransport/Unknown fllsupport/UNKNOWN apple/', 'Zalo/261001802 CFNetwork/3826.600.41 Darwin/24.6.0', 'Zalo/261001 (iPhone; iOS 17.5.1; Scale/3.00)'}
+Device IDs seen: set()
+Model parameters in QoS: set()
+Top 20 URLs visited:
+  [200] https://register.zaloapp.com/api/v1/login/phone/verify
+  [200] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16ba88d6bff3
+  [200] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16ba88d6bff3
+  [-4] https://sandbox.itunes.apple.com
+  [-4] https://centralized.zaloapp.com/apps/mobile/ios?pl=ios
+  [200] https://register.zaloapp.com/api/v1/login/phone/verify
+  [200] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16ba88d6bff3
+  [-4] https://graph.facebook.com
+  [-4] https://app-analytics-services.com/config/app/1%3A9127139036%3Aios%3A5a6c3142123d0f3f?plat
+  [200] https://register.zaloapp.com/api/v1/register/consents?api_key=3bb9d514148ca6dd16ba88d6bff3
+  [-4] https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog
+  [-4] https://firebaseremoteconfig.googleapis.com/v1/projects/zalo-io/namespaces/fireperf:fetch?
+Non-200 responses (6):
+  [-4] https://sandbox.itunes.apple.com (Connection reset by peer)
+  [-4] https://centralized.zaloapp.com/apps/mobile/ios?pl=ios (Connection refused)
+  [-4] https://graph.facebook.com (Connection reset by peer)
+  [-4] https://app-analytics-services.com/config/app/1%3A9127139036%3Aios%3A5a6c3142123 (Connection refused)
+  [-4] https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog (Connection refused)
+  [-4] https://firebaseremoteconfig.googleapis.com/v1/projects/zalo-io/namespaces/firep (Connection refused)

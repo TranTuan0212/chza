@@ -30,6 +30,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *bootSessionUUID;   // Boot session UUID
 @property (nonatomic, copy) NSString *spoofedIDFV;       // IDFV duy nhất
 @property (nonatomic, copy) NSString *spoofedIDFA;       // "00000000-0000-0000-0000-000000000000"
+@property (nonatomic, assign) uint64_t l2cacheSize;      // hw.l2cachesize (bytes)
+@property (nonatomic, copy) NSString *localeIdentifier;  // "vi_VN", "en_US"
+@property (nonatomic, copy) NSString *timeZoneName;      // "Asia/Ho_Chi_Minh", "America/New_York"
+@property (nonatomic, strong) NSArray<NSString *> *preferredLanguages; // @[@"vi-VN"]
 @property (nonatomic, copy) NSString *profileId;         // Profile UUID
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region;

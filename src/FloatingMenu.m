@@ -699,6 +699,9 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMCC = @"310";
         s.carrierMNC = @"260";
         s.carrierCountryCode = @"us";
+        s.localeIdentifier = @"en_US";
+        s.preferredLanguages = @[@"en-US", @"vi-US"];
+        s.timeZoneName = @"America/New_York";
     } else if ([region isEqualToString:@"US"]) {
         NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
@@ -706,6 +709,9 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMCC = @"311";
         s.carrierMNC = @"480";
         s.carrierCountryCode = @"us";
+        s.localeIdentifier = @"en_US";
+        s.preferredLanguages = @[@"en-US"];
+        s.timeZoneName = @"America/New_York";
     } else {
         NSArray *userNames = @[@"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)", @"iPhone của Huy", @"iPhone của Nam"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
@@ -713,6 +719,9 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMCC = @"452";
         s.carrierMNC = @"04";
         s.carrierCountryCode = @"vn";
+        s.localeIdentifier = @"vi_VN";
+        s.preferredLanguages = @[@"vi-VN", @"en-VN"];
+        s.timeZoneName = @"Asia/Ho_Chi_Minh";
     }
     [s saveSettings];
 }

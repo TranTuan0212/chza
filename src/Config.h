@@ -11,6 +11,10 @@
 @property (nonatomic, strong) NSString *kernOsVersion;     // kern.osversion: vd "20F66"
 @property (nonatomic, assign) uint32_t ncpu;               // hw.ncpu: 6
 @property (nonatomic, assign) uint64_t memsize;            // hw.memsize: 6GB RAM
+@property (nonatomic, assign) uint64_t l2cacheSize;         // hw.l2cachesize: 3MB, 8MB, 12MB, 16MB
+@property (nonatomic, strong) NSString *localeIdentifier;  // NSLocale: "vi_VN", "en_US"
+@property (nonatomic, strong) NSString *timeZoneName;      // NSTimeZone: "Asia/Ho_Chi_Minh", "America/New_York"
+@property (nonatomic, strong) NSArray<NSString *> *preferredLanguages; // NSLocale preferredLanguages
 @property (nonatomic, assign) CGFloat screenWidth;         // pt width (vd: 390.0)
 @property (nonatomic, assign) CGFloat screenHeight;        // pt height (vd: 844.0)
 @property (nonatomic, assign) CGFloat screenScale;         // scale (vd: 3.0)

@@ -444,6 +444,10 @@ static void purge_entire_sandbox_safely(void) {
         self.batteryLevel = [dict[@"batteryLevel"] floatValue] ?: 0.85f;
         self.batteryState = [dict[@"batteryState"] integerValue] ?: 1;
         self.regionMode = dict[@"regionMode"] ?: @"VN";
+        self.l2cacheSize = [dict[@"l2cacheSize"] unsignedLongLongValue] ?: 3145728ULL;
+        self.localeIdentifier = dict[@"localeIdentifier"] ?: ([self.regionMode isEqualToString:@"US"] ? @"en_US" : @"vi_VN");
+        self.timeZoneName = dict[@"timeZoneName"] ?: ([self.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
+        self.preferredLanguages = dict[@"preferredLanguages"] ?: ([self.regionMode isEqualToString:@"US"] ? @[@"en-US"] : @[@"vi-VN", @"en-VN"]);
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
@@ -582,6 +586,10 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"batteryLevel"] = @(self.batteryLevel);
     dict[@"batteryState"] = @(self.batteryState);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
+    dict[@"l2cacheSize"] = @(self.l2cacheSize);
+    dict[@"localeIdentifier"] = self.localeIdentifier ?: @"vi_VN";
+    dict[@"timeZoneName"] = self.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    if (self.preferredLanguages) dict[@"preferredLanguages"] = self.preferredLanguages;
     dict[@"showFloatingMenu"] = @(self.showFloatingMenu);
     dict[@"needsNewProfile"] = @(self.needsNewProfile);
     dict[@"needsSandboxPurge"] = @(self.needsSandboxPurge);
@@ -655,6 +663,10 @@ NSString *generate_random_mac(void) {
     self.carrierMCC = p.carrierMCC;
     self.carrierMNC = p.carrierMNC;
     self.carrierCountryCode = p.carrierCountryCode;
+    self.l2cacheSize = p.l2cacheSize;
+    self.localeIdentifier = p.localeIdentifier;
+    self.preferredLanguages = p.preferredLanguages;
+    self.timeZoneName = p.timeZoneName;
     self.batteryLevel = p.batteryLevel;
     self.batteryState = p.batteryState;
     self.bootTimeSec = p.bootTimeSec;
@@ -666,10 +678,12 @@ NSString *generate_random_mac(void) {
     self.spoofedWifiMAC = p.spoofedWifiMAC;
     self.spoofedBluetoothMAC = p.spoofedBluetoothMAC;
 
-    logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | Màn: %.0fx%.0f@%.0fx | Tên: %@",
+    logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | L2: %lluMB | Màn: %.0fx%.0f@%.0fx | Vùng: %@ (%@) | Tên: %@",
               self.deviceMachine, self.deviceModel, self.systemVersion, self.kernOsVersion,
               (double)self.memsize / (1024.0 * 1024.0 * 1024.0),
-              self.screenWidth, self.screenHeight, self.screenScale, self.deviceName]);
+              self.l2cacheSize / (1024ULL * 1024ULL),
+              self.screenWidth, self.screenHeight, self.screenScale,
+              self.regionMode, self.localeIdentifier, self.deviceName]);
 
     [self saveSettings];
 }
@@ -791,6 +805,29 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
             if (oldlenp) *oldlenp = sizeof(uint32_t);
             return 0;
         }
+        if (name[1] == HW_PAGESIZE) {
+            uint32_t pagesize = 16384;
+            if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
+                memcpy(oldp, &pagesize, sizeof(uint32_t));
+            }
+            if (oldlenp) *oldlenp = sizeof(uint32_t);
+            return 0;
+        }
+#ifdef HW_L2CACHESIZE
+        if (name[1] == HW_L2CACHESIZE) {
+            uint64_t l2 = settings.l2cacheSize > 0 ? settings.l2cacheSize : 3145728ULL;
+            if (oldp && oldlenp) {
+                if (*oldlenp >= sizeof(uint64_t)) {
+                    memcpy(oldp, &l2, sizeof(uint64_t));
+                } else if (*oldlenp >= sizeof(uint32_t)) {
+                    uint32_t l2_32 = (uint32_t)l2;
+                    memcpy(oldp, &l2_32, sizeof(uint32_t));
+                }
+            }
+            if (oldlenp) *oldlenp = sizeof(uint64_t);
+            return 0;
+        }
+#endif
     } else if (name[0] == CTL_KERN) {
         if (name[1] == KERN_BOOTTIME && settings.bootTimeSec > 0) {
             struct timeval bt;
@@ -836,8 +873,8 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 
     ZTSettings *settings = [ZTSettings sharedSettings];
 
-    if (strcmp(name, "hw.machine") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.machine -> [ĐÃ FAKE] %@", settings.deviceMachine]);
+    if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE] %@", name, settings.deviceMachine]);
         const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -915,6 +952,41 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, &ram32, sizeof(uint32_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint32_t);
+        return 0;
+    }
+
+    if (strcmp(name, "hw.pagesize") == 0) {
+        logAudit(@"SYSCTL", @"hw.pagesize -> [ĐÃ FAKE] 16384 bytes");
+        uint32_t pagesize = 16384;
+        if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
+            memcpy(oldp, &pagesize, sizeof(uint32_t));
+        }
+        if (oldlenp) *oldlenp = sizeof(uint32_t);
+        return 0;
+    }
+
+    if (strcmp(name, "hw.l2cachesize") == 0) {
+        uint64_t l2 = settings.l2cacheSize > 0 ? settings.l2cacheSize : 3145728ULL;
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.l2cachesize -> [ĐÃ FAKE] %llu bytes", l2]);
+        if (oldp && oldlenp) {
+            if (*oldlenp >= sizeof(uint64_t)) {
+                memcpy(oldp, &l2, sizeof(uint64_t));
+            } else if (*oldlenp >= sizeof(uint32_t)) {
+                uint32_t l2_32 = (uint32_t)l2;
+                memcpy(oldp, &l2_32, sizeof(uint32_t));
+            }
+        }
+        if (oldlenp) *oldlenp = sizeof(uint64_t);
+        return 0;
+    }
+
+    if (strcmp(name, "sysctl.proc_translated") == 0) {
+        logAudit(@"SYSCTL", @"sysctl.proc_translated -> [ĐÃ FAKE] 0 (Native ARM)");
+        int translated = 0;
+        if (oldp && oldlenp && *oldlenp >= sizeof(int)) {
+            memcpy(oldp, &translated, sizeof(int));
+        }
+        if (oldlenp) *oldlenp = sizeof(int);
         return 0;
     }
 
@@ -1180,6 +1252,103 @@ static int my_uname(struct utsname *buf) {
 
 - (BOOL)allowsVOIP {
     return YES;
+}
+
+%end
+
+%hook CTTelephonyNetworkInfo
+
+- (CTCarrier *)subscriberCellularProvider {
+    if (!is_tweak_active()) return %orig;
+    CTCarrier *c = %orig;
+    if (!c) {
+        c = [[%c(CTCarrier) alloc] init];
+    }
+    return c;
+}
+
+- (NSDictionary *)serviceSubscriberCellularProviders {
+    if (!is_tweak_active()) return %orig;
+    NSDictionary *origDict = %orig;
+    if (origDict && origDict.count > 0) {
+        return origDict;
+    }
+    CTCarrier *c = [[%c(CTCarrier) alloc] init];
+    if (c) {
+        return @{@"0000000100000001": c};
+    }
+    return %orig;
+}
+
+- (NSDictionary *)serviceCurrentRadioAccessTechnology {
+    if (!is_tweak_active()) return %orig;
+    NSDictionary *origDict = %orig;
+    if (origDict && origDict.count > 0) return origDict;
+    return @{@"0000000100000001": @"CTRadioAccessTechnologyLTE"};
+}
+
+- (NSString *)currentRadioAccessTechnology {
+    if (!is_tweak_active()) return %orig;
+    NSString *origTech = %orig;
+    return origTech ?: @"CTRadioAccessTechnologyLTE";
+}
+
+%end
+
+// ==========================================
+// ĐỒNG BỘ VÙNG / QUỐC GIA: NSLocale & NSTimeZone
+// ==========================================
+
+%hook NSLocale
+
++ (NSLocale *)currentLocale {
+    if (!is_tweak_active()) return %orig;
+    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
+    return [NSLocale localeWithLocaleIdentifier:locId];
+}
+
++ (NSLocale *)autoupdatingCurrentLocale {
+    if (!is_tweak_active()) return %orig;
+    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
+    return [NSLocale localeWithLocaleIdentifier:locId];
+}
+
++ (NSLocale *)systemLocale {
+    if (!is_tweak_active()) return %orig;
+    NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
+    return [NSLocale localeWithLocaleIdentifier:locId];
+}
+
++ (NSArray<NSString *> *)preferredLanguages {
+    if (!is_tweak_active()) return %orig;
+    NSArray *langs = [ZTSettings sharedSettings].preferredLanguages;
+    if (langs && langs.count > 0) return langs;
+    return @[@"vi-VN", @"en-VN"];
+}
+
+%end
+
+%hook NSTimeZone
+
++ (NSTimeZone *)systemTimeZone {
+    if (!is_tweak_active()) return %orig;
+    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
+    return tz ?: %orig;
+}
+
++ (NSTimeZone *)localTimeZone {
+    if (!is_tweak_active()) return %orig;
+    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
+    return tz ?: %orig;
+}
+
++ (NSTimeZone *)defaultTimeZone {
+    if (!is_tweak_active()) return %orig;
+    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    NSTimeZone *tz = [NSTimeZone timeZoneWithName:tzName];
+    return tz ?: %orig;
 }
 
 %end
