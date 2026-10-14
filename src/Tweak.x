@@ -451,7 +451,7 @@ static void purge_entire_sandbox_safely(void) {
         self.screenScale = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.birthTimeSec = [dict[@"birthTimeSec"] unsignedLongLongValue] ?: 0;
-        self.autoSyncTimezoneWithIP = [dict[@"autoSyncTimezoneWithIP"] boolValue];
+        self.autoSyncTimezoneWithIP = dict[@"autoSyncTimezoneWithIP"] != nil ? [dict[@"autoSyncTimezoneWithIP"] boolValue] : YES;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
@@ -561,6 +561,8 @@ static void purge_entire_sandbox_safely(void) {
         self.screenHeight = bounds.size.height;
         self.screenScale = [UIScreen mainScreen].scale;
         self.bootTimeSec = 0;
+        self.birthTimeSec = 0;
+        self.autoSyncTimezoneWithIP = YES;
         self.bootSessionUUID = @"";
         self.carrierName = @"Viettel";
         self.carrierMCC = @"452";
@@ -698,6 +700,7 @@ NSString *generate_random_mac(void) {
     self.batteryState = p.batteryState;
     self.bootTimeSec = p.bootTimeSec;
     self.birthTimeSec = p.birthTimeSec;
+    self.autoSyncTimezoneWithIP = YES;
     self.bootSessionUUID = p.bootSessionUUID;
     self.spoofedIDFV = p.spoofedIDFV;
     self.spoofedIDFA = p.spoofedIDFA;
@@ -2740,11 +2743,11 @@ static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, N
 
     NSError *err = nil;
     id jsonObj = [NSJSONSerialization JSONObjectWithData:origRespData options:NSJSONReadingMutableContainers error:&err];
-    if ([jsonObj isKindOfClass:[NSMutableDictionary class]]) {
-        NSMutableDictionary *root = (NSMutableDictionary *)jsonObj;
+    if ([jsonObj isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *root = [jsonObj isKindOfClass:[NSMutableDictionary class]] ? (NSMutableDictionary *)jsonObj : [jsonObj mutableCopy];
         id dataObj = root[@"data"];
-        if ([dataObj isKindOfClass:[NSMutableDictionary class]]) {
-            NSMutableDictionary *dataDict = (NSMutableDictionary *)dataObj;
+        if ([dataObj isKindOfClass:[NSDictionary class]]) {
+            NSMutableDictionary *dataDict = [dataObj isKindOfClass:[NSMutableDictionary class]] ? (NSMutableDictionary *)dataObj : [dataObj mutableCopy];
             id mccObj = dataDict[@"mcc_mnc"];
             NSMutableDictionary *mccDict = [mccObj isKindOfClass:[NSDictionary class]] ? [mccObj mutableCopy] : [NSMutableDictionary dictionary];
 
@@ -2762,6 +2765,7 @@ static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, N
                 mccDict[@"country"] = @"Viet Nam";
             }
             dataDict[@"mcc_mnc"] = mccDict;
+            root[@"data"] = dataDict;
 
             NSData *newData = [NSJSONSerialization dataWithJSONObject:root options:0 error:nil];
             if (newData) {
