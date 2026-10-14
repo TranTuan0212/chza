@@ -171,13 +171,16 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         id t = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("token"), CFSTR("com.sonhu.zalotweak.license"));
         id exp = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("expires_at"), CFSTR("com.sonhu.zalotweak.license"));
         id chk = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("last_check"), CFSTR("com.sonhu.zalotweak.license"));
+        id rudid = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("real_udid"), CFSTR("com.sonhu.zalotweak.license"));
         if (k && t && exp) {
-            dict = @{
+            NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:@{
                 @"license_key": k,
                 @"token": t,
                 @"expires_at": exp,
                 @"last_check": chk ?: @([[NSDate date] timeIntervalSince1970])
-            };
+            }];
+            if (rudid) m[@"real_udid"] = rudid;
+            dict = m;
             loadedFrom = @"cfprefsd:com.sonhu.zalotweak.license";
         }
     }
@@ -197,12 +200,31 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         return;
     }
 
-    // Format ISO 8601
+    // Format ISO 8601 (hỗ trợ cả mili-giây .SSS và múi giờ)
     NSISO8601DateFormatter *formatter = [[NSISO8601DateFormatter alloc] init];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
     NSDate *expDate = [formatter dateFromString:savedExpiryStr];
     if (!expDate) {
+        formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+        expDate = [formatter dateFromString:savedExpiryStr];
+    }
+    if (!expDate) {
         NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setLocale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
         [df setDateFormat:@"yyyy-MM-dd'T'HH:mm:ss'Z'"];
+        [df setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"UTC"]];
+        expDate = [df dateFromString:savedExpiryStr];
+    }
+    if (!expDate) {
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setLocale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
+        [df setDateFormat:@"yyyy-MM-dd'T'HH:mm:ssZZZZZ"];
+        expDate = [df dateFromString:savedExpiryStr];
+    }
+    if (!expDate) {
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setLocale:[NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]];
+        [df setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
         [df setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"UTC"]];
         expDate = [df dateFromString:savedExpiryStr];
     }
@@ -215,8 +237,18 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         return;
     }
 
+    // Lấy UDID hợp lệ (ưu tiên UDID đã được lưu từ Cài Đặt Settings để vượt rào Sandbox Zalo)
+    NSString *effectiveUDID = self.realUDID;
+    NSString *savedUDID = dict[@"real_udid"];
+    if (!savedUDID || savedUDID.length == 0) {
+        savedUDID = (__bridge_transfer NSString *)CFPreferencesCopyAppValue(CFSTR("real_udid"), CFSTR("com.sonhu.zalotweak.license"));
+    }
+    if (savedUDID && savedUDID.length >= 16) {
+        effectiveUDID = [savedUDID lowercaseString];
+    }
+
     // Kiểm tra tính toàn vẹn của Token (Chống sửa file plist để hack hạn dùng)
-    NSString *rawPayload = [NSString stringWithFormat:@"%@:%@:%@", savedKey, self.realUDID, savedExpiryStr];
+    NSString *rawPayload = [NSString stringWithFormat:@"%@:%@:%@", savedKey, effectiveUDID, savedExpiryStr];
     NSString *expectedToken = computeHMACSHA256(rawPayload, SHARED_SECRET_SALT);
 
     if ([expectedToken isEqualToString:savedToken]) {
@@ -224,6 +256,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         self.currentLicenseKey = savedKey;
         self.expiryDate = expDate;
         self.lastCheckTime = savedCheck;
+        self.realUDID = effectiveUDID;
 
         // Nếu file được đọc từ nguồn khác (ví dụ Global hay AppGroup), tự động copy lưu vào container hiện tại để truy xuất nhanh
         if (loadedFrom && ![loadedFrom isEqualToString:path]) {
@@ -242,6 +275,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     dict[@"license_key"] = key;
     dict[@"expires_at"] = expiryStr;
     dict[@"token"] = token;
+    dict[@"real_udid"] = self.realUDID ?: @"";
     dict[@"last_check"] = @([[NSDate date] timeIntervalSince1970]);
 
     // 1. Lưu tại getLicenseFilePath
@@ -281,6 +315,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     CFPreferencesSetAppValue(CFSTR("license_key"), (__bridge CFPropertyListRef)key, CFSTR("com.sonhu.zalotweak.license"));
     CFPreferencesSetAppValue(CFSTR("expires_at"), (__bridge CFPropertyListRef)expiryStr, CFSTR("com.sonhu.zalotweak.license"));
     CFPreferencesSetAppValue(CFSTR("token"), (__bridge CFPropertyListRef)token, CFSTR("com.sonhu.zalotweak.license"));
+    if (self.realUDID) CFPreferencesSetAppValue(CFSTR("real_udid"), (__bridge CFPropertyListRef)self.realUDID, CFSTR("com.sonhu.zalotweak.license"));
     CFPreferencesSetAppValue(CFSTR("last_check"), (__bridge CFPropertyListRef)@([[NSDate date] timeIntervalSince1970]), CFSTR("com.sonhu.zalotweak.license"));
     CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
 

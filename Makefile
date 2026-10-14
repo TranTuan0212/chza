@@ -10,6 +10,9 @@ TWEAK_NAME = Zalotweak
 
 Zalotweak_FILES = src/Tweak.x src/SecurityManager.m src/FloatingMenu.m src/DeviceProfilePool.m src/fishhook.c src/ZTDiagnosticViewController.m
 Zalotweak_CFLAGS = -fobjc-arc -Isrc -Wno-deprecated-declarations -Wno-error -Wno-frame-address
+ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
+Zalotweak_CFLAGS += -DTHEOS_PACKAGE_SCHEME_ROOTHIDE=1
+endif
 Zalotweak_FRAMEWORKS = UIKit Foundation Security SystemConfiguration AdSupport AppTrackingTransparency CoreTelephony Intents CFNetwork
 
 include $(THEOS_MAKE_PATH)/tweak.mk

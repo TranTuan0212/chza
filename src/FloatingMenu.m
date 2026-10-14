@@ -1025,10 +1025,22 @@ UIViewController *ZTGetTopViewController(void) {
     settings.regionMode = targetRegion ?: @"VN";
     settings.needsNewProfile = YES;
     settings.needsSandboxPurge = YES;
-    BOOL isJB = (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
-                (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
-                getenv("JB_ROOT_PATH") != NULL ||
-                getenv("ROOTHIDE_JB_ROOT_PATH") != NULL;
+    BOOL isJB = NO;
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    isJB = YES;
+#endif
+    if (!isJB) {
+        if (dlsym(RTLD_DEFAULT, "jbrand") != NULL ||
+            dlsym(RTLD_DEFAULT, "jbroot") != NULL ||
+            dlsym(RTLD_DEFAULT, "roothide_check_path") != NULL ||
+            dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL ||
+            dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL ||
+            getenv("JB_ROOT_PATH") != NULL ||
+            getenv("ROOTHIDE_JB_ROOT_PATH") != NULL ||
+            [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"]) {
+            isJB = YES;
+        }
+    }
     if (!isJB) {
         settings.showFloatingMenu = YES;
     }

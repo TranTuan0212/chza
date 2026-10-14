@@ -89,6 +89,33 @@ static inline __attribute__((unused)) BOOL has_system_preferenceloader(void) {
     return NO;
 }
 
+static inline BOOL is_device_jailbroken(void) {
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    return YES;
+#endif
+    if (dlsym(RTLD_DEFAULT, "jbrand") != NULL ||
+        dlsym(RTLD_DEFAULT, "jbroot") != NULL ||
+        dlsym(RTLD_DEFAULT, "roothide_check_path") != NULL ||
+        dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL ||
+        dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL ||
+        dlsym(RTLD_DEFAULT, "cydia_substitute_hook_functions") != NULL ||
+        getenv("JB_ROOT_PATH") != NULL ||
+        getenv("ROOTHIDE_JB_ROOT_PATH") != NULL ||
+        [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"]) {
+        return YES;
+    }
+
+    Dl_info info;
+    if (dladdr((const void *)is_device_jailbroken, &info) && info.dli_fname) {
+        NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
+        NSString *appBundle = [[NSBundle mainBundle] bundlePath];
+        if (appBundle && ![dpath hasPrefix:appBundle]) {
+            return YES; // Nạp từ ngoài App Bundle -> Chắc chắn là môi trường Jailbreak!
+        }
+    }
+    return NO;
+}
+
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
     // 1. Nếu trực tiếp người gọi (addr0) là code nằm trong Zalo.app (chính app Zalo gọi):
     if (addr0) {
@@ -377,15 +404,7 @@ static void purge_entire_sandbox_safely(void) {
         if (isAppExtension) {
             self.showFloatingMenu = NO;
         } else {
-            BOOL isJailbreak = (dynamic_MSHookFunction != NULL) ||
-                               (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
-                               (dlsym(RTLD_DEFAULT, "cydia_substitute_hook_functions") != NULL) ||
-                               (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
-                               getenv("JB_ROOT_PATH") != NULL ||
-                               getenv("ROOTHIDE_JB_ROOT_PATH") != NULL ||
-                               [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"] ||
-                               [[NSFileManager defaultManager] fileExistsAtPath:@"/Library/MobileSubstrate"] ||
-                               [[NSFileManager defaultManager] fileExistsAtPath:@"/usr/lib/libsubstitute.dylib"];
+            BOOL isJailbreak = is_device_jailbroken();
             if (!isJailbreak) {
                 // Trên máy Non-JB (Sideload / Clone) không có ứng dụng Cài Đặt iOS nên LUÔN BẬT nút nổi
                 self.showFloatingMenu = YES;
@@ -405,13 +424,13 @@ static void purge_entire_sandbox_safely(void) {
                 self.needsNewProfile = NO;
                 self.needsSandboxPurge = NO;
                 self.justGeneratedColdBoot = YES;
-                BOOL isJB = (dynamic_MSHookFunction != NULL) ||
-                            (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
-                            (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
-                            getenv("JB_ROOT_PATH") != NULL ||
-                            getenv("ROOTHIDE_JB_ROOT_PATH") != NULL;
+                BOOL isJB = is_device_jailbroken();
                 if (!isJB) {
                     self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật trên Non-JB sau khi Wipe
+                } else if (dict[@"showFloatingMenu"] != nil) {
+                    self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+                } else {
+                    self.showFloatingMenu = NO;
                 }
                 self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                 [self generateNewProfile];
@@ -874,6 +893,27 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        return 0;
+    }
+
+    if (strncmp(name, "hw.optional.arm.FEAT_", 21) == 0) {
+        uint32_t supported = 0;
+        if (strcmp(name, "hw.optional.arm.FEAT_AES") == 0 ||
+            strcmp(name, "hw.optional.arm.FEAT_PMULL") == 0 ||
+            strcmp(name, "hw.optional.arm.FEAT_SHA1") == 0 ||
+            strcmp(name, "hw.optional.arm.FEAT_SHA256") == 0) {
+            supported = 1;
+        } else if (settings.ncpu >= 6) {
+            if (strcmp(name, "hw.optional.arm.FEAT_DotProd") == 0 ||
+                strcmp(name, "hw.optional.arm.FEAT_FP16") == 0) {
+                supported = 1;
+            }
+        }
+        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE THEO CHIP] %u", name, supported]);
+        if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
+            memcpy(oldp, &supported, sizeof(uint32_t));
+        }
+        if (oldlenp) *oldlenp = sizeof(uint32_t);
         return 0;
     }
 
@@ -1411,6 +1451,41 @@ static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume)
         }
     }
     return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
+}
+
+// Hook POSIX stat & lstat để làm mới device_id và st_birthtimespec
+static int (*orig_stat)(const char *path, struct stat *buf);
+static int my_stat(const char *path, struct stat *buf) {
+    int ret = orig_stat ? orig_stat(path, buf) : stat(path, buf);
+    if (ret == 0 && is_tweak_active() && buf && path) {
+        if (strstr(path, "/var/mobile") || strstr(path, "Containers") || strstr(path, "Documents") || strstr(path, "Library")) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                buf->st_birthtimespec.tv_sec = fake_ctime;
+                buf->st_mtimespec.tv_sec = fake_ctime;
+                buf->st_ctimespec.tv_sec = fake_ctime;
+            }
+        }
+    }
+    return ret;
+}
+
+static int (*orig_lstat)(const char *path, struct stat *buf);
+static int my_lstat(const char *path, struct stat *buf) {
+    int ret = orig_lstat ? orig_lstat(path, buf) : lstat(path, buf);
+    if (ret == 0 && is_tweak_active() && buf && path) {
+        if (strstr(path, "/var/mobile") || strstr(path, "Containers") || strstr(path, "Documents") || strstr(path, "Library")) {
+            uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
+            if (btime > 0) {
+                time_t fake_ctime = (time_t)(btime - 864000);
+                buf->st_birthtimespec.tv_sec = fake_ctime;
+                buf->st_mtimespec.tv_sec = fake_ctime;
+                buf->st_ctimespec.tv_sec = fake_ctime;
+            }
+        }
+    }
+    return ret;
 }
 
 // ==========================================
@@ -2251,21 +2326,44 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 static NSString *get_runtime_environment_desc(void) {
     Dl_info info;
+    NSString *dpath = nil;
+    NSString *dname = @"Zalotweak.dylib";
     if (dladdr((const void *)get_runtime_environment_desc, &info) && info.dli_fname) {
-        NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
-        NSString *dname = [dpath lastPathComponent] ?: @"Zalotweak.dylib";
-        if ([dpath containsString:@"/jb-"] || [dpath containsString:@"roothide"]) {
-            return [NSString stringWithFormat:@"🛡️ Roothide (DEB) [%@]", dname];
-        } else if ([dpath containsString:@"/var/jb/"] || [dpath containsString:@"/var/jb"]) {
-            return [NSString stringWithFormat:@"⚡ Rootless (DEB) [%@]", dname];
-        } else if ([dpath containsString:@"/Library/MobileSubstrate/"] || [dpath containsString:@"/usr/lib/TweakInject/"]) {
-            return [NSString stringWithFormat:@"👑 Rootful (DEB) [%@]", dname];
-        } else if ([dpath containsString:@".app/"]) {
-            return [NSString stringWithFormat:@"📱 Sideload / Clone [%@]", dname];
-        }
-        return [NSString stringWithFormat:@"🔌 Custom Dylib [%@]", dname];
+        dpath = [NSString stringWithUTF8String:info.dli_fname];
+        dname = [dpath lastPathComponent] ?: @"Zalotweak.dylib";
     }
-    return @"❓ Không xác định";
+
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE)
+    return [NSString stringWithFormat:@"🛡️ Roothide (DEB) [%@]", dname];
+#elif defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    return [NSString stringWithFormat:@"⚡ Rootless (DEB) [%@]", dname];
+#endif
+
+    if (dlsym(RTLD_DEFAULT, "jbrand") != NULL ||
+        dlsym(RTLD_DEFAULT, "jbroot") != NULL ||
+        dlsym(RTLD_DEFAULT, "roothide_check_path") != NULL ||
+        (dpath && ([dpath containsString:@"/jb-"] || [dpath containsString:@"roothide"]))) {
+        return [NSString stringWithFormat:@"🛡️ Roothide (DEB) [%@]", dname];
+    }
+
+    if (dpath && [dpath containsString:@".app/"]) {
+        return [NSString stringWithFormat:@"📱 Sideload / Clone [%@]", dname];
+    }
+
+    if (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL ||
+        (dpath && ([dpath containsString:@"/var/jb/"] || [dpath containsString:@"/var/jb"]))) {
+        return [NSString stringWithFormat:@"⚡ Rootless (DEB) [%@]", dname];
+    }
+
+    if (dpath && ([dpath containsString:@"/Library/MobileSubstrate/"] || [dpath containsString:@"/usr/lib/TweakInject/"])) {
+        return [NSString stringWithFormat:@"👑 Rootful (DEB) [%@]", dname];
+    }
+
+    if (is_device_jailbroken()) {
+        return [NSString stringWithFormat:@"🛡️ Roothide (DEB) [%@]", dname];
+    }
+
+    return [NSString stringWithFormat:@"🔌 Custom Dylib [%@]", dname];
 }
 
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
@@ -2314,6 +2412,8 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
         if (fstatfs_ptr) {
             universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
+        universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
+        universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
             universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);

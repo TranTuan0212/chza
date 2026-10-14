@@ -150,9 +150,14 @@ GRANT EXECUTE ON FUNCTION public.verify_license(TEXT, TEXT, TEXT) TO authenticat
 -- DỮ LIỆU MẪU ĐỂ BẠN TEST NGAY (Gói Dùng Thử 1 Ngày)
 -- ==============================================================================
 
--- Key dùng thử đúng 1 ngày (Hết hạn sau 24 giờ kể từ lúc tạo)
+-- Key dùng thử 1 năm & Key VIP vĩnh viễn để test không lo quá hạn
 INSERT INTO public.licenses (license_key, expires_at, note)
-VALUES ('ZT-TRIAL-1DAY', NOW() + INTERVAL '1 day', 'Key dùng thử nghiệm 1 ngày')
+VALUES ('ZT-TRIAL-1DAY', NOW() + INTERVAL '365 days', 'Key dùng thử 1 năm')
 ON CONFLICT (license_key) DO UPDATE
-SET expires_at = NOW() + INTERVAL '1 day', bound_udid = NULL, is_active = TRUE;
+SET expires_at = NOW() + INTERVAL '365 days', bound_udid = NULL, is_active = TRUE;
+
+INSERT INTO public.licenses (license_key, expires_at, note)
+VALUES ('ZT-VIP-2026', NOW() + INTERVAL '3650 days', 'Key VIP 10 Năm')
+ON CONFLICT (license_key) DO UPDATE
+SET expires_at = NOW() + INTERVAL '3650 days', bound_udid = NULL, is_active = TRUE;
 

@@ -190,6 +190,20 @@ static NSString *detect_real_system_machine(void) {
     if (uname(&u) == 0 && strlen(u.machine) > 0) {
         return [NSString stringWithUTF8String:u.machine];
     }
+    // Đối chiếu theo độ phân giải màn hình vật lý thực tế của thiết bị
+    CGRect b = [UIScreen mainScreen].bounds;
+    CGFloat s = [UIScreen mainScreen].scale;
+    if (b.size.width == 375 && b.size.height == 667 && s == 2.0) {
+        return @"iPhone9,1"; // Màn iPhone 7 / 8 / SE 2 / SE 3
+    } else if (b.size.width == 390 && b.size.height == 844 && s == 3.0) {
+        return @"iPhone14,5"; // Màn iPhone 12 / 12 Pro / 13 / 13 Pro / 14
+    } else if (b.size.width == 414 && b.size.height == 896 && s == 2.0) {
+        return @"iPhone12,1"; // Màn iPhone 11 / XR
+    } else if (b.size.width == 414 && b.size.height == 736 && s == 3.0) {
+        return @"iPhone10,2"; // Màn iPhone 7 Plus / 8 Plus
+    } else if (b.size.width == 428 && b.size.height == 926 && s == 3.0) {
+        return @"iPhone14,3"; // Màn iPhone 13 Pro Max / 14 Plus
+    }
     return @"iPhone9,1";
 }
 
@@ -214,31 +228,51 @@ static NSString *detect_real_system_machine(void) {
         }
     }
 
+    // Nếu không khớp trực tiếp theo tên machine, dò theo kích thước màn hình vật lý
+    if (matchedBaseSpec == NULL) {
+        CGRect scrBounds = [UIScreen mainScreen].bounds;
+        CGFloat scrScale = [UIScreen mainScreen].scale;
+        for (size_t i = 0; i < specCount; i++) {
+            if (fabs(kAppleDeviceSpecs[i].width - scrBounds.size.width) < 1.0 &&
+                fabs(kAppleDeviceSpecs[i].height - scrBounds.size.height) < 1.0 &&
+                fabs(kAppleDeviceSpecs[i].scale - scrScale) < 0.1) {
+                matchedBaseSpec = &kAppleDeviceSpecs[i];
+                break;
+            }
+        }
+    }
+
     NSMutableArray *candidateSpecs = [NSMutableArray array];
     if (matchedBaseSpec != NULL) {
-        // Với các dòng giới hạn phần cứng (như iPhone 7, 7 Plus, 8, 8 Plus, X):
-        // BẮT BUỘC chỉ fake trong cùng Family (vd iPhone 7 fake sang iPhone 9,1 hoặc 9,3)
-        // để kích thước màn hình, độ phân giải, số nhân CPU, RAM và phiên bản iOS hoàn toàn ăn khớp!
+        // Ưu tiên 1: Cùng family dòng máy (iPhone 7 chỉ fake sang iPhone 7 khác; iPhone 13 chỉ fake sang iPhone 13 khác)
         for (size_t i = 0; i < specCount; i++) {
-            if (matchedBaseSpec->maxIOS <= 16) {
-                if (strcmp(kAppleDeviceSpecs[i].family, matchedBaseSpec->family) == 0) {
-                    [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
-                }
-            } else {
-                // Với các dòng từ iPhone 11 trở lên: fake sang các dòng cùng độ phân giải màn hình hoặc cùng thế hệ
+            if (strcmp(kAppleDeviceSpecs[i].family, matchedBaseSpec->family) == 0) {
+                [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+            }
+        }
+        // Nếu cùng family ít biến thể, mở rộng sang các dòng có CÙNG CHÍNH XÁC thông số màn hình và số nhân CPU
+        if (candidateSpecs.count <= 1) {
+            for (size_t i = 0; i < specCount; i++) {
                 if (fabs(kAppleDeviceSpecs[i].width - matchedBaseSpec->width) < 1.0 &&
                     fabs(kAppleDeviceSpecs[i].height - matchedBaseSpec->height) < 1.0 &&
-                    fabs(kAppleDeviceSpecs[i].scale - matchedBaseSpec->scale) < 0.1) {
-                    [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+                    fabs(kAppleDeviceSpecs[i].scale - matchedBaseSpec->scale) < 0.1 &&
+                    kAppleDeviceSpecs[i].ncpu == matchedBaseSpec->ncpu) {
+                    NSValue *val = [NSValue valueWithPointer:&kAppleDeviceSpecs[i]];
+                    if (![candidateSpecs containsObject:val]) {
+                        [candidateSpecs addObject:val];
+                    }
                 }
             }
         }
     }
 
-    // Nếu không có ứng viên khớp (hoặc thiết bị lạ), dự phòng theo danh sách chung
+    // Tuyệt đối không fallback sang danh sách máy khác thông số màn hình!
     if (candidateSpecs.count == 0) {
-        for (size_t i = 0; i < specCount; i++) {
-            [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+        if (matchedBaseSpec != NULL) {
+            [candidateSpecs addObject:[NSValue valueWithPointer:matchedBaseSpec]];
+        } else {
+            // Mặc định an toàn cho máy iPhone 7
+            [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[0]]];
         }
     }
 

@@ -765,13 +765,18 @@ static void sync_license_to_all_locations(void) {
 #pragma mark - DRM License Actions
 
 - (id)getRuntimeEnvironmentDisplayValue:(PSSpecifier *)specifier {
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
-    NSString *envFromApp = dict[@"runtimeEnvironment"];
-    if (envFromApp && envFromApp.length > 0) {
-        return envFromApp;
+#if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE)
+    return @"🛡️ Roothide (DEB)";
+#elif defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
+    return @"⚡ Rootless (DEB)";
+#endif
+
+    if (dlsym(RTLD_DEFAULT, "jbrand") != NULL ||
+        dlsym(RTLD_DEFAULT, "jbroot") != NULL ||
+        dlsym(RTLD_DEFAULT, "roothide_check_path") != NULL) {
+        return @"🛡️ Roothide (DEB)";
     }
-    
-    // Nếu Zalo chưa mở, tự phát hiện môi trường nạp của chính PreferenceBundle
+
     Dl_info info;
     if (dladdr((const void *)save_dict_to_all_locations, &info) && info.dli_fname) {
         NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
@@ -779,7 +784,18 @@ static void sync_license_to_all_locations(void) {
             return @"🛡️ Roothide (DEB)";
         } else if ([dpath containsString:@"/var/jb/"] || [dpath containsString:@"/var/jb"]) {
             return @"⚡ Rootless (DEB)";
-        } else if ([dpath containsString:@"/Library/PreferenceBundles/"]) {
+        }
+    }
+
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
+    NSString *envFromApp = dict[@"runtimeEnvironment"];
+    if (envFromApp && envFromApp.length > 0) {
+        return envFromApp;
+    }
+
+    if (dladdr((const void *)save_dict_to_all_locations, &info) && info.dli_fname) {
+        NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
+        if ([dpath containsString:@"/Library/PreferenceBundles/"]) {
             return @"👑 Rootful (DEB)";
         }
     }
