@@ -314,6 +314,23 @@ static void purge_entire_sandbox_safely(void) {
 - (void)loadSettings {
     NSString *path = getConfigPath();
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (!dict) {
+        CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak"));
+        CFDictionaryRef cfDict = CFPreferencesCopyMultiple(NULL, CFSTR("com.sonhu.zalotweak"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        if (cfDict) {
+            dict = [NSDictionary dictionaryWithDictionary:(__bridge NSDictionary *)cfDict];
+            CFRelease(cfDict);
+            if (dict.count > 0) {
+                // Tự động lưu bản sao vào container Sandbox để các lần sau đọc siêu tốc
+                NSString *home = NSHomeDirectory();
+                if (home) {
+                    NSString *localPref = [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
+                    [[NSFileManager defaultManager] createDirectoryAtPath:[localPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                    [dict writeToFile:localPref atomically:YES];
+                }
+            }
+        }
+    }
     if (dict) {
         self.enabled = [dict[@"enabled"] boolValue];
         self.hasConfiguredProfile = [dict[@"hasConfiguredProfile"] boolValue];
@@ -360,7 +377,13 @@ static void purge_entire_sandbox_safely(void) {
         if (isAppExtension) {
             self.showFloatingMenu = NO;
         } else {
-            BOOL isJailbreak = [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"] ||
+            BOOL isJailbreak = (dynamic_MSHookFunction != NULL) ||
+                               (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
+                               (dlsym(RTLD_DEFAULT, "cydia_substitute_hook_functions") != NULL) ||
+                               (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
+                               getenv("JB_ROOT_PATH") != NULL ||
+                               getenv("ROOTHIDE_JB_ROOT_PATH") != NULL ||
+                               [[NSFileManager defaultManager] fileExistsAtPath:@"/var/jb"] ||
                                [[NSFileManager defaultManager] fileExistsAtPath:@"/Library/MobileSubstrate"] ||
                                [[NSFileManager defaultManager] fileExistsAtPath:@"/usr/lib/libsubstitute.dylib"];
             if (!isJailbreak) {
@@ -369,7 +392,7 @@ static void purge_entire_sandbox_safely(void) {
             } else if (dict[@"showFloatingMenu"] != nil) {
                 self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
             } else {
-                self.showFloatingMenu = YES;
+                self.showFloatingMenu = NO; // Trên Jailbreak (Dopamine 2 / RootHide) có Settings nên mặc định ẩn nút nổi
             }
         }
 
@@ -382,7 +405,14 @@ static void purge_entire_sandbox_safely(void) {
                 self.needsNewProfile = NO;
                 self.needsSandboxPurge = NO;
                 self.justGeneratedColdBoot = YES;
-                self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật sau khi Wipe
+                BOOL isJB = (dynamic_MSHookFunction != NULL) ||
+                            (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
+                            (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
+                            getenv("JB_ROOT_PATH") != NULL ||
+                            getenv("ROOTHIDE_JB_ROOT_PATH") != NULL;
+                if (!isJB) {
+                    self.showFloatingMenu = YES; // Luôn đảm bảo nút nổi bật trên Non-JB sau khi Wipe
+                }
                 self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                 [self generateNewProfile];
                 return;
@@ -529,8 +559,8 @@ NSString *generate_random_mac(void) {
 
 - (void)generateNewProfile {
     self.hasConfiguredProfile = YES; // Kích hoạt cờ đã cấu hình profile
-    // 1. Sinh profile thiết bị từ ngân hàng 25 mẫu iPhone chuẩn phần cứng Apple
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN"];
+    // 1. Sinh profile thiết bị từ ngân hàng mẫu iPhone chuẩn phần cứng Apple khớp dòng máy thực tế
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN" baseMachine:get_real_hardware_machine()];
 
     self.deviceMachine = p.deviceMachine;
     self.deviceModel = p.deviceModel;

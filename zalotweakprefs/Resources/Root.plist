@@ -203,7 +203,7 @@
             <key>cell</key>
             <string>PSTitleValueCell</string>
             <key>label</key>
-            <string>CPU &amp; RAM Thật</string>
+            <string>CPU &amp; RAM (Giả Lập)</string>
             <key>get</key>
             <string>getHardwareSpecsValue:</string>
         </dict>

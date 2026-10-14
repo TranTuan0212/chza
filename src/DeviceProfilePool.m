@@ -1,66 +1,118 @@
 #import "DeviceProfilePool.h"
 #import <UIKit/UIKit.h>
+#import <sys/sysctl.h>
+#import <sys/utsname.h>
 
 typedef struct {
     const char *machine;        // hw.machine, vd: "iPhone14,5"
     const char *model;          // hw.model, vd: "D17AP"
-    uint32_t ncpu;              // 6
-    uint64_t ramBytes;          // 4GB, 6GB, 8GB
+    uint32_t ncpu;              // 2, 6
+    uint64_t ramBytes;          // 2GB, 3GB, 4GB, 6GB, 8GB
     CGFloat width;              // pt width
     CGFloat height;             // pt height
     CGFloat scale;              // 2.0 hoặc 3.0
     uint64_t supportedDisks[5]; // Danh sách bộ nhớ hợp lệ (bytes), kết thúc bằng 0
-    int minIOS;                 // 17 hoặc 18 (vd: iPhone 16 chỉ từ 18 trở lên)
+    int minIOS;                 // Phiên bản iOS tối thiểu
+    int maxIOS;                 // Phiên bản iOS tối đa (iPhone 7 = 15, iPhone 8/X = 16, iPhone 11+ = 18)
+    const char *family;         // Nhóm nhận diện: "iPhone 7", "iPhone 7 Plus", "iPhone 8", ...
 } AppleDeviceSpec;
 
-// Ngân hàng 25 dòng iPhone chuẩn xác 100% phần cứng của Apple
+// Ngân hàng thiết bị iPhone chuẩn xác 100% phần cứng của Apple
 static const AppleDeviceSpec kAppleDeviceSpecs[] = {
+    // iPhone 7 Series (A10 Fusion, 2 Cores, iOS 10 - 15.8.3, 375x667 @2x)
+    {"iPhone9,1",  "D10AP",   2, 2147483648ULL, 375.0, 667.0, 2.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7"},      // iPhone 7 Global
+    {"iPhone9,3",  "D101AP",  2, 2147483648ULL, 375.0, 667.0, 2.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7"},      // iPhone 7 GSM
+
+    // iPhone 7 Plus Series (A10 Fusion, 2 Cores, 3GB RAM, iOS 10 - 15.8.3, 414x736 @3x)
+    {"iPhone9,2",  "D11AP",   2, 3221225472ULL, 414.0, 736.0, 3.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7 Plus"}, // iPhone 7 Plus Global
+    {"iPhone9,4",  "D111AP",  2, 3221225472ULL, 414.0, 736.0, 3.0, {32000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 10, 15, "iPhone 7 Plus"}, // iPhone 7 Plus GSM
+
+    // iPhone 8 Series (A11 Bionic, 6 Cores, 2GB RAM, iOS 11 - 16.7.10, 375x667 @2x)
+    {"iPhone10,1", "D20AP",   6, 2147483648ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 11, 16, "iPhone 8"},      // iPhone 8 Global
+    {"iPhone10,4", "D201AP",  6, 2147483648ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 11, 16, "iPhone 8"},      // iPhone 8 GSM
+
+    // iPhone 8 Plus Series (A11 Bionic, 6 Cores, 3GB RAM, iOS 11 - 16.7.10, 414x736 @3x)
+    {"iPhone10,2", "D21AP",   6, 3221225472ULL, 414.0, 736.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 11, 16, "iPhone 8 Plus"}, // iPhone 8 Plus Global
+    {"iPhone10,5", "D211AP",  6, 3221225472ULL, 414.0, 736.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 11, 16, "iPhone 8 Plus"}, // iPhone 8 Plus GSM
+
+    // iPhone X (A11 Bionic, 6 Cores, 3GB RAM, iOS 11 - 16.7.10, 375x812 @3x)
+    {"iPhone10,3", "D22AP",   6, 3221225472ULL, 375.0, 812.0, 3.0, {64000000000ULL, 256000000000ULL, 0, 0},              11, 16, "iPhone X"},      // iPhone X Global
+    {"iPhone10,6", "D221AP",  6, 3221225472ULL, 375.0, 812.0, 3.0, {64000000000ULL, 256000000000ULL, 0, 0},              11, 16, "iPhone X"},      // iPhone X GSM
+
+    // iPhone XR / XS / XS Max Series (A12 Bionic)
+    {"iPhone11,8", "N841AP",  6, 3221225472ULL, 414.0, 896.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 12, 18, "iPhone XR"},
+    {"iPhone11,2", "D321AP",  6, 4294967296ULL, 375.0, 812.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 12, 18, "iPhone XS"},
+    {"iPhone11,6", "D331pAP", 6, 4294967296ULL, 414.0, 896.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 12, 18, "iPhone XS Max"},
+
     // iPhone 11 Series (A13 Bionic, 4GB RAM)
-    {"iPhone12,1", "N104AP", 6, 4294967296ULL, 414.0, 896.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17},
-    {"iPhone12,3", "D421AP", 6, 4294967296ULL, 375.0, 812.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17},
-    {"iPhone12,5", "D431AP", 6, 4294967296ULL, 414.0, 896.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17},
-    {"iPhone12,8", "D79AP",  6, 3221225472ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17}, // SE 2
+    {"iPhone12,1", "N104AP",  6, 4294967296ULL, 414.0, 896.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 13, 18, "iPhone 11"},
+    {"iPhone12,3", "D421AP",  6, 4294967296ULL, 375.0, 812.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 13, 18, "iPhone 11 Pro"},
+    {"iPhone12,5", "D431AP",  6, 4294967296ULL, 414.0, 896.0, 3.0, {64000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 13, 18, "iPhone 11 Pro Max"},
+    {"iPhone12,8", "D79AP",   6, 3221225472ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 13, 18, "iPhone SE 2"}, // SE 2
 
     // iPhone 12 Series (A14 Bionic)
-    {"iPhone13,1", "D52gAP", 6, 4294967296ULL, 360.0, 780.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17}, // 12 mini
-    {"iPhone13,2", "D53gAP", 6, 4294967296ULL, 390.0, 844.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17}, // 12
-    {"iPhone13,3", "D53pAP", 6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 12 Pro
-    {"iPhone13,4", "D54pAP", 6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 12 Pro Max
+    {"iPhone13,1", "D52gAP",  6, 4294967296ULL, 360.0, 780.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 14, 18, "iPhone 12 mini"}, // 12 mini
+    {"iPhone13,2", "D53gAP",  6, 4294967296ULL, 390.0, 844.0, 3.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 14, 18, "iPhone 12"},      // 12
+    {"iPhone13,3", "D53pAP",  6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 14, 18, "iPhone 12 Pro"},  // 12 Pro
+    {"iPhone13,4", "D54pAP",  6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 14, 18, "iPhone 12 Pro Max"},
 
     // iPhone 13 Series (A15 Bionic)
-    {"iPhone14,4", "D16AP",  6, 4294967296ULL, 360.0, 780.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 13 mini
-    {"iPhone14,5", "D17AP",  6, 4294967296ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 13
-    {"iPhone14,2", "D63AP",  6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 13 Pro
-    {"iPhone14,3", "D64AP",  6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 13 Pro Max
-    {"iPhone14,6", "D49AP",  6, 4294967296ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 17}, // SE 3
+    {"iPhone14,4", "D16AP",   6, 4294967296ULL, 360.0, 780.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 15, 18, "iPhone 13 mini"}, // 13 mini
+    {"iPhone14,5", "D17AP",   6, 4294967296ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 15, 18, "iPhone 13"},      // 13
+    {"iPhone14,2", "D63AP",   6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 15, 18, "iPhone 13 Pro"},
+    {"iPhone14,3", "D64AP",   6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 15, 18, "iPhone 13 Pro Max"},
+    {"iPhone14,6", "D49AP",   6, 4294967296ULL, 375.0, 667.0, 2.0, {64000000000ULL, 128000000000ULL, 256000000000ULL, 0}, 15, 18, "iPhone SE 3"}, // SE 3
 
     // iPhone 14 Series (A15 / A16 Bionic)
-    {"iPhone14,7", "D27AP",  6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 14
-    {"iPhone14,8", "D28AP",  6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 14 Plus
-    {"iPhone15,2", "D73AP",  6, 6442450944ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 14 Pro
-    {"iPhone15,3", "D74AP",  6, 6442450944ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 14 Pro Max
+    {"iPhone14,7", "D27AP",   6, 6442450944ULL, 390.0, 844.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 16, 18, "iPhone 14"},      // 14
+    {"iPhone14,8", "D28AP",   6, 6442450944ULL, 428.0, 926.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 16, 18, "iPhone 14 Plus"}, // 14 Plus
+    {"iPhone15,2", "D73AP",   6, 6442450944ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 16, 18, "iPhone 14 Pro"},
+    {"iPhone15,3", "D74AP",   6, 6442450944ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 16, 18, "iPhone 14 Pro Max"},
 
     // iPhone 15 Series (A16 / A17 Pro)
-    {"iPhone15,4", "D37AP",  6, 6442450944ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 15
-    {"iPhone15,5", "D38AP",  6, 6442450944ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17}, // 15 Plus
-    {"iPhone16,1", "D83AP",  6, 8589934592ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 15 Pro
-    {"iPhone16,2", "D84AP",  6, 8589934592ULL, 430.0, 932.0, 3.0, {256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17}, // 15 Pro Max (Từ 256GB)
+    {"iPhone15,4", "D37AP",   6, 6442450944ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 15"},      // 15
+    {"iPhone15,5", "D38AP",   6, 6442450944ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 17, 18, "iPhone 15 Plus"}, // 15 Plus
+    {"iPhone16,1", "D83AP",   6, 8589934592ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 15 Pro"},
+    {"iPhone16,2", "D84AP",   6, 8589934592ULL, 430.0, 932.0, 3.0, {256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 17, 18, "iPhone 15 Pro Max"}, // 15 Pro Max
 
     // iPhone 16 Series (A18 / A18 Pro, 8GB RAM, chỉ chạy iOS 18+)
-    {"iPhone17,3", "D47AP",  6, 8589934592ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 18}, // 16
-    {"iPhone17,4", "D48AP",  6, 8589934592ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 18}, // 16 Plus
-    {"iPhone17,1", "D93AP",  6, 8589934592ULL, 402.0, 874.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 18}, // 16 Pro
-    {"iPhone17,2", "D94AP",  6, 8589934592ULL, 440.0, 956.0, 3.0, {256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 18}  // 16 Pro Max
+    {"iPhone17,3", "D47AP",   6, 8589934592ULL, 393.0, 852.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 18, 18, "iPhone 16"},      // 16
+    {"iPhone17,4", "D48AP",   6, 8589934592ULL, 430.0, 932.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 0}, 18, 18, "iPhone 16 Plus"}, // 16 Plus
+    {"iPhone17,1", "D93AP",   6, 8589934592ULL, 402.0, 874.0, 3.0, {128000000000ULL, 256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 18, 18, "iPhone 16 Pro"},
+    {"iPhone17,2", "D94AP",   6, 8589934592ULL, 440.0, 956.0, 3.0, {256000000000ULL, 512000000000ULL, 1000000000000ULL, 0}, 18, 18, "iPhone 16 Pro Max"}
 };
 
 typedef struct {
-    const char *version; // "17.6.1"
-    const char *build;   // "21G93"
-    int major;           // 17 hoặc 18
+    const char *version; // "15.8.3", "17.6.1"
+    const char *build;   // "19H386", "21G93"
+    int major;           // 15, 16, 17, 18
 } AppleOSRelease;
 
 // Bảng phiên bản iOS thực tế & Build ID chính xác của Apple
 static const AppleOSRelease kAppleOSReleases[] = {
+    // iOS 15 Releases (iPhone 7 / 7 Plus)
+    {"15.4.1", "19E258",  15},
+    {"15.5",   "19F77",   15},
+    {"15.6",   "19G69",   15},
+    {"15.6.1", "19G82",   15},
+    {"15.7",   "19H12",   15},
+    {"15.7.1", "19H117",  15},
+    {"15.7.2", "19H218",  15},
+    {"15.7.5", "19H332",  15},
+    {"15.8",   "19H370",  15},
+    {"15.8.1", "19H380",  15},
+    {"15.8.2", "19H384",  15},
+    {"15.8.3", "19H386",  15},
+
+    // iOS 16 Releases (iPhone 8 / 8 Plus / X)
+    {"16.5",    "20F66",  16},
+    {"16.6",    "20G75",  16},
+    {"16.6.1",  "20G81",  16},
+    {"16.7.2",  "20H115", 16},
+    {"16.7.5",  "20H307", 16},
+    {"16.7.10", "20H350", 16},
+
+    // iOS 17 Releases
     {"17.4",   "21E219",  17},
     {"17.4.1", "21E236",  17},
     {"17.5",   "21F79",   17},
@@ -70,6 +122,8 @@ static const AppleOSRelease kAppleOSReleases[] = {
     {"17.7",   "21H16",   17},
     {"17.7.1", "21H216",  17},
     {"17.7.2", "21H221",  17},
+
+    // iOS 18 Releases
     {"18.0",   "22A3354", 18},
     {"18.0.1", "22A3370", 18},
     {"18.1",   "22B83",   18},
@@ -106,14 +160,72 @@ NSString *generate_apple_mac(void) {
     return [NSString stringWithFormat:@"%s:%02x:%02x:%02x", oui, arc4random_uniform(256), arc4random_uniform(256), arc4random_uniform(256)];
 }
 
+static NSString *detect_real_system_machine(void) {
+    char buf[64] = {0};
+    size_t size = sizeof(buf);
+    sysctlbyname("hw.machine", buf, &size, NULL, 0);
+    if (strlen(buf) > 0) {
+        return [NSString stringWithUTF8String:buf];
+    }
+    struct utsname u;
+    if (uname(&u) == 0 && strlen(u.machine) > 0) {
+        return [NSString stringWithUTF8String:u.machine];
+    }
+    return @"iPhone9,1";
+}
+
 @implementation ZTDeviceProfile
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region {
+    return [self generateRandomProfileForRegion:region baseMachine:nil];
+}
+
++ (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(NSString *)baseMachine {
     ZTDeviceProfile *profile = [[ZTDeviceProfile alloc] init];
 
-    // 1. CHỌN NGẪU NHIÊN 1 DÒNG IPHONE TRONG 25 MẪU PHẦN CỨNG CHUẨN
+    NSString *physicalMachine = baseMachine ?: detect_real_system_machine();
     size_t specCount = sizeof(kAppleDeviceSpecs) / sizeof(kAppleDeviceSpecs[0]);
-    AppleDeviceSpec spec = kAppleDeviceSpecs[arc4random_uniform((uint32_t)specCount)];
+
+    // 1. TÌM THÔNG SỐ VÀ DÒNG MÁY THỰC TẾ
+    const AppleDeviceSpec *matchedBaseSpec = NULL;
+    for (size_t i = 0; i < specCount; i++) {
+        if ([physicalMachine isEqualToString:[NSString stringWithUTF8String:kAppleDeviceSpecs[i].machine]]) {
+            matchedBaseSpec = &kAppleDeviceSpecs[i];
+            break;
+        }
+    }
+
+    NSMutableArray *candidateSpecs = [NSMutableArray array];
+    if (matchedBaseSpec != NULL) {
+        // Với các dòng giới hạn phần cứng (như iPhone 7, 7 Plus, 8, 8 Plus, X):
+        // BẮT BUỘC chỉ fake trong cùng Family (vd iPhone 7 fake sang iPhone 9,1 hoặc 9,3)
+        // để kích thước màn hình, độ phân giải, số nhân CPU, RAM và phiên bản iOS hoàn toàn ăn khớp!
+        for (size_t i = 0; i < specCount; i++) {
+            if (matchedBaseSpec->maxIOS <= 16) {
+                if (strcmp(kAppleDeviceSpecs[i].family, matchedBaseSpec->family) == 0) {
+                    [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+                }
+            } else {
+                // Với các dòng từ iPhone 11 trở lên: fake sang các dòng cùng độ phân giải màn hình hoặc cùng thế hệ
+                if (fabs(kAppleDeviceSpecs[i].width - matchedBaseSpec->width) < 1.0 &&
+                    fabs(kAppleDeviceSpecs[i].height - matchedBaseSpec->height) < 1.0 &&
+                    fabs(kAppleDeviceSpecs[i].scale - matchedBaseSpec->scale) < 0.1) {
+                    [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+                }
+            }
+        }
+    }
+
+    // Nếu không có ứng viên khớp (hoặc thiết bị lạ), dự phòng theo danh sách chung
+    if (candidateSpecs.count == 0) {
+        for (size_t i = 0; i < specCount; i++) {
+            [candidateSpecs addObject:[NSValue valueWithPointer:&kAppleDeviceSpecs[i]]];
+        }
+    }
+
+    NSValue *chosenSpecVal = candidateSpecs[arc4random_uniform((uint32_t)candidateSpecs.count)];
+    const AppleDeviceSpec *chosenSpec = (const AppleDeviceSpec *)[chosenSpecVal pointerValue];
+    AppleDeviceSpec spec = *chosenSpec;
 
     profile.deviceMachine = [NSString stringWithUTF8String:spec.machine];
     profile.deviceModel = [NSString stringWithUTF8String:spec.model];
@@ -123,12 +235,19 @@ NSString *generate_apple_mac(void) {
     profile.screenHeight = spec.height;
     profile.screenScale = spec.scale;
 
-    // 2. CHỌN BẢN iOS TƯƠNG THÍCH VỚI DÒNG MÁY (iPhone 16 chỉ chạy iOS 18+)
+    // 2. CHỌN BẢN iOS TƯƠNG THÍCH VỚI DÒNG MÁY (iPhone 7: 15.x, iPhone 16: 18+)
     size_t osCount = sizeof(kAppleOSReleases) / sizeof(kAppleOSReleases[0]);
     NSMutableArray *validOSList = [NSMutableArray array];
     for (size_t i = 0; i < osCount; i++) {
-        if (kAppleOSReleases[i].major >= spec.minIOS) {
+        if (kAppleOSReleases[i].major >= spec.minIOS && kAppleOSReleases[i].major <= spec.maxIOS) {
             [validOSList addObject:[NSValue valueWithPointer:&kAppleOSReleases[i]]];
+        }
+    }
+    if (validOSList.count == 0) {
+        for (size_t i = 0; i < osCount; i++) {
+            if (kAppleOSReleases[i].major >= spec.minIOS) {
+                [validOSList addObject:[NSValue valueWithPointer:&kAppleOSReleases[i]]];
+            }
         }
     }
     NSValue *chosenVal = validOSList[arc4random_uniform((uint32_t)validOSList.count)];
@@ -214,7 +333,7 @@ NSString *generate_apple_mac(void) {
             @"iPhone của Hằng", @"iPhone của Thành", @"iPhone của Yến", @"iPhone của Thắng",
             @"iPhone của Khoa", @"iPhone của Nhung", @"iPhone của Trung", @"iPhone của Hiếu",
             @"Tuấn", @"Linh", @"Huy", @"Nam", @"Trang", @"Hoàng", @"Mai", @"Đức",
-            @"iPhone 13", @"iPhone 14", @"iPhone 15", @"iPhone Pro"
+            [NSString stringWithUTF8String:spec.family] ?: @"iPhone"
         ];
         profile.deviceName = names[arc4random_uniform((uint32_t)names.count)];
 

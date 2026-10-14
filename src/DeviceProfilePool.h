@@ -33,6 +33,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *profileId;         // Profile UUID
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region;
++ (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(nullable NSString *)baseMachine;
 
 @end
 

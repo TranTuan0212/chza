@@ -1005,10 +1005,20 @@ UIViewController *ZTGetTopViewController(void) {
     settings.regionMode = targetRegion ?: @"VN";
     settings.needsNewProfile = YES;
     settings.needsSandboxPurge = YES;
-    settings.showFloatingMenu = YES;
+    BOOL isJB = (dlsym(RTLD_DEFAULT, "MSHookFunction") != NULL) ||
+                (dlsym(RTLD_DEFAULT, "ellekit_hook_c_function") != NULL) ||
+                getenv("JB_ROOT_PATH") != NULL ||
+                getenv("ROOTHIDE_JB_ROOT_PATH") != NULL;
+    if (!isJB) {
+        settings.showFloatingMenu = YES;
+    }
     [settings saveSettings];
 
-    // 6. Đóng app dứt khoát
+    // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
+    [[NSURLSession sharedSession] invalidateAndCancel];
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+
+    // 7. Đóng app dứt khoát
     UIViewController *top = get_top_view_controller();
     NSString *regionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
                            ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
@@ -1017,6 +1027,7 @@ UIViewController *ZTGetTopViewController(void) {
                      @"✅ ĐÃ DỌN SẠCH DỮ LIỆU ZALO CŨ!\n\n"
                      @"• SIM & Khu Vực: %@\n"
                      @"• Keychain & Cache: Làm sạch 100%%\n"
+                     @"• Socket & TCP: Đã ngắt kết nối tuyệt đối\n"
                      @"• File Backup .adbk: Được bảo vệ an toàn\n\n"
                      @"✈️ BƯỚC TIẾP THEO:\n"
                      @"Bật Chế Độ Máy Bay trong 5 giây rồi tắt đi để làm mới IP 4G, sau đó mở lại Zalo!",

@@ -433,6 +433,12 @@ static void save_dict_to_all_locations(NSDictionary *dict) {
     [dict writeToFile:PREFS_PATH atomically:YES];
     chmod([PREFS_PATH UTF8String], 0644);
 
+    // Đồng bộ vào cfprefsd để ứng dụng trong Sandbox luôn đọc được
+    for (id key in dict) {
+        CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)dict[key], CFSTR("com.sonhu.zalotweak"));
+    }
+    CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak"));
+
     NSArray *dataContainers = get_zalo_data_container_paths();
     for (NSString *dataContainer in dataContainers) {
         NSString *prefDir = [dataContainer stringByAppendingPathComponent:@"Library/Preferences"];
@@ -473,6 +479,12 @@ static void sync_license_to_all_locations(void) {
 
     [dict writeToFile:mainLicensePath atomically:YES];
     chmod([mainLicensePath UTF8String], 0666);
+
+    // Đồng bộ license vào cfprefsd để Zalo sandbox truy cập thông suốt
+    for (id key in dict) {
+        CFPreferencesSetAppValue((__bridge CFStringRef)key, (__bridge CFPropertyListRef)dict[key], CFSTR("com.sonhu.zalotweak.license"));
+    }
+    CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
 
     NSArray *dataContainers = get_zalo_data_container_paths();
     for (NSString *dataContainer in dataContainers) {
@@ -617,7 +629,7 @@ static void sync_license_to_all_locations(void) {
 
     NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
     dict[@"regionMode"] = chosenRegion;
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion];
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine()];
 
     dict[@"enabled"] = @(YES);
     dict[@"hasConfiguredProfile"] = @(YES);

@@ -149,6 +149,33 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
                     }
                 }
             }
+    // 5. Fallback đọc từ CFPreferences (cfprefsd - hỗ trợ vượt rào sandbox hoàn hảo)
+    if (!dict) {
+        CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
+        CFDictionaryRef cfDict = CFPreferencesCopyMultiple(NULL, CFSTR("com.sonhu.zalotweak.license"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        if (cfDict) {
+            dict = [NSDictionary dictionaryWithDictionary:(__bridge NSDictionary *)cfDict];
+            CFRelease(cfDict);
+            if (dict.count > 0 && dict[@"license_key"] && dict[@"token"]) {
+                loadedFrom = @"cfprefsd:com.sonhu.zalotweak.license";
+            } else {
+                dict = nil;
+            }
+        }
+    }
+    if (!dict) {
+        id k = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("license_key"), CFSTR("com.sonhu.zalotweak.license"));
+        id t = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("token"), CFSTR("com.sonhu.zalotweak.license"));
+        id exp = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("expires_at"), CFSTR("com.sonhu.zalotweak.license"));
+        id chk = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("last_check"), CFSTR("com.sonhu.zalotweak.license"));
+        if (k && t && exp) {
+            dict = @{
+                @"license_key": k,
+                @"token": t,
+                @"expires_at": exp,
+                @"last_check": chk ?: @([[NSDate date] timeIntervalSince1970])
+            };
+            loadedFrom = @"cfprefsd:com.sonhu.zalotweak.license";
         }
     }
 
@@ -246,6 +273,13 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
             chmod([grpFile UTF8String], 0666);
         }
     }
+
+    // 5. Lưu vào CFPreferences để cfprefsd đồng bộ xuyên sandbox
+    CFPreferencesSetAppValue(CFSTR("license_key"), (__bridge CFPropertyListRef)key, CFSTR("com.sonhu.zalotweak.license"));
+    CFPreferencesSetAppValue(CFSTR("expires_at"), (__bridge CFPropertyListRef)expiryStr, CFSTR("com.sonhu.zalotweak.license"));
+    CFPreferencesSetAppValue(CFSTR("token"), (__bridge CFPropertyListRef)token, CFSTR("com.sonhu.zalotweak.license"));
+    CFPreferencesSetAppValue(CFSTR("last_check"), (__bridge CFPropertyListRef)@([[NSDate date] timeIntervalSince1970]), CFSTR("com.sonhu.zalotweak.license"));
+    CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
 
     [self loadCachedLicense];
 }
