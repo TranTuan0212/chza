@@ -1830,7 +1830,7 @@ static int my_lstat(const char *path, struct stat *buf) {
             }
         }
     }
-    s_in_stat = NO;
+    s_in_lstat = NO;
     return ret;
 }
 
@@ -2657,6 +2657,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     if (is_tweak_active() && [obj isKindOfClass:[NSDictionary class]]) {
         NSDictionary *dict = (NSDictionary *)obj;
         if (dict[@"device_id"]) {
+            NSString *devId = [NSString stringWithFormat:@"%@", dict[@"device_id"]];
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 864000 ? (s.bootTimeSec - 864000ULL) : 1568160000ULL);
             uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
