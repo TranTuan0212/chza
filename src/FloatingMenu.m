@@ -10,6 +10,7 @@
 #import <CFNetwork/CFNetwork.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
+#import <dlfcn.h>
 
 // Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở
 static void sever_all_network_sockets_immediately(void) {
