@@ -3,6 +3,55 @@
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <dlfcn.h>
+#import <ifaddrs.h>
+#import <arpa/inet.h>
+#import <net/if.h>
+#import <Security/Security.h>
+
+static BOOL is_active_network_wifi_interface(void) {
+    struct ifaddrs *interfaces = NULL;
+    struct ifaddrs *temp_addr = NULL;
+    BOOL wifi = NO;
+    if (getifaddrs(&interfaces) == 0) {
+        temp_addr = interfaces;
+        while (temp_addr != NULL) {
+            if (temp_addr->ifa_addr && temp_addr->ifa_addr->sa_family == AF_INET) {
+                NSString *name = [NSString stringWithUTF8String:temp_addr->ifa_name];
+                if ([name isEqualToString:@"en0"] && (temp_addr->ifa_flags & IFF_UP) && (temp_addr->ifa_flags & IFF_RUNNING)) {
+                    wifi = YES;
+                    break;
+                }
+            }
+            temp_addr = temp_addr->ifa_next;
+        }
+        freeifaddrs(interfaces);
+    }
+    return wifi;
+}
+
+static NSInteger count_live_zalo_keychain_items(void) {
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword
+    ];
+    NSInteger total = 0;
+    for (id secClass in secClasses) {
+        NSDictionary *query = @{
+            (__bridge id)kSecClass: secClass,
+            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll,
+            (__bridge id)kSecReturnAttributes: @YES
+        };
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+        if (status == errSecSuccess && result) {
+            if ([(__bridge id)result isKindOfClass:[NSArray class]]) {
+                total += [(__bridge NSArray *)result count];
+            }
+            CFRelease(result);
+        }
+    }
+    return total;
+}
 
 static NSString *get_zt_prefs_filepath(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
@@ -429,6 +478,11 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
     // 1. Ô Nhập Liệu SĐT & Proxy (Top Input Card)
     [self.contentStack addArrangedSubview:[self getOrCreatePairInputCard]];
+
+    // Cập nhật trạng thái mạng & vệ sinh Keychain thực tế
+    self.info.isWifiActive = is_active_network_wifi_interface();
+    self.info.networkTypeDesc = self.info.isWifiActive ? @"WiFi (Mạng Nhà)" : @"Cellular 4G/LTE";
+    self.info.keychainItemCount = count_live_zalo_keychain_items();
 
     // Tính toán tiêu chuẩn An Toàn Tổng Thể
     BOOL hasWipedHistory = (self.info.lastWipedIP.length > 0);
@@ -1299,6 +1353,74 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:nil
                                           isWarning:NO]];
 
+    // 1. Loại Mạng Kết Nối (WiFi vs 4G)
+    NSString *netTypeVal = self.info.networkTypeDesc ?: (self.info.isWifiActive ? @"WiFi (Mạng Nhà)" : @"Cellular 4G/LTE");
+    NSString *netTypeBadge = self.info.isWifiActive ? @"Cảnh Báo ⚠️" : @"Khuyên Dùng ✅";
+    [inner addArrangedSubview:[self createRowWithKey:@"Loại Mạng Kết Nối"
+                                              value:netTypeVal
+                                              badge:netTypeBadge
+                                          isWarning:self.info.isWifiActive]];
+
+    // 2. Trạng Thái Xoay IP
+    NSString *ipRotateVal = isSameIP ? @"TRÙNG IP LẦN TRƯỚC!" : (isDifferentIP ? @"Đã Đổi IP Mới" : @"Chưa Có Đối Chứng");
+    NSString *ipRotateBadge = isSameIP ? @"🚨 CHƯA XOAY IP" : (isDifferentIP ? @"Sạch Sẽ ✅" : @"---");
+    [inner addArrangedSubview:[self createRowWithKey:@"Trạng Thái Xoay IP"
+                                              value:ipRotateVal
+                                              badge:ipRotateBadge
+                                          isWarning:isSameIP]];
+
+    // Cảnh báo nếu đang dùng WiFi
+    if (self.info.isWifiActive) {
+        UIView *wifiBox = [[UIView alloc] init];
+        wifiBox.translatesAutoresizingMaskIntoConstraints = NO;
+        wifiBox.layer.cornerRadius = 8;
+        wifiBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.6 blue:0.1 alpha:0.12];
+        wifiBox.layer.borderWidth = 1.0;
+        wifiBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.6 blue:0.1 alpha:0.4].CGColor;
+
+        UILabel *wifiLbl = [[UILabel alloc] init];
+        wifiLbl.translatesAutoresizingMaskIntoConstraints = NO;
+        wifiLbl.numberOfLines = 0;
+        wifiLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        wifiLbl.textColor = [UIColor colorWithRed:0.85 green:0.5 blue:0.0 alpha:1.0];
+        wifiLbl.text = @"⚠️ CẢNH BÁO MẠNG WIFI: Bạn đang dùng mạng WiFi cố định!\n• Nếu WiFi này đã từng có tài khoản Zalo bị Vô Hiệu Hoá, server sẽ liên kết IP và khoá tiếp nick mới.\n• KHUYÊN DÙNG: Tắt WiFi, bật 4G và Bật/Tắt Chế Độ Máy Bay trước khi đăng ký.";
+        [wifiBox addSubview:wifiLbl];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [wifiLbl.topAnchor constraintEqualToAnchor:wifiBox.topAnchor constant:8],
+            [wifiLbl.leadingAnchor constraintEqualToAnchor:wifiBox.leadingAnchor constant:10],
+            [wifiLbl.trailingAnchor constraintEqualToAnchor:wifiBox.trailingAnchor constant:-10],
+            [wifiLbl.bottomAnchor constraintEqualToAnchor:wifiBox.bottomAnchor constant:-8]
+        ]];
+        [inner addArrangedSubview:wifiBox];
+    }
+
+    // Cảnh báo nếu trùng IP lần Wipe trước
+    if (isSameIP) {
+        UIView *sameIpBox = [[UIView alloc] init];
+        sameIpBox.translatesAutoresizingMaskIntoConstraints = NO;
+        sameIpBox.layer.cornerRadius = 8;
+        sameIpBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.25 blue:0.2 alpha:0.15];
+        sameIpBox.layer.borderWidth = 1.0;
+        sameIpBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:0.5].CGColor;
+
+        UILabel *sameIpLbl = [[UILabel alloc] init];
+        sameIpLbl.translatesAutoresizingMaskIntoConstraints = NO;
+        sameIpLbl.numberOfLines = 0;
+        sameIpLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightBold];
+        sameIpLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
+        sameIpLbl.text = @"🚨 NGUY CƠ CAO - CHƯA XOAY IP:\n• Địa chỉ IP hiện tại TRÙNG HOÀN TOÀN với IP lần Wipe trước!\n• NẾU NICK TRƯỚC VỪA BỊ KHOÁ: Hãy Bật Chế Độ Máy Bay (đợi 5s) rồi Tắt để nhà mạng cấp IP 4G mới toanh trước khi nhập OTP!";
+        [sameIpBox addSubview:sameIpLbl];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [sameIpLbl.topAnchor constraintEqualToAnchor:sameIpBox.topAnchor constant:8],
+            [sameIpLbl.leadingAnchor constraintEqualToAnchor:sameIpBox.leadingAnchor constant:10],
+            [sameIpLbl.trailingAnchor constraintEqualToAnchor:sameIpBox.trailingAnchor constant:-10],
+            [sameIpLbl.bottomAnchor constraintEqualToAnchor:sameIpBox.bottomAnchor constant:-8]
+        ]];
+        [inner addArrangedSubview:sameIpBox];
+    }
+
     if (self.info.ipCheckCompleted && self.info.ipIsHosting) {
         UIView *warnBox = [[UIView alloc] init];
         warnBox.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1506,6 +1628,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định"
                                               badge:self.info.keychainIsolated ? @"Cách ly 100% ✅" : @"Chưa cô lập ❌"
                                           isWarning:!self.info.keychainIsolated]];
+
+    NSString *kcVal = (self.info.keychainItemCount == 0) ? @"0 Token (Sạch 100%)" : [NSString stringWithFormat:@"%ld Token còn sót", (long)self.info.keychainItemCount];
+    NSString *kcBadge = (self.info.keychainItemCount == 0) ? @"Sạch 100% ✅" : @"Cần Wipe Lại ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Vệ Sinh Keychain Zalo"
+                                              value:kcVal
+                                              badge:kcBadge
+                                          isWarning:(self.info.keychainItemCount > 0)]];
 
     return card;
 }

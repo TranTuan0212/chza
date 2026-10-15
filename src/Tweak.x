@@ -1826,6 +1826,15 @@ static OSStatus my_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result)
     if (!is_tweak_active()) {
         return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : SecItemCopyMatching(query, result);
     }
+    if ([ZTSettings sharedSettings].enableAuditLog && query) {
+        NSDictionary *qDict = (__bridge NSDictionary *)query;
+        id s = qDict[(__bridge id)kSecAttrService];
+        id a = qDict[(__bridge id)kSecAttrAccount];
+        id g = qDict[(__bridge id)kSecAttrAccessGroup];
+        if (s || a) {
+            logAudit(@"KEYCHAIN-READ", [NSString stringWithFormat:@"🔍 Zalo truy vấn Keychain: Service='%@' | Account='%@' | Group='%@'", s ?: @"*", a ?: @"*", g ?: @"default"]);
+        }
+    }
     NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
     CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
     return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(targetQuery, result) : SecItemCopyMatching(targetQuery, result);
@@ -2663,6 +2672,26 @@ static BOOL s_in_bundle_hook = NO;
     // iOS sẽ trả về nil gây lỗi đọc ghi Groups hoặc LevelDB. Điều hướng an toàn về standardUserDefaults!
     logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"SuiteName '%@' trả về nil (thiếu App Group) -> Điều hướng an toàn về standardUserDefaults", suitename ?: @"(null)"]);
     return [NSUserDefaults standardUserDefaults];
+}
+
+- (id)objectForKey:(NSString *)defaultName {
+    id val = %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+        NSString *lower = [defaultName lowercaseString];
+        if ([lower containsString:@"device"] ||
+            [lower containsString:@"token"] ||
+            [lower containsString:@"session"] ||
+            [lower containsString:@"auth"] ||
+            [lower containsString:@"uuid"] ||
+            [lower containsString:@"did"] ||
+            [lower containsString:@"zaid"] ||
+            [lower containsString:@"login"] ||
+            [lower containsString:@"risk"] ||
+            [lower containsString:@"banned"]) {
+            logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> %@", defaultName, val ? [NSString stringWithFormat:@"[Độ dài %lu]", (unsigned long)[val description].length] : @"(nil)"]);
+        }
+    }
+    return val;
 }
 
 %end
@@ -3553,6 +3582,60 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
     });
 }
 
+static void scan_zalo_security_modules_async(void) {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+        @autoreleasepool {
+            // Đợi 2 giây để Zalo hoàn tất nạp các dynamic frameworks vào bộ nhớ
+            [NSThread sleepForTimeInterval:2.0];
+
+            int numClasses = objc_getClassList(NULL, 0);
+            if (numClasses <= 0) return;
+            Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
+            if (!classes) return;
+            numClasses = objc_getClassList(classes, numClasses);
+
+            NSMutableArray *foundModules = [NSMutableArray array];
+
+            for (int i = 0; i < numClasses; i++) {
+                Class cls = classes[i];
+                const char *clsName = class_getName(cls);
+                if (!clsName) continue;
+
+                const char *imgName = class_getImageName(cls);
+                if (!imgName) continue;
+                // Chỉ quét các class thuộc Zalo hoặc Frameworks nhúng của Zalo
+                if (!strstr(imgName, "Zalo") && !strstr(imgName, "ZDK") && !strstr(imgName, "vn.com.vng.zingalo")) {
+                    continue;
+                }
+
+                if (strcasestr(clsName, "Security") ||
+                    strcasestr(clsName, "Fingerprint") ||
+                    strcasestr(clsName, "Integrity") ||
+                    strcasestr(clsName, "Jailbreak") ||
+                    strcasestr(clsName, "Detector") ||
+                    strcasestr(clsName, "Anti") ||
+                    strcasestr(clsName, "Risk") ||
+                    strcasestr(clsName, "ZShield") ||
+                    strcasestr(clsName, "DeviceID") ||
+                    strcasestr(clsName, "DeviceInfo") ||
+                    strcasestr(clsName, "Hardware") ||
+                    strcasestr(clsName, "Biometric") ||
+                    strcasestr(clsName, "Telemetry")) {
+                    [foundModules addObject:[NSString stringWithUTF8String:clsName]];
+                }
+            }
+            free(classes);
+
+            if (foundModules.count > 0) {
+                [foundModules sortUsingSelector:@selector(compare:)];
+                logAudit(@"ZALO-SECURITY-RADAR", [NSString stringWithFormat:@"🛡️ [RADAR TOÀN DIỆN] Phát hiện %lu module bảo mật/định danh của Zalo:\n   • %@", (unsigned long)foundModules.count, [foundModules componentsJoinedByString:@"\n   • "]]);
+            } else {
+                logAudit(@"ZALO-SECURITY-RADAR", @"🛡️ [RADAR TOÀN DIỆN] Đã quét toàn bộ binary Zalo nhưng không phát hiện module bảo mật riêng biệt.");
+            }
+        }
+    });
+}
+
 %ctor {
     @autoreleasepool {
         s_is_cold_boot_phase = YES;
@@ -3569,6 +3652,10 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 
         // 2. Kích hoạt toàn bộ hook Objective-C của Logos sau khi cấu hình đã sẵn sàng
         %init;
+
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            scan_zalo_security_modules_async();
+        }
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),

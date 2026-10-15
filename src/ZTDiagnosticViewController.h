@@ -42,6 +42,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL screenResolutionPassed;
 
 @property (nonatomic, assign) BOOL keychainIsolated;
+@property (nonatomic, assign) NSInteger keychainItemCount;
+@property (nonatomic, assign) BOOL isWifiActive;
+@property (nonatomic, copy, nullable) NSString *networkTypeDesc;
 @property (nonatomic, copy) NSString *runtimeEnvDesc;
 
 // Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ
