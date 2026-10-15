@@ -89,13 +89,16 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL phoneCheckCompleted;
 @property (nonatomic, assign) BOOL phonePassed;
 
-// Kết quả Đối Chiếu Chéo 3 Chiều
+// Kết quả Đối Chiếu Chéo 3 Chiều & Nhà Mạng
 @property (nonatomic, assign) BOOL matchGeoPassed;
 @property (nonatomic, copy, nullable) NSString *matchGeoReason;
 @property (nonatomic, assign) BOOL matchTimezonePassed;
 @property (nonatomic, copy, nullable) NSString *matchTimezoneReason;
 @property (nonatomic, assign) BOOL matchProfilePassed;
 @property (nonatomic, copy, nullable) NSString *matchProfileReason;
+@property (nonatomic, assign) BOOL matchCarrierPassed;
+@property (nonatomic, copy, nullable) NSString *matchCarrierReason;
+@property (nonatomic, copy, nullable) NSString *suggestedCarrier;
 
 @end
 

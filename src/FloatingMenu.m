@@ -874,21 +874,33 @@ UIViewController *ZTGetTopViewController(void) {
                                                                    message:@"Chọn khu vực SIM mong muốn cho thiết bị mới. Sau khi chọn, hệ thống sẽ dọn sạch toàn bộ dữ liệu Zalo cũ và tự động thoát app:"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"VN" from:top];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Viettel (452-04)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Viettel" from:top];
     }]];
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"US_STUDENT" from:top];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM VinaPhone (452-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VINAPHONE" from:top];
     }]];
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"US" from:top];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM MobiFone (452-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE" from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Việt Nam)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:nil from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Du Học Sinh Mỹ (+1) [T-Mobile / AT&T]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"US_STUDENT" preferredCarrier:nil from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"US" preferredCarrier:nil from:top];
     }]];
 
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", s.regionMode ?: @"VN"];
     [alert addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:s.regionMode ?: @"VN" from:top];
+        [self startInAppDeepWipeSequenceWithRegion:s.regionMode ?: @"VN" preferredCarrier:s.preferredCarrier from:top];
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
@@ -902,24 +914,32 @@ UIViewController *ZTGetTopViewController(void) {
 }
 
 - (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion from:(UIViewController *)top {
+    [self startInAppDeepWipeSequenceWithRegion:targetRegion preferredCarrier:nil from:top];
+}
+
+- (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top {
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🧹 Đang Dọn Dẹp Dữ Liệu..."
                                                                    message:@"Đang ghi nhận IP mạng 4G trước khi wipe và làm sạch sandbox..."
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [top presentViewController:loading animated:YES completion:^{
         fetch_public_ip(^(NSString *currentIP) {
             [loading dismissViewControllerAnimated:YES completion:^{
-                [self performInAppDeepWipeWithRegion:targetRegion currentIP:currentIP];
+                [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP];
             }];
         });
     }];
 }
 
 - (void)performInAppDeepWipe {
-    [self performInAppDeepWipeWithRegion:[ZTSettings sharedSettings].regionMode ?: @"VN" currentIP:nil];
+    [self performInAppDeepWipeWithRegion:[ZTSettings sharedSettings].regionMode ?: @"VN" preferredCarrier:[ZTSettings sharedSettings].preferredCarrier currentIP:nil];
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion {
-    [self performInAppDeepWipeWithRegion:targetRegion currentIP:nil];
+    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:nil currentIP:nil];
+}
+
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion currentIP:(NSString *)currentIP {
+    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:nil currentIP:currentIP];
 }
 
 static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPath) {
@@ -960,7 +980,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
 }
 
-- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion currentIP:(NSString *)currentIP {
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         return;
     }
@@ -1081,6 +1101,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.regionMode = targetRegion ?: @"VN";
+    settings.preferredCarrier = preferredCarrier ?: @"";
     settings.needsNewProfile = YES;
     settings.needsSandboxPurge = YES;
     BOOL isJB = NO;
@@ -1115,8 +1136,9 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 7. Đóng app dứt khoát
     UIViewController *top = get_top_view_controller();
-    NSString *regionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                           ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    NSString *baseRegionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                               ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+    NSString *regionDesc = (preferredCarrier.length > 0) ? [NSString stringWithFormat:@"%@ (Cắm sẵn SIM %@)", baseRegionDesc, preferredCarrier] : baseRegionDesc;
 
     NSString *msg = [NSString stringWithFormat:
                      @"✅ ĐÃ DỌN SẠCH DỮ LIỆU ZALO CŨ!\n\n"

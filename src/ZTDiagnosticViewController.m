@@ -161,6 +161,20 @@ static void fetch_geoip_data(NSString *targetIP, NSDictionary *proxyDict, void (
     [task resume];
 }
 
+static NSString *extract_carrier_brand(NSString *carrierStr) {
+    if (!carrierStr) return @"";
+    NSString *lower = [carrierStr lowercaseString];
+    if ([lower containsString:@"viettel"]) return @"Viettel";
+    if ([lower containsString:@"vina"] || [lower containsString:@"itel"] || [lower containsString:@"wintel"]) return @"VINAPHONE";
+    if ([lower containsString:@"mobi"]) return @"VN MOBIFONE";
+    if ([lower containsString:@"vietnamobile"]) return @"Vietnamobile";
+    if ([lower containsString:@"gmobile"]) return @"Gmobile";
+    if ([lower containsString:@"verizon"]) return @"Verizon";
+    if ([lower containsString:@"at&t"]) return @"AT&T";
+    if ([lower containsString:@"t-mobile"] || [lower containsString:@"mint"]) return @"T-Mobile";
+    return @"";
+}
+
 static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRegion,
                                   NSString **outCountryCode, NSString **outCountryName,
                                   NSString **outCarrier, NSString **outLineType,
@@ -227,7 +241,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                        [p3 isEqualToString:@"081"] || [p3 isEqualToString:@"082"] || [p3 isEqualToString:@"083"] ||
                        [p3 isEqualToString:@"084"] || [p3 isEqualToString:@"085"]) {
                 carrier = @"Vinaphone (SIM Di Động Thật)";
-            } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"]) {
+            } else if ([p3 isEqualToString:@"087"] || [p3 isEqualToString:@"055"]) {
+                carrier = @"Vinaphone / MVNO (iTel, Wintel)";
+            } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"] || [p3 isEqualToString:@"052"]) {
                 carrier = @"Vietnamobile (SIM Di Động Thật)";
             } else if ([p3 isEqualToString:@"059"] || [p3 isEqualToString:@"099"]) {
                 carrier = @"Gmobile (SIM Di Động Thật)";
@@ -433,6 +449,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     BOOL phoneTestedAndPassed = (self.info.phoneCheckCompleted &&
                                  self.info.phonePassed &&
                                  self.info.matchGeoPassed &&
+                                 self.info.matchCarrierPassed &&
                                  (!self.info.ipCheckCompleted || self.info.matchTimezonePassed) &&
                                  (!self.info.ipCheckCompleted || self.info.ipCleanPassed));
 
@@ -953,6 +970,31 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 strongSelf.info.matchTimezoneReason = @"Chưa xác định";
             }
 
+            // Đối Chiếu Nhà Mạng Viễn Thông (Carrier Match)
+            if (strongSelf.info.phoneCheckCompleted) {
+                NSString *phoneBrand = extract_carrier_brand(strongSelf.info.phoneCarrierName);
+                NSString *simBrand = extract_carrier_brand(strongSelf.info.carrierName);
+                if (phoneBrand.length > 0 && simBrand.length > 0) {
+                    if ([phoneBrand isEqualToString:simBrand]) {
+                        strongSelf.info.matchCarrierPassed = YES;
+                        strongSelf.info.suggestedCarrier = phoneBrand;
+                        strongSelf.info.matchCarrierReason = [NSString stringWithFormat:@"Khớp hoàn hảo nhà mạng: %@ ✅", phoneBrand];
+                    } else {
+                        strongSelf.info.matchCarrierPassed = NO;
+                        strongSelf.info.suggestedCarrier = phoneBrand;
+                        strongSelf.info.matchCarrierReason = [NSString stringWithFormat:@"LỆCH NHÀ MẠNG: SĐT là [%@] nhưng SIM máy là [%@]! ⚠️", phoneBrand, simBrand];
+                    }
+                } else {
+                    strongSelf.info.matchCarrierPassed = YES;
+                    strongSelf.info.suggestedCarrier = (phoneBrand.length > 0) ? phoneBrand : nil;
+                    strongSelf.info.matchCarrierReason = @"Không đủ dữ liệu nhà mạng";
+                }
+            } else {
+                strongSelf.info.matchCarrierPassed = YES;
+                strongSelf.info.suggestedCarrier = nil;
+                strongSelf.info.matchCarrierReason = @"Chưa kiểm tra";
+            }
+
             [strongSelf reloadCardViews];
         });
     });
@@ -1014,6 +1056,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             [reasons appendString:@"• Chưa nhập Số điện thoại dự định đăng ký để kiểm tra độ khớp!\n"];
         } else {
             if (!self.info.matchGeoPassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchGeoReason ?: @"Lệch quốc gia"]];
+            if (!self.info.matchCarrierPassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchCarrierReason ?: @"Lệch nhà mạng"]];
             if (!self.info.phonePassed) [reasons appendString:[NSString stringWithFormat:@"• %@\n", self.info.matchProfileReason ?: @"SĐT không tương thích"]];
         }
 
@@ -1073,6 +1116,21 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"Đã nhận diện ✅"
                                           isWarning:NO]];
 
+    NSString *carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
+                                self.info.carrierName ?: @"Viettel",
+                                self.info.carrierMCC ?: @"452",
+                                self.info.carrierMNC ?: @"04"];
+    [inner addArrangedSubview:[self createRowWithKey:@"SIM Ảo Trong Máy"
+                                              value:carrierDetails
+                                              badge:@"Đang cắm 📱"
+                                          isWarning:NO]];
+
+    NSString *carrierBadge = self.info.matchCarrierPassed ? @"Khớp Tuyệt Đối ✅" : @"LỆCH NHÀ MẠNG ⚠️";
+    [inner addArrangedSubview:[self createRowWithKey:@"Đối Chiếu Nhà Mạng"
+                                              value:self.info.matchCarrierReason ?: @"---"
+                                              badge:carrierBadge
+                                          isWarning:!self.info.matchCarrierPassed]];
+
     [inner addArrangedSubview:[self createRowWithKey:@"Loại Đầu Số (Line Type)"
                                               value:self.info.phoneLineType ?: @"---"
                                               badge:self.info.phoneIsVoIP ? @"Số ảo ❌" : @"SIM Thật ✅"
@@ -1084,7 +1142,85 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:compatBadge
                                           isWarning:!self.info.phonePassed]];
 
+    if (!self.info.matchCarrierPassed && self.info.suggestedCarrier.length > 0) {
+        UIView *warnBox = [[UIView alloc] init];
+        warnBox.translatesAutoresizingMaskIntoConstraints = NO;
+        warnBox.layer.cornerRadius = 8;
+        warnBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.3 blue:0.2 alpha:0.12];
+        warnBox.layer.borderWidth = 1.0;
+        warnBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.2 alpha:0.4].CGColor;
+
+        UILabel *warnLbl = [[UILabel alloc] init];
+        warnLbl.translatesAutoresizingMaskIntoConstraints = NO;
+        warnLbl.numberOfLines = 0;
+        warnLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        warnLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
+        warnLbl.text = [NSString stringWithFormat:
+            @"⚠️ CẢNH BÁO LỆCH NHÀ MẠNG:\n"
+            @"• SĐT định reg là mạng %@, nhưng cấu hình máy hiện tại lại cắm SIM %@!\n"
+            @"• Đổi SIM nóng trong phiên đang chạy dễ làm Zalo ghi nhận bất thường (SIM Swap/Carrier Mismatch).\n"
+            @"👉 Hãy bấm nút Deep Wipe bên dưới để cấp máy mới cắm sẵn SIM %@ ngay từ giây đầu tiên!",
+            self.info.suggestedCarrier, self.info.carrierName ?: @"Khác", self.info.suggestedCarrier];
+        [warnBox addSubview:warnLbl];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [warnLbl.topAnchor constraintEqualToAnchor:warnBox.topAnchor constant:8],
+            [warnLbl.leadingAnchor constraintEqualToAnchor:warnBox.leadingAnchor constant:10],
+            [warnLbl.trailingAnchor constraintEqualToAnchor:warnBox.trailingAnchor constant:-10],
+            [warnLbl.bottomAnchor constraintEqualToAnchor:warnBox.bottomAnchor constant:-8]
+        ]];
+        [inner addArrangedSubview:warnBox];
+
+        UIButton *wipeCarrierBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        wipeCarrierBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [wipeCarrierBtn.heightAnchor constraintEqualToConstant:44].active = YES;
+        wipeCarrierBtn.layer.cornerRadius = 10;
+        wipeCarrierBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        NSString *btnTitle = [NSString stringWithFormat:@"🧹 DEEP WIPE & CẤP MÁY CẮM SIM [%@]", self.info.suggestedCarrier.uppercaseString];
+        [wipeCarrierBtn setTitle:btnTitle forState:UIControlStateNormal];
+        [wipeCarrierBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        wipeCarrierBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
+        [wipeCarrierBtn addTarget:self action:@selector(wipeWithSuggestedCarrierAction) forControlEvents:UIControlEventTouchUpInside];
+        [inner addArrangedSubview:wipeCarrierBtn];
+    }
+
     return card;
+}
+
+- (void)wipeWithSuggestedCarrierAction {
+    NSString *carrier = self.info.suggestedCarrier ?: @"Viettel";
+    NSString *msg = [NSString stringWithFormat:
+        @"Hệ thống sẽ thực hiện:\n\n"
+        @"1. 🧹 Quét sạch toàn bộ Sandbox, Keychain và Caches Zalo cũ.\n"
+        @"2. 📱 Sinh thiết bị mới 100%% cắm sẵn SIM [%@] ngay từ giây đầu tiên khởi động.\n"
+        @"3. ✈️ Tự động đóng app an toàn để bạn Bật/Tắt Chế Độ Máy Bay đổi IP 4G trước khi mở lại.\n\n"
+        @"Bạn có chắc chắn muốn tiến hành Deep Wipe ngay không?",
+        carrier.uppercaseString];
+
+    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"🧹 XÁC NHẬN DEEP WIPE"
+                                                                          message:msg
+                                                                   preferredStyle:UIAlertControllerStyleAlert];
+
+    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Tiến Hành Wipe Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        Class menuCls = NSClassFromString(@"ZTMenuManager");
+        if (menuCls && [menuCls respondsToSelector:@selector(sharedManager)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id mgr = [menuCls performSelector:@selector(sharedManager)];
+            SEL wipeSel = NSSelectorFromString(@"performInAppDeepWipeWithRegion:preferredCarrier:currentIP:");
+            if (mgr && [mgr respondsToSelector:wipeSel]) {
+                typedef void (*WipeFunc)(id, SEL, NSString *, NSString *, NSString *);
+                WipeFunc fn = (WipeFunc)[mgr methodForSelector:wipeSel];
+                fn(mgr, wipeSel, @"VN", carrier, self.info.currentIP);
+                return;
+            }
+#pragma clang diagnostic pop
+        }
+        [self dismissViewControllerAnimated:YES completion:nil];
+    }]];
+
+    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:confirmAlert animated:YES completion:nil];
 }
 
 #pragma mark - 3. Thẻ Mạng 4G & Proxy Thực Tế (Network Card)
@@ -1190,6 +1326,16 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                                   value:geoDisplay
                                                   badge:self.info.matchGeoPassed ? @"Khớp 100% ✅" : @"LỆCH NƯỚC ❌"
                                               isWarning:!self.info.matchGeoPassed]];
+    }
+
+    if (self.info.phoneCheckCompleted) {
+        NSString *phoneBrand = extract_carrier_brand(self.info.phoneCarrierName);
+        NSString *simBrand = extract_carrier_brand(self.info.carrierName);
+        NSString *carrierDisplay = [NSString stringWithFormat:@"SĐT: [%@] ⟷ SIM Máy: [%@]", phoneBrand.length > 0 ? phoneBrand : @"---", simBrand.length > 0 ? simBrand : @"---"];
+        [inner addArrangedSubview:[self createRowWithKey:@"Đồng Bộ Nhà Mạng"
+                                                  value:carrierDisplay
+                                                  badge:self.info.matchCarrierPassed ? @"Khớp Tuyệt Đối ✅" : @"LỆCH NHÀ MẠNG ⚠️"
+                                              isWarning:!self.info.matchCarrierPassed]];
     }
 
     if (self.info.ipCheckCompleted) {

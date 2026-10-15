@@ -523,6 +523,7 @@ static void purge_entire_sandbox_safely(void) {
         self.batteryLevel = [dict[@"batteryLevel"] floatValue] ?: 0.85f;
         self.batteryState = [dict[@"batteryState"] integerValue] ?: 1;
         self.regionMode = dict[@"regionMode"] ?: @"VN";
+        self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
         self.l2cacheSize = [dict[@"l2cacheSize"] unsignedLongLongValue] ?: 3145728ULL;
         self.localeIdentifier = dict[@"localeIdentifier"] ?: ([self.regionMode isEqualToString:@"US"] ? @"en_US" : @"vi_VN");
         self.timeZoneName = dict[@"timeZoneName"] ?: ([self.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
@@ -556,6 +557,7 @@ static void purge_entire_sandbox_safely(void) {
                         self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
+                    self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
                     [self generateNewProfile];
                     reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
                     return;
@@ -682,6 +684,7 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"batteryLevel"] = @(self.batteryLevel);
     dict[@"batteryState"] = @(self.batteryState);
     dict[@"regionMode"] = self.regionMode ?: @"VN";
+    if (self.preferredCarrier) dict[@"preferredCarrier"] = self.preferredCarrier;
     dict[@"l2cacheSize"] = @(self.l2cacheSize);
     dict[@"localeIdentifier"] = self.localeIdentifier ?: @"vi_VN";
     dict[@"timeZoneName"] = self.timeZoneName ?: @"Asia/Ho_Chi_Minh";
@@ -741,7 +744,9 @@ NSString *generate_random_mac(void) {
     self.enabled = YES;
     self.hasConfiguredProfile = YES; // Kích hoạt cờ đã cấu hình profile
     // 1. Sinh profile thiết bị từ ngân hàng mẫu iPhone chuẩn phần cứng Apple khớp dòng máy thực tế
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN" baseMachine:get_real_hardware_machine()];
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:self.regionMode ?: @"VN"
+                                                             baseMachine:get_real_hardware_machine()
+                                                        preferredCarrier:self.preferredCarrier];
 
     self.deviceMachine = p.deviceMachine;
     self.deviceModel = p.deviceModel;

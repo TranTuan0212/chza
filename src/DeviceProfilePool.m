@@ -204,10 +204,14 @@ static NSString *detect_real_system_machine(void) {
 @implementation ZTDeviceProfile
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region {
-    return [self generateRandomProfileForRegion:region baseMachine:nil];
+    return [self generateRandomProfileForRegion:region baseMachine:nil preferredCarrier:nil];
 }
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(NSString *)baseMachine {
+    return [self generateRandomProfileForRegion:region baseMachine:baseMachine preferredCarrier:nil];
+}
+
++ (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(nullable NSString *)baseMachine preferredCarrier:(nullable NSString *)preferredCarrier {
     ZTDeviceProfile *profile = [[ZTDeviceProfile alloc] init];
 
     NSString *physicalMachine = baseMachine ?: detect_real_system_machine();
@@ -367,7 +371,20 @@ static NSString *detect_real_system_machine(void) {
             @{@"name": @"AT&T",     @"mcc": @"310", @"mnc": @"410"},
             @{@"name": @"T-Mobile", @"mcc": @"310", @"mnc": @"260"}
         ];
-        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        NSDictionary *c = nil;
+        if (preferredCarrier.length > 0) {
+            NSString *cleanPref = [preferredCarrier lowercaseString];
+            for (NSDictionary *item in carriers) {
+                NSString *cName = [item[@"name"] lowercaseString];
+                if ([cleanPref containsString:cName] || [cName containsString:cleanPref]) {
+                    c = item;
+                    break;
+                }
+            }
+        }
+        if (!c) {
+            c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        }
         profile.carrierName = c[@"name"];
         profile.carrierMCC = c[@"mcc"];
         profile.carrierMNC = c[@"mnc"];
@@ -401,7 +418,26 @@ static NSString *detect_real_system_machine(void) {
             @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
             @{@"name": @"Vietnamobile",  @"mcc": @"452", @"mnc": @"05"}
         ];
-        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        NSDictionary *c = nil;
+        if (preferredCarrier.length > 0) {
+            NSString *cleanPref = [preferredCarrier lowercaseString];
+            for (NSDictionary *item in carriers) {
+                NSString *cName = [item[@"name"] lowercaseString];
+                NSString *cMnc = item[@"mnc"];
+                if ([cleanPref containsString:cName] || [cName containsString:cleanPref] ||
+                    ([cleanPref containsString:@"viettel"] && [cName containsString:@"viettel"]) ||
+                    ([cleanPref containsString:@"vina"] && [cName containsString:@"vina"]) ||
+                    ([cleanPref containsString:@"mobi"] && [cName containsString:@"mobi"]) ||
+                    ([cleanPref containsString:@"vietnamobile"] && [cName containsString:@"vietnamobile"]) ||
+                    [cleanPref isEqualToString:cMnc]) {
+                    c = item;
+                    break;
+                }
+            }
+        }
+        if (!c) {
+            c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        }
         profile.carrierName = c[@"name"];
         profile.carrierMCC = c[@"mcc"];
         profile.carrierMNC = c[@"mnc"];

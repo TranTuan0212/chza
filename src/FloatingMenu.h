@@ -23,6 +23,8 @@
 - (void)confirmDeepWipeFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
+- (void)performInAppDeepWipeWithRegion:(NSString *)region preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(nullable NSString *)currentIP;
+- (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top;
 @end
 
 #ifdef __cplusplus

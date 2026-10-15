@@ -575,23 +575,36 @@ static void sync_license_to_all_locations(void) {
                                                                    message:@"Chọn khu vực SIM mong muốn cho thiết bị mới. Hệ thống sẽ tự động tắt Zalo, dọn sạch dữ liệu cũ và cấp profile máy sạch sẽ hoàn toàn:"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self performWipeAndApplyWithRegion:@"VN"];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Viettel (452-04)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"Viettel"];
     }]];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self performWipeAndApplyWithRegion:@"US_STUDENT"];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM VinaPhone (452-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"VINAPHONE"];
     }]];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self performWipeAndApplyWithRegion:@"US"];
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM MobiFone (452-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Việt Nam)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:nil];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Du Học Sinh Mỹ (+1) [T-Mobile / AT&T]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"US_STUDENT" preferredCarrier:nil];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"US" preferredCarrier:nil];
     }]];
 
     NSDictionary *dict = load_current_prefs_dict();
     NSString *currentRegion = dict[@"regionMode"] ?: @"VN";
+    NSString *currentCarrier = dict[@"preferredCarrier"] ?: dict[@"carrierName"];
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", currentRegion];
     [sheet addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        [self performWipeAndApplyWithRegion:currentRegion];
+        [self performWipeAndApplyWithRegion:currentRegion preferredCarrier:currentCarrier];
     }]];
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
@@ -600,6 +613,10 @@ static void sync_license_to_all_locations(void) {
 }
 
 - (void)performWipeAndApplyWithRegion:(NSString *)targetRegion {
+    [self performWipeAndApplyWithRegion:targetRegion preferredCarrier:nil];
+}
+
+- (void)performWipeAndApplyWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier {
     // 1. Tắt toàn bộ tiến trình
     kill_all_zalo_processes();
 
@@ -679,7 +696,8 @@ static void sync_license_to_all_locations(void) {
 
     NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
     dict[@"regionMode"] = chosenRegion;
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine()];
+    dict[@"preferredCarrier"] = preferredCarrier ?: @"";
+    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine() preferredCarrier:preferredCarrier];
 
     dict[@"enabled"] = @(YES);
     dict[@"hasConfiguredProfile"] = @(YES);
