@@ -1002,9 +1002,22 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         (__bridge id)kSecClassKey,
         (__bridge id)kSecClassIdentity
     ];
+    NSArray *secGroups = @[
+        @"",
+        @"group.vn.com.vng.zingalo",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo",
+        @"vn.com.vng.zingalo"
+    ];
     for (id secClass in secClasses) {
-        NSDictionary *query = @{(__bridge id)kSecClass: secClass};
-        SecItemDelete((__bridge CFDictionaryRef)query);
+        for (NSString *grp in secGroups) {
+            NSMutableDictionary *query = [NSMutableDictionary dictionary];
+            query[(__bridge id)kSecClass] = secClass;
+            if (grp.length > 0) {
+                query[(__bridge id)kSecAttrAccessGroup] = grp;
+            }
+            SecItemDelete((__bridge CFDictionaryRef)query);
+        }
     }
 
     // Xoá sạch bộ nhớ đệm mạng WebKit và URLCache

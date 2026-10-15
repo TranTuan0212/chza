@@ -404,6 +404,55 @@ static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
     }
 }
 
+static void purge_all_zalo_keychain_safely(void) {
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword,
+        (__bridge id)kSecClassCertificate,
+        (__bridge id)kSecClassKey,
+        (__bridge id)kSecClassIdentity
+    ];
+    NSArray *groups = @[
+        @"",
+        @"group.vn.com.vng.zingalo",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo",
+        @"vn.com.vng.zingalo"
+    ];
+
+    for (id secClass in secClasses) {
+        for (NSString *grp in groups) {
+            NSMutableDictionary *query = [NSMutableDictionary dictionary];
+            query[(__bridge id)kSecClass] = secClass;
+            if (grp.length > 0) {
+                query[(__bridge id)kSecAttrAccessGroup] = grp;
+            }
+            SecItemDelete((__bridge CFDictionaryRef)query);
+        }
+    }
+    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain của Zalo!");
+}
+
+static void purge_webkit_data_safely(void) {
+    Class wkClass = NSClassFromString(@"WKWebsiteDataStore");
+    if (wkClass && [wkClass respondsToSelector:@selector(allWebsiteDataTypes)] && [wkClass respondsToSelector:@selector(defaultDataStore)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id types = [wkClass performSelector:@selector(allWebsiteDataTypes)];
+        id dataStore = [wkClass performSelector:@selector(defaultDataStore)];
+        if (dataStore && [dataStore respondsToSelector:@selector(removeDataOfTypes:modifiedSince:completionHandler:)]) {
+            NSDate *dateFrom = [NSDate dateWithTimeIntervalSince1970:0];
+            typedef void (*RemoveDataFunc)(id, SEL, id, NSDate *, void (^)(void));
+            SEL sel = @selector(removeDataOfTypes:modifiedSince:completionHandler:);
+            RemoveDataFunc fn = (RemoveDataFunc)[dataStore methodForSelector:sel];
+            if (fn) {
+                fn(dataStore, sel, types, dateFrom, ^{});
+            }
+        }
+#pragma clang diagnostic pop
+    }
+}
+
 static void purge_entire_sandbox_safely(void) {
     NSString *home = NSHomeDirectory();
     if (!home || home.length < 5) return;
@@ -411,18 +460,51 @@ static void purge_entire_sandbox_safely(void) {
 
     NSLog(@"[ZaloAudit] [COLD-BOOT] 🧹 Bắt đầu dọn dẹp sạch toàn bộ Sandbox tại Cold-Boot (App chưa khóa file)...");
 
-    // Xả sạch cache mạng bộ nhớ RAM trước
+    // 1. Quét sạch toàn bộ Keychain của Zalo để không bị dính vết vi phạm của tài khoản cũ
+    purge_all_zalo_keychain_safely();
+
+    // 2. Xóa sạch Pasteboard / Clipboard
+    @try {
+        [UIPasteboard generalPasteboard].items = @[];
+        [UIPasteboard generalPasteboard].string = @"";
+    } @catch (__unused NSException *e) {}
+
+    // 3. Xóa sạch WebKit DataStore (Cookies, LocalStorage, IndexedDB)
+    purge_webkit_data_safely();
+
+    // 4. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    NSArray *suitesToPurge = @[
+        @"group.vn.com.vng.zingalo",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo",
+        @"com.zing.zalo.chatMigrateStore",
+        @"vn.com.vng.zingalo.zalosdk",
+        @"com.zing.zalo",
+        @"vn.com.vng.zingalo"
+    ];
+    for (NSString *suite in suitesToPurge) {
+        NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:suite];
+        if (ud) {
+            NSDictionary *d = [ud dictionaryRepresentation];
+            for (NSString *k in d.allKeys) {
+                [ud removeObjectForKey:k];
+            }
+            [ud synchronize];
+        }
+    }
+
+    // 5. Xả sạch cache mạng bộ nhớ RAM
     clear_all_network_caches();
 
     NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
     NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
     NSString *tmpDir = [home stringByAppendingPathComponent:@"tmp"];
 
-    // 1. Quét dọn triệt để Documents và tmp
+    // 6. Quét dọn triệt để Documents và tmp
     purge_directory_recursively_safely(docDir);
     purge_directory_recursively_safely(tmpDir);
 
-    // 2. Quét dọn toàn bộ các thư mục con trong Library (WebKit, Caches, Application Support, HTTPStorages, Cookies...)
+    // 7. Quét dọn toàn bộ các thư mục con trong Library (WebKit, Caches, Application Support, HTTPStorages, Cookies...)
     NSArray *libItems = [fm contentsOfDirectoryAtPath:libDir error:nil];
     for (NSString *item in libItems) {
         NSString *lower = [item lowercaseString];
@@ -441,7 +523,7 @@ static void purge_entire_sandbox_safely(void) {
         }
     }
 
-    // 3. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
+    // 8. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
     NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
     for (NSString *grp in groupNames) {
         NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
@@ -451,7 +533,7 @@ static void purge_entire_sandbox_safely(void) {
         }
     }
 
-    // 4. Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị crash I/O khi nạp
+    // 9. Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị crash I/O khi nạp
     [fm createDirectoryAtPath:docDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:tmpDir withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
@@ -460,7 +542,7 @@ static void purge_entire_sandbox_safely(void) {
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"HTTPStorages"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
 
-    NSLog(@"[ZaloAudit] [COLD-BOOT] ✅ Hoàn tất dọn dẹp sạch toàn bộ Sandbox!");
+    NSLog(@"[ZaloAudit] [COLD-BOOT] ✅ Hoàn tất dọn dẹp sạch toàn bộ Sandbox, Keychain & WebKit!");
 }
 
 - (void)loadSettings {
