@@ -75,6 +75,14 @@ static void update_zt_synced_timezone_pref(NSString *tzName) {
 @end
 
 static NSInteger check_zalo_keychain_count(void) {
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    // Khi mở trong ứng dụng Cài đặt (Preferences.app), iOS Sandbox cô lập hoàn toàn keychain.
+    // SecItemCopyMatching tại đây chỉ trả về các token hệ thống của Apple (Apple ID, Passwords, Wifi...).
+    // Do đó không thể đọc được Keychain của Zalo -> Bỏ qua và trả về 0 để tránh báo động giả.
+    if ([bundleId isEqualToString:@"com.apple.Preferences"]) {
+        return 0;
+    }
+
     NSInteger count = 0;
     NSArray *secClasses = @[
         (__bridge id)kSecClassGenericPassword,
@@ -89,10 +97,34 @@ static NSInteger check_zalo_keychain_count(void) {
         CFTypeRef result = NULL;
         OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
         if (status == errSecSuccess && result) {
-            if ([(__bridge id)result isKindOfClass:[NSArray class]]) {
-                count += [(__bridge NSArray *)result count];
-            } else {
-                count += 1;
+            NSArray *items = [(__bridge id)result isKindOfClass:[NSArray class]] ? (__bridge NSArray *)result : @[(__bridge id)result];
+            for (NSDictionary *dict in items) {
+                if (![dict isKindOfClass:[NSDictionary class]]) continue;
+                NSString *service = dict[(__bridge id)kSecAttrService] ?: @"";
+                NSString *account = dict[(__bridge id)kSecAttrAccount] ?: @"";
+                NSString *group = dict[(__bridge id)kSecAttrAccessGroup] ?: @"";
+
+                // Bỏ qua các token nội bộ của thư viện Google / Firebase / Crashlytics / WebKit / Apple
+                NSString *combined = [NSString stringWithFormat:@"%@|%@|%@", service, account, group].lowercaseString;
+                if ([combined containsString:@"google"] ||
+                    [combined containsString:@"firebase"] ||
+                    [combined containsString:@"crashlytics"] ||
+                    [combined containsString:@"apple"] ||
+                    [combined containsString:@"webkit"]) {
+                    continue;
+                }
+
+                // Chỉ đếm nếu thuộc về Zalo / VNG / Zing hoặc định danh session
+                if ([combined containsString:@"zalo"] ||
+                    [combined containsString:@"zing"] ||
+                    [combined containsString:@"vng"] ||
+                    [combined containsString:@"zaid"] ||
+                    [combined containsString:@"zda"] ||
+                    [combined containsString:@"session"] ||
+                    [combined containsString:@"token"] ||
+                    [combined containsString:@"uid"]) {
+                    count++;
+                }
             }
             CFRelease(result);
         }
