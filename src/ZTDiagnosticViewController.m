@@ -467,7 +467,18 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 }
 
 - (void)dismissSelf {
-    [self dismissViewControllerAnimated:YES completion:nil];
+    [self dismissViewControllerAnimated:YES completion:^{
+        Class btnCls = NSClassFromString(@"ZTFloatingButton");
+        if (btnCls && [btnCls respondsToSelector:@selector(sharedButton)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id btn = [btnCls performSelector:@selector(sharedButton)];
+            if (btn && [btn respondsToSelector:@selector(show)]) {
+                [btn performSelector:@selector(show)];
+            }
+#pragma clang diagnostic pop
+        }
+    }];
 }
 
 - (void)setupScrollView {

@@ -206,34 +206,50 @@ UIViewController *ZTGetTopViewController(void) {
 - (void)show {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (@available(iOS 13.0, *)) {
-            if (!self.windowScene) {
+            UIWindowScene *activeScene = nil;
+            // 1. Tìm Scene đang Foreground Active trước
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+                    activeScene = (UIWindowScene *)scene;
+                    break;
+                }
+            }
+            // 2. Nếu chưa có Foreground Active, tìm bất kỳ UIWindowScene nào kết nối
+            if (!activeScene) {
                 for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                    if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
-                        self.windowScene = (UIWindowScene *)scene;
+                    if ([scene isKindOfClass:[UIWindowScene class]]) {
+                        activeScene = (UIWindowScene *)scene;
                         break;
                     }
                 }
-                if (!self.windowScene) {
-                    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                        if ([scene isKindOfClass:[UIWindowScene class]]) {
-                            self.windowScene = (UIWindowScene *)scene;
-                            break;
-                        }
-                    }
-                }
-                if (!self.windowScene) {
-                    for (UIWindow *w in [UIApplication sharedApplication].windows) {
-                        if (w != self && w.windowScene) {
-                            self.windowScene = w.windowScene;
-                            break;
-                        }
+            }
+            // 3. Fallback tìm theo windowScene của các window khác
+            if (!activeScene) {
+                for (UIWindow *w in [UIApplication sharedApplication].windows) {
+                    if (w != self && w.windowScene) {
+                        activeScene = w.windowScene;
+                        break;
                     }
                 }
             }
+            if (activeScene && self.windowScene != activeScene) {
+                self.windowScene = activeScene;
+            }
         }
+        self.frame = [UIScreen mainScreen].bounds;
         self.hidden = NO;
         ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
         btn.hidden = NO;
+        btn.alpha = 1.0;
+
+        // Đảm bảo nút không bị văng ra ngoài mép màn hình
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        if (btn.center.x <= 0 || btn.center.x > screenBounds.size.width ||
+            btn.center.y <= 0 || btn.center.y > screenBounds.size.height) {
+            CGFloat btnRadius = btn.frame.size.width / 2.0;
+            btn.center = CGPointMake(btnRadius + 15.0, 140.0 + btnRadius);
+        }
+
         [self bringSubviewToFront:btn];
     });
 }
@@ -374,13 +390,26 @@ UIViewController *ZTGetTopViewController(void) {
                                              selector:@selector(tryAttachFloatingButton)
                                                  name:UIApplicationDidBecomeActiveNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(tryAttachFloatingButton)
+                                                 name:UIApplicationWillEnterForegroundNotification
+                                               object:nil];
 
     if (@available(iOS 13.0, *)) {
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(tryAttachFloatingButton)
                                                      name:UISceneDidActivateNotification
                                                    object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(tryAttachFloatingButton)
+                                                     name:UISceneWillEnterForegroundNotification
+                                                   object:nil];
     }
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleWindowVisibilityChanged:)
+                                                 name:UIWindowDidBecomeVisibleNotification
+                                               object:nil];
 
     // Nhắc nhở bản quyền nếu chưa kích hoạt hoặc đã hết hạn
     static dispatch_once_t promptToken;
@@ -399,6 +428,13 @@ UIViewController *ZTGetTopViewController(void) {
 - (void)tryAttachFloatingButton {
     if (![ZTSettings sharedSettings].showFloatingMenu) return;
     [[ZTFloatingWindow sharedWindow] show];
+}
+
+- (void)handleWindowVisibilityChanged:(NSNotification *)note {
+    UIWindow *w = (UIWindow *)note.object;
+    if (w && [w isKindOfClass:[UIWindow class]] && ![w isKindOfClass:NSClassFromString(@"ZTFloatingWindow")]) {
+        [self tryAttachFloatingButton];
+    }
 }
 
 - (void)showLicenseRequiredAlertFrom:(UIViewController *)top featureName:(NSString *)featureName {

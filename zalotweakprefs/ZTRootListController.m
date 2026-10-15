@@ -185,7 +185,7 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
         needSave = YES;
     }
     if (!dict[@"showFloatingMenu"]) {
-        dict[@"showFloatingMenu"] = @(NO); // Mặc định trên Jailbreak luôn là NO để tàng hình tuyệt đối khỏi Zalo UI audit
+        dict[@"showFloatingMenu"] = @(YES);
         needSave = YES;
     }
     if (!dict[@"hasConfiguredProfile"]) {

@@ -623,7 +623,7 @@ static void purge_entire_sandbox_safely(void) {
         } else if (dict[@"showFloatingMenu"] != nil) {
             self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
         } else {
-            self.showFloatingMenu = is_device_jailbroken() ? NO : YES; // Jailbreak (Roothide): Mặc định NO để tàng hình tuyệt đối khỏi Zalo UI audit; Non-JB: Mặc định YES
+            self.showFloatingMenu = YES; // Mặc định luôn hiện nút nổi để thuận tiện thao tác
         }
 
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
@@ -639,7 +639,7 @@ static void purge_entire_sandbox_safely(void) {
                     if (dict[@"showFloatingMenu"] != nil) {
                         self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
                     } else {
-                        self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
+                        self.showFloatingMenu = YES;
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
@@ -682,7 +682,7 @@ static void purge_entire_sandbox_safely(void) {
         }
     } else {
         self.enabled = YES;
-        self.showFloatingMenu = is_device_jailbroken() ? NO : YES;
+        self.showFloatingMenu = YES;
         self.hasConfiguredProfile = NO; // MỚI CÀI ĐẶT: CHƯA CẤU HÌNH -> KHÔNG FAKE MÁY NGAY!
         self.enableAuditLog = NO;
         self.lastWipedIDFV = @"";
