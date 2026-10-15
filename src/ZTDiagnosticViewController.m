@@ -40,6 +40,9 @@ static BOOL is_zt_auto_sync_timezone_enabled(void) {
 
 static void update_zt_synced_timezone_pref(NSString *tzName) {
     if (!tzName || tzName.length == 0) return;
+    if ([tzName isEqualToString:@"Asia/Bangkok"] || [tzName isEqualToString:@"Asia/Saigon"]) {
+        tzName = @"Asia/Ho_Chi_Minh";
+    }
     Class settingsClass = NSClassFromString(@"ZTSettings");
     if (settingsClass) {
         SEL selShared = NSSelectorFromString(@"sharedSettings");
@@ -900,8 +903,17 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 strongSelf.info.ipIsMobile = [result[@"mobile"] boolValue];
 
                 if (is_zt_auto_sync_timezone_enabled() && strongSelf.info.ipTimezone.length > 0) {
-                    update_zt_synced_timezone_pref(strongSelf.info.ipTimezone);
-                    strongSelf.info.timeZoneName = strongSelf.info.ipTimezone;
+                    NSString *effectiveTZ = strongSelf.info.ipTimezone;
+                    BOOL isVN = [strongSelf.info.ipCountryCode isEqualToString:@"VN"] ||
+                                [strongSelf.info.regionName containsString:@"Việt Nam"] ||
+                                [strongSelf.info.regionName containsString:@"VN"];
+                    if (isVN || [effectiveTZ isEqualToString:@"Asia/Bangkok"] || [effectiveTZ isEqualToString:@"Asia/Saigon"]) {
+                        if (isVN) {
+                            effectiveTZ = @"Asia/Ho_Chi_Minh";
+                        }
+                    }
+                    update_zt_synced_timezone_pref(effectiveTZ);
+                    strongSelf.info.timeZoneName = effectiveTZ;
                     NSTimeZone *tz = [NSTimeZone timeZoneWithName:strongSelf.info.timeZoneName];
                     NSInteger gmtSec = tz ? [tz secondsFromGMT] : 0;
                     int gmtH = (int)(gmtSec / 3600);
@@ -958,7 +970,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             }
 
             if (strongSelf.info.ipCheckCompleted && strongSelf.info.timeZoneName.length > 0) {
-                if ([strongSelf.info.ipTimezone isEqualToString:strongSelf.info.timeZoneName]) {
+                NSString *expectedTZ = strongSelf.info.timeZoneName;
+                NSString *actualIPTZ = strongSelf.info.ipTimezone;
+                BOOL isBothGMT7 = ([expectedTZ isEqualToString:@"Asia/Ho_Chi_Minh"] && ([actualIPTZ isEqualToString:@"Asia/Bangkok"] || [actualIPTZ isEqualToString:@"Asia/Saigon"]));
+                if ([actualIPTZ isEqualToString:expectedTZ] || isBothGMT7) {
                     strongSelf.info.matchTimezonePassed = YES;
                     strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"Khớp múi giờ hoàn hảo: %@ (%@) ✅", strongSelf.info.timeZoneName, strongSelf.info.timeZoneGMT ?: @""];
                 } else {

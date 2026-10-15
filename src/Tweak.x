@@ -527,6 +527,9 @@ static void purge_entire_sandbox_safely(void) {
         self.l2cacheSize = [dict[@"l2cacheSize"] unsignedLongLongValue] ?: 3145728ULL;
         self.localeIdentifier = dict[@"localeIdentifier"] ?: ([self.regionMode isEqualToString:@"US"] ? @"en_US" : @"vi_VN");
         self.timeZoneName = dict[@"timeZoneName"] ?: ([self.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
+        if ([self.regionMode isEqualToString:@"VN"] && ([self.timeZoneName isEqualToString:@"Asia/Bangkok"] || [self.timeZoneName isEqualToString:@"Asia/Saigon"])) {
+            self.timeZoneName = @"Asia/Ho_Chi_Minh";
+        }
         self.preferredLanguages = dict[@"preferredLanguages"] ?: ([self.regionMode isEqualToString:@"US"] ? @[@"en-US"] : @[@"vi-VN", @"en-VN"]);
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
@@ -1528,6 +1531,9 @@ static void update_cached_locale_and_tz(void) {
     s_in_tz_hook = YES;
     NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
     NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    if ([[ZTSettings sharedSettings].regionMode isEqualToString:@"VN"] && ([tzName isEqualToString:@"Asia/Bangkok"] || [tzName isEqualToString:@"Asia/Saigon"])) {
+        tzName = @"Asia/Ho_Chi_Minh";
+    }
     s_cachedLocale = [NSLocale localeWithLocaleIdentifier:locId];
     s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
     s_in_tz_hook = NO;
@@ -2802,7 +2808,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
                     if ([jObj isKindOfClass:[NSDictionary class]]) {
                         NSInteger errCode = [jObj[@"error"] integerValue];
                         NSString *errMsg = jObj[@"errorMsg"] ?: @"";
-                        if (errCode != 0 || errMsg.length > 0) {
+                        if (errCode != 0) {
                             [logText appendFormat:@"\n🚨 [MÁY CHỦ BÁO LỖI NGHIỆP VỤ] ErrorCode: %ld | Thông báo: \"%@\"", (long)errCode, errMsg];
                         }
                     }
