@@ -607,12 +607,22 @@ static void purge_entire_sandbox_safely(void) {
         self.regionMode = dict[@"regionMode"] ?: @"VN";
         self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
         self.l2cacheSize = [dict[@"l2cacheSize"] unsignedLongLongValue] ?: 3145728ULL;
-        self.localeIdentifier = dict[@"localeIdentifier"] ?: ([self.regionMode isEqualToString:@"US"] ? @"en_US" : @"vi_VN");
-        self.timeZoneName = dict[@"timeZoneName"] ?: ([self.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
-        if ([self.regionMode isEqualToString:@"VN"] && ([self.timeZoneName isEqualToString:@"Asia/Bangkok"] || [self.timeZoneName isEqualToString:@"Asia/Saigon"])) {
-            self.timeZoneName = @"Asia/Ho_Chi_Minh";
+        if ([self.regionMode isEqualToString:@"US"] || [self.regionMode isEqualToString:@"US_STUDENT"]) {
+            self.localeIdentifier = dict[@"localeIdentifier"] ?: @"en_US";
+            self.timeZoneName = dict[@"timeZoneName"] ?: @"America/New_York";
+            self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"en-US"];
+        } else if ([self.regionMode isEqualToString:@"PL"]) {
+            self.localeIdentifier = dict[@"localeIdentifier"] ?: @"pl_PL";
+            self.timeZoneName = dict[@"timeZoneName"] ?: @"Europe/Warsaw";
+            self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"pl-PL", @"en-PL"];
+        } else {
+            self.localeIdentifier = dict[@"localeIdentifier"] ?: @"vi_VN";
+            self.timeZoneName = dict[@"timeZoneName"] ?: @"Asia/Ho_Chi_Minh";
+            if ([self.timeZoneName isEqualToString:@"Asia/Bangkok"] || [self.timeZoneName isEqualToString:@"Asia/Saigon"]) {
+                self.timeZoneName = @"Asia/Ho_Chi_Minh";
+            }
+            self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"vi-VN", @"en-VN"];
         }
-        self.preferredLanguages = dict[@"preferredLanguages"] ?: ([self.regionMode isEqualToString:@"US"] ? @[@"en-US"] : @[@"vi-VN", @"en-VN"]);
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
@@ -3133,6 +3143,10 @@ static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, N
                 mccDict[@"isocountrycodes"] = @"US/USA";
                 mccDict[@"countrycode"] = @(1);
                 mccDict[@"country"] = @"United States";
+            } else if ([s.regionMode isEqualToString:@"PL"]) {
+                mccDict[@"isocountrycodes"] = @"PL/POL";
+                mccDict[@"countrycode"] = @(48);
+                mccDict[@"country"] = @"Poland";
             } else {
                 mccDict[@"isocountrycodes"] = @"VN/VNM";
                 mccDict[@"countrycode"] = @(84);
@@ -3472,7 +3486,8 @@ static void swizzle_session_delegate_class(Class cls) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 ZTSettings *s = [ZTSettings sharedSettings];
                 NSString *rDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                                  ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+                                  ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+                                  ([s.regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
                 NSString *welcomeMsg = [NSString stringWithFormat:
                     @"🎉 THIẾT BỊ MỚI TINH ĐÃ KÍCH HOẠT!\n\n"
                     @"• Tên máy: %@\n"

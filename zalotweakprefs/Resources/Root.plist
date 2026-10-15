@@ -141,12 +141,14 @@
                 <string>🇻🇳 Việt Nam (+84) [Viettel / Vina / Mobi]</string>
                 <string>🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&amp;T]</string>
                 <string>🇺🇸 Hoa Kỳ / Mỹ (+1) [Verizon / AT&amp;T]</string>
+                <string>🇵🇱 Ba Lan (+48) [Play / Orange / Plus / T-Mobile]</string>
             </array>
             <key>validValues</key>
             <array>
                 <string>VN</string>
                 <string>US_STUDENT</string>
                 <string>US</string>
+                <string>PL</string>
             </array>
             <key>PostNotification</key>
             <string>com.sonhu.zalotweak/settingschanged</string>

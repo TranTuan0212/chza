@@ -688,7 +688,8 @@ UIViewController *ZTGetTopViewController(void) {
     
     NSString *currentRegion = s.regionMode ?: @"VN";
     NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
-                           ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)");
+                           ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" :
+                           ([currentRegion isEqualToString:@"PL"] ? @"🇵🇱 Ba Lan (+48)" : @"🇻🇳 Việt Nam (+84)"));
 
     NSString *info = [NSString stringWithFormat:
                       @"• Khu Vực & SIM: %@\n"
@@ -751,6 +752,16 @@ UIViewController *ZTGetTopViewController(void) {
         s.localeIdentifier = @"en_US";
         s.preferredLanguages = @[@"en-US"];
         s.timeZoneName = @"America/New_York";
+    } else if ([region isEqualToString:@"PL"]) {
+        NSArray *userNames = @[@"iPhone Michała", @"iPhone Piotra", @"iPhone Jakuba", @"iPhone Anny", @"iPhone Julii"];
+        s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
+        s.carrierName = @"Play";
+        s.carrierMCC = @"260";
+        s.carrierMNC = @"06";
+        s.carrierCountryCode = @"pl";
+        s.localeIdentifier = @"pl_PL";
+        s.preferredLanguages = @[@"pl-PL", @"en-PL"];
+        s.timeZoneName = @"Europe/Warsaw";
     } else {
         NSArray *userNames = @[@"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)", @"iPhone của Huy", @"iPhone của Nam"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
@@ -798,6 +809,15 @@ UIViewController *ZTGetTopViewController(void) {
         [self applyRegionOnly:@"US"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
                                                                       message:[NSString stringWithFormat:@"Đã chuyển sang Hoa Kỳ (+1).\n• SIM: %@ (US)\n• Tên máy: %@", s.carrierName, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self applyRegionOnly:@"PL"];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
         [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:done animated:YES completion:nil];
@@ -932,6 +952,10 @@ UIViewController *ZTGetTopViewController(void) {
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self startInAppDeepWipeSequenceWithRegion:@"US" preferredCarrier:nil from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:nil from:top];
     }]];
 
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", s.regionMode ?: @"VN"];
@@ -1186,7 +1210,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // 7. Đóng app dứt khoát
     UIViewController *top = get_top_view_controller();
     NSString *baseRegionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                               ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+                               ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+                               ([targetRegion isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
     NSString *regionDesc = (preferredCarrier.length > 0) ? [NSString stringWithFormat:@"%@ (Cắm sẵn SIM %@)", baseRegionDesc, preferredCarrier] : baseRegionDesc;
 
     NSString *msg = [NSString stringWithFormat:
@@ -1271,7 +1296,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.idfa = @"00000000-0000-0000-0000-000000000000";
 
     NSString *regionDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                           ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+                           ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+                           ([s.regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
     info.regionName = regionDesc;
     info.carrierName = s.carrierName ?: @"Viettel";
     info.carrierMCC = s.carrierMCC ?: @"452";
@@ -1438,12 +1464,22 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.preferredLanguages = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
 
     BOOL isVNMode = [s.regionMode isEqualToString:@"VN"] || !s.regionMode;
+    BOOL isPLMode = [s.regionMode isEqualToString:@"PL"];
+    BOOL isUSMode = [s.regionMode isEqualToString:@"US"] || [s.regionMode isEqualToString:@"US_STUDENT"];
     BOOL isVNSim = [s.carrierMCC isEqualToString:@"452"];
+    BOOL isPLSim = [s.carrierMCC isEqualToString:@"260"];
+    BOOL isUSSim = [s.carrierMCC isEqualToString:@"310"] || [s.carrierMCC isEqualToString:@"311"];
     BOOL isVNTz = [info.timeZoneName containsString:@"Ho_Chi_Minh"] || [info.timeZoneName containsString:@"Bangkok"] || [info.timeZoneName containsString:@"Saigon"];
+    BOOL isPLTz = [info.timeZoneName containsString:@"Warsaw"];
+    BOOL isUSTz = [info.timeZoneName containsString:@"America"] || [info.timeZoneName containsString:@"New_York"] || [info.timeZoneName containsString:@"Chicago"] || [info.timeZoneName containsString:@"Los_Angeles"] || [info.timeZoneName containsString:@"Denver"];
     if (isVNMode) {
         info.regionSyncPassed = isVNSim && isVNTz;
+    } else if (isPLMode) {
+        info.regionSyncPassed = isPLSim && isPLTz;
+    } else if (isUSMode) {
+        info.regionSyncPassed = isUSSim && isUSTz;
     } else {
-        info.regionSyncPassed = !isVNSim && !isVNTz;
+        info.regionSyncPassed = YES;
     }
 
     // 7. Radar phần cứng mới: hw.product, l2cache, pagesize, proc_translated

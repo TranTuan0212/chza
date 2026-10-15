@@ -258,6 +258,9 @@ static NSString *extract_carrier_brand(NSString *carrierStr) {
     if ([lower containsString:@"verizon"]) return @"Verizon";
     if ([lower containsString:@"at&t"]) return @"AT&T";
     if ([lower containsString:@"t-mobile"] || [lower containsString:@"mint"]) return @"T-Mobile";
+    if ([lower containsString:@"play"]) return @"Play";
+    if ([lower containsString:@"orange"]) return @"Orange";
+    if ([lower containsString:@"plus"]) return @"Plus";
     return @"";
 }
 
@@ -286,12 +289,20 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
     BOOL isVN = NO;
     BOOL isUS = NO;
+    BOOL isPL = NO;
     NSString *cleanDigits = [digits copy];
     NSString *carrier = @"Không rõ";
     NSString *lineType = @"Mobile (Di động thật) ✅";
     BOOL isVoIP = NO;
 
-    if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
+    if ([rawPhone hasPrefix:@"+48"] || ([cleanDigits hasPrefix:@"48"] && cleanDigits.length == 11)) {
+        isPL = YES;
+        if ([cleanDigits hasPrefix:@"48"]) {
+            cleanDigits = [cleanDigits substringFromIndex:2];
+        }
+    } else if (cleanDigits.length == 9 && ([currentProfileRegion isEqualToString:@"PL"] || [currentProfileRegion containsString:@"Ba Lan"] || [currentProfileRegion containsString:@"Poland"])) {
+        isPL = YES;
+    } else if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
         isVN = YES;
         if ([cleanDigits hasPrefix:@"84"]) {
             cleanDigits = [@"0" stringByAppendingString:[cleanDigits substringFromIndex:2]];
@@ -303,13 +314,43 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
         if ([cleanDigits hasPrefix:@"1"]) {
             cleanDigits = [cleanDigits substringFromIndex:1];
         }
-    } else if (cleanDigits.length == 10 && ([currentProfileRegion isEqualToString:@"US"] || [currentProfileRegion isEqualToString:@"US_STUDENT"])) {
+    } else if (cleanDigits.length == 10 && ([currentProfileRegion isEqualToString:@"US"] || [currentProfileRegion isEqualToString:@"US_STUDENT"] || [currentProfileRegion containsString:@"Mỹ"] || [currentProfileRegion containsString:@"Hoa Kỳ"])) {
         isUS = YES;
     }
 
-    BOOL isProfileUS = [currentProfileRegion isEqualToString:@"US"] || [currentProfileRegion isEqualToString:@"US_STUDENT"];
+    BOOL isProfileUS = [currentProfileRegion isEqualToString:@"US"] || [currentProfileRegion isEqualToString:@"US_STUDENT"] || [currentProfileRegion containsString:@"Mỹ"] || [currentProfileRegion containsString:@"Hoa Kỳ"];
+    BOOL isProfilePL = [currentProfileRegion isEqualToString:@"PL"] || [currentProfileRegion containsString:@"Ba Lan"] || [currentProfileRegion containsString:@"Poland"];
 
-    if (isVN) {
+    if (isPL) {
+        if (outCountryCode) *outCountryCode = @"PL";
+        if (outCountryName) *outCountryName = @"Ba Lan (+48)";
+        if (cleanDigits.length >= 2) {
+            NSString *p2 = [cleanDigits substringToIndex:2];
+            if ([p2 isEqualToString:@"45"] || [p2 isEqualToString:@"53"] || [p2 isEqualToString:@"57"] || [p2 isEqualToString:@"73"] || [p2 isEqualToString:@"79"]) {
+                carrier = @"Play (MNO Ba Lan)";
+            } else if ([p2 isEqualToString:@"50"] || [p2 isEqualToString:@"51"]) {
+                carrier = @"Orange Polska (MNO Ba Lan)";
+            } else if ([p2 isEqualToString:@"60"] || [p2 isEqualToString:@"66"] || [p2 isEqualToString:@"72"]) {
+                carrier = @"Plus / Polkomtel (MNO Ba Lan)";
+            } else if ([p2 isEqualToString:@"69"] || [p2 isEqualToString:@"78"] || [p2 isEqualToString:@"88"]) {
+                carrier = @"T-Mobile / Orange / Plus (MNO Ba Lan)";
+            } else {
+                carrier = @"Mạng Di Động Ba Lan";
+            }
+        } else {
+            carrier = @"Mạng Di Động Ba Lan";
+        }
+        lineType = @"SIM Di Động Ba Lan (9 chữ số) ✅";
+        isVoIP = NO;
+
+        if (!isProfilePL) {
+            if (outCompatible) *outCompatible = NO;
+            if (outReason) *outReason = [NSString stringWithFormat:@"⚠️ LỆCH PROFILE: SĐT là BA LAN (+48) nhưng Profile hiện tại là [%@]! Hãy đổi Profile sang Ba Lan (+48).", currentProfileRegion ?: @"Khác"];
+        } else {
+            if (outCompatible) *outCompatible = YES;
+            if (outReason) *outReason = @"✅ Khớp hoàn toàn với Profile Ba Lan (+48).";
+        }
+    } else if (isVN) {
         if (outCountryCode) *outCountryCode = @"VN";
         if (outCountryName) *outCountryName = @"Việt Nam (+84)";
         if (cleanDigits.length >= 3) {
@@ -340,9 +381,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
         lineType = @"Mobile SIM Thật (Bao Đậu) ✅";
         isVoIP = NO;
 
-        if (isProfileUS) {
+        if (isProfileUS || isProfilePL) {
             if (outCompatible) *outCompatible = NO;
-            if (outReason) *outReason = @"⚠️ LỆCH PROFILE: Máy đang chọn Profile MỸ nhưng SĐT là VIỆT NAM (+84)! Hãy đổi Profile Tweak sang VN_VIETTEL.";
+            if (outReason) *outReason = [NSString stringWithFormat:@"⚠️ LỆCH PROFILE: Máy đang chọn Profile [%@] nhưng SĐT là VIỆT NAM (+84)! Hãy đổi Profile Tweak sang VN.", currentProfileRegion ?: @"Quốc Tế"];
         } else {
             if (outCompatible) *outCompatible = YES;
             if (outReason) *outReason = @"✅ Khớp hoàn toàn với Profile Việt Nam.";
@@ -356,7 +397,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
         if (!isProfileUS) {
             if (outCompatible) *outCompatible = NO;
-            if (outReason) *outReason = @"⚠️ LỆCH PROFILE: Máy đang chọn Profile VIỆT NAM nhưng SĐT là MỸ (+1)! Hãy đổi Profile Tweak sang US.";
+            if (outReason) *outReason = [NSString stringWithFormat:@"⚠️ LỆCH PROFILE: Máy đang chọn Profile [%@] nhưng SĐT là MỸ (+1)! Hãy đổi Profile Tweak sang US.", currentProfileRegion ?: @"Khác"];
         } else {
             if (outCompatible) *outCompatible = YES;
             if (outReason) *outReason = @"✅ Khớp hoàn toàn với Profile Mỹ.";

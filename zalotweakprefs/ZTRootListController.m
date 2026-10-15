@@ -303,6 +303,29 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
             @"John's iPhone", @"Daniel's iPhone", @"Chris's iPhone", @"Jessica's iPhone"
         ];
         dict[@"deviceName"] = usNames[arc4random_uniform((uint32_t)usNames.count)];
+    } else if ([region isEqualToString:@"PL"]) {
+        NSArray *carriers = @[
+            @{@"name": @"Play",     @"mcc": @"260", @"mnc": @"06"},
+            @{@"name": @"Orange",   @"mcc": @"260", @"mnc": @"03"},
+            @{@"name": @"Plus",     @"mcc": @"260", @"mnc": @"01"},
+            @{@"name": @"T-Mobile", @"mcc": @"260", @"mnc": @"02"}
+        ];
+        NSDictionary *c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        dict[@"carrierName"] = c[@"name"];
+        dict[@"carrierMCC"] = c[@"mcc"];
+        dict[@"carrierMNC"] = c[@"mnc"];
+        dict[@"carrierCountryCode"] = @"pl";
+        dict[@"localeIdentifier"] = @"pl_PL";
+        dict[@"timeZoneName"] = @"Europe/Warsaw";
+        dict[@"preferredLanguages"] = @[@"pl-PL", @"en-PL"];
+
+        NSArray *plNames = @[
+            @"iPhone Michała", @"iPhone Piotra", @"iPhone Jakuba", @"iPhone Mateusza",
+            @"iPhone Bartosza", @"iPhone Szymona", @"iPhone Anny", @"iPhone Julii",
+            @"iPhone Zuzanny", @"iPhone Tomasza", @"iPhone Pawła", @"iPhone Kacpra",
+            @"iPhone (Michał)", @"iPhone (Jakub)", @"iPhone", @"iPhone (1)"
+        ];
+        dict[@"deviceName"] = plNames[arc4random_uniform((uint32_t)plNames.count)];
     } else {
         NSArray *carriers = @[
             @{@"name": @"Viettel", @"mcc": @"452", @"mnc": @"04"},
@@ -597,6 +620,10 @@ static void sync_license_to_all_locations(void) {
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self performWipeAndApplyWithRegion:@"US" preferredCarrier:nil];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:nil];
     }]];
 
     NSDictionary *dict = load_current_prefs_dict();
@@ -1037,7 +1064,8 @@ static NSString *findAuditLogPath(void) {
 
     NSString *regionMode = dict[@"regionMode"] ?: @"VN";
     NSString *regionDesc = [regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                           ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" : @"Việt Nam (+84)");
+                           ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+                           ([regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
     info.regionName = regionDesc;
     info.carrierName = dict[@"carrierName"] ?: @"Viettel";
     info.carrierMCC = dict[@"carrierMCC"] ?: @"452";

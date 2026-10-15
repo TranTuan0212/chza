@@ -37,7 +37,7 @@
 @property (nonatomic, strong) NSString *carrierCountryCode; // Country Code ISO (vd: "vn")
 @property (nonatomic, assign) float batteryLevel;           // Mức pin (vd: 0.82)
 @property (nonatomic, assign) NSInteger batteryState;       // Trạng thái pin (UIDeviceBatteryStateUnplugged = 1)
-@property (nonatomic, strong) NSString *regionMode;        // Khu vực: @"VN", @"US_STUDENT", @"US"
+@property (nonatomic, strong) NSString *regionMode;        // Khu vực: @"VN", @"US_STUDENT", @"US", @"PL"
 @property (nonatomic, strong) NSString *preferredCarrier;  // Nhà mạng chỉ định khi Wipe / Cold-Boot ("Viettel", "VINAPHONE", "VN MOBIFONE", "Vietnamobile" hoặc rỗng)
 @property (nonatomic, strong) NSString *spoofedSerial;      // Serial Number (vd: "F17X892JK9L")
 @property (nonatomic, strong) NSString *spoofedWifiMAC;     // Wi-Fi MAC Address

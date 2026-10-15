@@ -393,6 +393,54 @@ static NSString *detect_real_system_machine(void) {
         profile.preferredLanguages = @[@"en-US"];
         NSArray *usTimezones = @[@"America/New_York", @"America/Chicago", @"America/Los_Angeles", @"America/Denver"];
         profile.timeZoneName = usTimezones[arc4random_uniform((uint32_t)usTimezones.count)];
+    } else if ([curRegion isEqualToString:@"PL"]) {
+        NSArray *names = @[
+            @"iPhone Michała", @"iPhone Piotra", @"iPhone Jakuba", @"iPhone Mateusza",
+            @"iPhone Bartosza", @"iPhone Szymona", @"iPhone Anny", @"iPhone Julii",
+            @"iPhone Zuzanny", @"iPhone Mai", @"iPhone Aleksandry", @"iPhone Natalii",
+            @"iPhone Wiktorii", @"iPhone Tomasza", @"iPhone Pawła", @"iPhone Kacpra",
+            @"iPhone Filipa", @"iPhone Macieja", @"iPhone Marcina", @"iPhone Krzysztofa",
+            @"iPhone Kamila", @"iPhone Dawida", @"iPhone Patryka", @"iPhone Łukasza",
+            @"iPhone Wojciecha", @"iPhone Adama", @"iPhone Jana", @"iPhone (Michał)",
+            @"iPhone (Jakub)", @"iPhone (Piotr)", @"iPhone (Anna)", @"iPhone",
+            @"iPhone (1)", @"iPhone (2)", @"iPhone (3)",
+            [NSString stringWithUTF8String:spec.family] ?: @"iPhone"
+        ];
+        profile.deviceName = names[arc4random_uniform((uint32_t)names.count)];
+
+        NSArray *carriers = @[
+            @{@"name": @"Play",     @"mcc": @"260", @"mnc": @"06"},
+            @{@"name": @"Orange",   @"mcc": @"260", @"mnc": @"03"},
+            @{@"name": @"Plus",     @"mcc": @"260", @"mnc": @"01"},
+            @{@"name": @"T-Mobile", @"mcc": @"260", @"mnc": @"02"}
+        ];
+        NSDictionary *c = nil;
+        if (preferredCarrier.length > 0) {
+            NSString *cleanPref = [preferredCarrier lowercaseString];
+            for (NSDictionary *item in carriers) {
+                NSString *cName = [item[@"name"] lowercaseString];
+                NSString *cMnc = item[@"mnc"];
+                if ([cleanPref containsString:cName] || [cName containsString:cleanPref] ||
+                    ([cleanPref containsString:@"play"] && [cName containsString:@"play"]) ||
+                    ([cleanPref containsString:@"orange"] && [cName containsString:@"orange"]) ||
+                    ([cleanPref containsString:@"plus"] && [cName containsString:@"plus"]) ||
+                    ([cleanPref containsString:@"t-mobile"] && [cName containsString:@"t-mobile"]) ||
+                    [cleanPref isEqualToString:cMnc]) {
+                    c = item;
+                    break;
+                }
+            }
+        }
+        if (!c) {
+            c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+        }
+        profile.carrierName = c[@"name"];
+        profile.carrierMCC = c[@"mcc"];
+        profile.carrierMNC = c[@"mnc"];
+        profile.carrierCountryCode = @"pl";
+        profile.localeIdentifier = @"pl_PL";
+        profile.preferredLanguages = @[@"pl-PL", @"en-PL"];
+        profile.timeZoneName = @"Europe/Warsaw";
     } else {
         NSArray *names = @[
             @"iPhone", @"iPhone (1)", @"iPhone (2)", @"iPhone (3)",
