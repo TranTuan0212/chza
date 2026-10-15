@@ -42,9 +42,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL screenResolutionPassed;
 
 @property (nonatomic, assign) BOOL keychainIsolated;
-@property (nonatomic, assign) NSInteger keychainItemCount;
-@property (nonatomic, assign) BOOL isWifiActive;
-@property (nonatomic, copy, nullable) NSString *networkTypeDesc;
+@property (nonatomic, assign) BOOL keychainCleanPassed;
+@property (nonatomic, assign) NSInteger keychainRemainingCount;
+@property (nonatomic, assign) BOOL webkitCleanPassed;
+@property (nonatomic, assign) BOOL clipboardCleanPassed;
 @property (nonatomic, copy) NSString *runtimeEnvDesc;
 
 // Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ

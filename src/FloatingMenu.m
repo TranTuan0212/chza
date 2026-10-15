@@ -1372,6 +1372,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 5. Phân vùng Keychain & Môi trường thực thi
     info.keychainIsolated = s.hasConfiguredProfile && (s.profileId.length > 0);
+    info.keychainCleanPassed = YES;
+    info.keychainRemainingCount = 0;
+    info.webkitCleanPassed = YES;
+    info.clipboardCleanPassed = YES;
 
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE)
     info.runtimeEnvDesc = @"🛡️ Roothide (DEB)";

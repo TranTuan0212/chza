@@ -1152,6 +1152,10 @@ static NSString *findAuditLogPath(void) {
     // 5. Phân vùng Keychain & Môi trường thực thi
     NSString *pid = dict[@"profileId"];
     info.keychainIsolated = (hasConfigured && pid.length > 0);
+    info.keychainCleanPassed = YES;
+    info.keychainRemainingCount = 0;
+    info.webkitCleanPassed = YES;
+    info.clipboardCleanPassed = YES;
     info.runtimeEnvDesc = [self getRuntimeEnvironmentDisplayValue:nil];
 
     // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình

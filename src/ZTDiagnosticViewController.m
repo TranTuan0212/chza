@@ -3,55 +3,6 @@
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <dlfcn.h>
-#import <ifaddrs.h>
-#import <arpa/inet.h>
-#import <net/if.h>
-#import <Security/Security.h>
-
-static BOOL is_active_network_wifi_interface(void) {
-    struct ifaddrs *interfaces = NULL;
-    struct ifaddrs *temp_addr = NULL;
-    BOOL wifi = NO;
-    if (getifaddrs(&interfaces) == 0) {
-        temp_addr = interfaces;
-        while (temp_addr != NULL) {
-            if (temp_addr->ifa_addr && temp_addr->ifa_addr->sa_family == AF_INET) {
-                NSString *name = [NSString stringWithUTF8String:temp_addr->ifa_name];
-                if ([name isEqualToString:@"en0"] && (temp_addr->ifa_flags & IFF_UP) && (temp_addr->ifa_flags & IFF_RUNNING)) {
-                    wifi = YES;
-                    break;
-                }
-            }
-            temp_addr = temp_addr->ifa_next;
-        }
-        freeifaddrs(interfaces);
-    }
-    return wifi;
-}
-
-static NSInteger count_live_zalo_keychain_items(void) {
-    NSArray *secClasses = @[
-        (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecClassInternetPassword
-    ];
-    NSInteger total = 0;
-    for (id secClass in secClasses) {
-        NSDictionary *query = @{
-            (__bridge id)kSecClass: secClass,
-            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll,
-            (__bridge id)kSecReturnAttributes: @YES
-        };
-        CFTypeRef result = NULL;
-        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
-        if (status == errSecSuccess && result) {
-            if ([(__bridge id)result isKindOfClass:[NSArray class]]) {
-                total += [(__bridge NSArray *)result count];
-            }
-            CFRelease(result);
-        }
-    }
-    return total;
-}
 
 static NSString *get_zt_prefs_filepath(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
@@ -122,6 +73,57 @@ static void update_zt_synced_timezone_pref(NSString *tzName) {
 
 @implementation ZTDiagnosticInfo
 @end
+
+static NSInteger check_zalo_keychain_count(void) {
+    NSInteger count = 0;
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword
+    ];
+    for (id secClass in secClasses) {
+        NSMutableDictionary *query = [NSMutableDictionary dictionary];
+        query[(__bridge id)kSecClass] = secClass;
+        query[(__bridge id)kSecReturnData] = @NO;
+        query[(__bridge id)kSecReturnAttributes] = @YES;
+        query[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitAll;
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)query, &result);
+        if (status == errSecSuccess && result) {
+            if ([(__bridge id)result isKindOfClass:[NSArray class]]) {
+                count += [(__bridge NSArray *)result count];
+            } else {
+                count += 1;
+            }
+            CFRelease(result);
+        }
+    }
+    return count;
+}
+
+static BOOL check_webkit_is_clean(void) {
+    NSString *home = NSHomeDirectory();
+    if (!home) return YES;
+    NSString *wkDir = [home stringByAppendingPathComponent:@"Library/WebKit"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:wkDir]) return YES;
+    NSArray *subItems = [fm contentsOfDirectoryAtPath:wkDir error:nil];
+    for (NSString *item in subItems) {
+        NSString *lower = [item lowercaseString];
+        if ([lower containsString:@"cookie"] || [lower containsString:@"storage"]) {
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static BOOL check_clipboard_is_clean(void) {
+    @try {
+        NSString *str = [UIPasteboard generalPasteboard].string;
+        return (str == nil || str.length == 0);
+    } @catch (__unused NSException *e) {
+        return YES;
+    }
+}
 
 // ==========================================
 // CÁC HÀM TIỆN ÍCH HỖ TRỢ PARSE PROXY & TRA CỨU MẠNG
@@ -467,7 +469,17 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     ]];
 }
 
+- (void)refreshLiveCleanlinessStatus {
+    NSInteger kcCount = check_zalo_keychain_count();
+    self.info.keychainRemainingCount = kcCount;
+    self.info.keychainCleanPassed = (kcCount == 0);
+    self.info.webkitCleanPassed = check_webkit_is_clean();
+    self.info.clipboardCleanPassed = check_clipboard_is_clean();
+}
+
 - (void)reloadCardViews {
+    [self refreshLiveCleanlinessStatus];
+
     // Xoá các view cũ ngoại trừ pairInputCard (để không bị mất text người dùng vừa gõ)
     for (UIView *v in [self.contentStack.arrangedSubviews copy]) {
         [self.contentStack removeArrangedSubview:v];
@@ -479,16 +491,14 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     // 1. Ô Nhập Liệu SĐT & Proxy (Top Input Card)
     [self.contentStack addArrangedSubview:[self getOrCreatePairInputCard]];
 
-    // Cập nhật trạng thái mạng & vệ sinh Keychain thực tế
-    self.info.isWifiActive = is_active_network_wifi_interface();
-    self.info.networkTypeDesc = self.info.isWifiActive ? @"WiFi (Mạng Nhà)" : @"Cellular 4G/LTE";
-    self.info.keychainItemCount = count_live_zalo_keychain_items();
-
     // Tính toán tiêu chuẩn An Toàn Tổng Thể
     BOOL hasWipedHistory = (self.info.lastWipedIP.length > 0);
     BOOL isSameIP = (hasWipedHistory && [self.info.currentIP isEqualToString:self.info.lastWipedIP]);
     BOOL isDifferentIP = (hasWipedHistory && ![self.info.currentIP isEqualToString:self.info.lastWipedIP]);
     BOOL isDuplicateIDFV = (self.info.lastWipedIDFV.length > 0 && [self.info.currentIDFV isEqualToString:self.info.lastWipedIDFV]);
+
+    BOOL isOrig = [self.info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
+    BOOL kcIsoPassed = isOrig || self.info.keychainIsolated;
 
     BOOL hardwarePassed = (self.info.hasConfiguredProfile &&
                            !isSameIP &&
@@ -497,7 +507,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                            self.info.armCpuPassed &&
                            self.info.installTimePassed &&
                            self.info.screenResolutionPassed &&
-                           self.info.keychainIsolated &&
+                           kcIsoPassed &&
+                           self.info.keychainCleanPassed &&
+                           self.info.webkitCleanPassed &&
                            self.info.leveldbOK &&
                            self.info.regionSyncPassed &&
                            self.info.sysctlPassed &&
@@ -1120,6 +1132,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id trùng timestamp máy thật (Chưa fake birthtime)!\n"];
         if (!self.info.armCpuPassed) [reasons appendString:@"• Lệch tập lệnh ARM CPU phần cứng Apple!\n"];
         if (self.info.ipCheckCompleted && !self.info.ipCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• IP KHÔNG SẠCH: %@\n", self.info.ipTypeDesc ?: @""]];
+        if (!self.info.keychainCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• Còn %ld Token Zalo trong Keychain! Cần Deep Wipe để làm sạch.\n", (long)self.info.keychainRemainingCount]];
+        if (!self.info.webkitCleanPassed) [reasons appendString:@"• Còn lưu trữ Cookie WebKit cũ! Cần Deep Wipe.\n"];
 
         if (!self.info.phoneCheckCompleted) {
             [reasons appendString:@"• Chưa nhập Số điện thoại dự định đăng ký để kiểm tra độ khớp!\n"];
@@ -1348,35 +1362,63 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     }
 
     NSString *lastIPStr = self.info.lastWipedIP.length > 0 ? self.info.lastWipedIP : @"Chưa có lịch sử";
+    NSString *ipRotBadge = nil;
+    BOOL ipRotWarn = NO;
+    if (self.info.lastWipedIP.length > 0) {
+        if (isSameIP) {
+            ipRotBadge = @"TRÙNG IP CŨ ❌";
+            ipRotWarn = YES;
+        } else {
+            ipRotBadge = @"Đã đổi IP mới ✅";
+        }
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"IP Lần Wipe Trước"
                                               value:lastIPStr
-                                              badge:nil
-                                          isWarning:NO]];
+                                              badge:ipRotBadge
+                                          isWarning:ipRotWarn]];
 
-    // 1. Loại Mạng Kết Nối (WiFi vs 4G)
-    NSString *netTypeVal = self.info.networkTypeDesc ?: (self.info.isWifiActive ? @"WiFi (Mạng Nhà)" : @"Cellular 4G/LTE");
-    NSString *netTypeBadge = self.info.isWifiActive ? @"Cảnh Báo ⚠️" : @"Khuyên Dùng ✅";
-    [inner addArrangedSubview:[self createRowWithKey:@"Loại Mạng Kết Nối"
-                                              value:netTypeVal
-                                              badge:netTypeBadge
-                                          isWarning:self.info.isWifiActive]];
+    if (self.info.ipCheckCompleted) {
+        NSString *connType = self.info.ipIsMobile ? @"4G Cellular (Di Động)" : @"WiFi / Internet Cố Định";
+        NSString *connBadge = self.info.ipIsMobile ? @"Khuyến nghị reg ✅" : @"Dễ dính Blacklist IP ⚠️";
+        [inner addArrangedSubview:[self createRowWithKey:@"Loại Kết Nối Mạng"
+                                                  value:connType
+                                                  badge:connBadge
+                                              isWarning:!self.info.ipIsMobile]];
+    }
 
-    // 2. Trạng Thái Xoay IP
-    NSString *ipRotateVal = isSameIP ? @"TRÙNG IP LẦN TRƯỚC!" : (isDifferentIP ? @"Đã Đổi IP Mới" : @"Chưa Có Đối Chứng");
-    NSString *ipRotateBadge = isSameIP ? @"🚨 CHƯA XOAY IP" : (isDifferentIP ? @"Sạch Sẽ ✅" : @"---");
-    [inner addArrangedSubview:[self createRowWithKey:@"Trạng Thái Xoay IP"
-                                              value:ipRotateVal
-                                              badge:ipRotateBadge
-                                          isWarning:isSameIP]];
+    if (self.info.ipCheckCompleted && self.info.ipIsHosting) {
+        UIView *warnBox = [[UIView alloc] init];
+        warnBox.translatesAutoresizingMaskIntoConstraints = NO;
+        warnBox.layer.cornerRadius = 8;
+        warnBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.3 blue:0.2 alpha:0.12];
+        warnBox.layer.borderWidth = 1.0;
+        warnBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.2 alpha:0.4].CGColor;
+
+        UILabel *warnLbl = [[UILabel alloc] init];
+        warnLbl.translatesAutoresizingMaskIntoConstraints = NO;
+        warnLbl.numberOfLines = 0;
+        warnLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+        warnLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
+        warnLbl.text = @"⚠️ CẢNH BÁO NGUY HIỂM: IP của bạn là DATACENTER / HOSTING (Máy chủ/VPS)!\n• Zalo Anti-Fraud sẽ lập tức gắn cờ 'Bot reg' và Vô Hiệu Hoá tài khoản.\n• HÃY ĐỔI SANG: Proxy 4G Mobile hoặc Proxy Dân Cư (Residential) sạch!";
+        [warnBox addSubview:warnLbl];
+
+        [NSLayoutConstraint activateConstraints:@[
+            [warnLbl.topAnchor constraintEqualToAnchor:warnBox.topAnchor constant:8],
+            [warnLbl.leadingAnchor constraintEqualToAnchor:warnBox.leadingAnchor constant:10],
+            [warnLbl.trailingAnchor constraintEqualToAnchor:warnBox.trailingAnchor constant:-10],
+            [warnLbl.bottomAnchor constraintEqualToAnchor:warnBox.bottomAnchor constant:-8]
+        ]];
+        [inner addArrangedSubview:warnBox];
+    }
 
     // Cảnh báo nếu đang dùng WiFi
-    if (self.info.isWifiActive) {
+    if (self.info.ipCheckCompleted && !self.info.ipIsMobile) {
         UIView *wifiBox = [[UIView alloc] init];
         wifiBox.translatesAutoresizingMaskIntoConstraints = NO;
         wifiBox.layer.cornerRadius = 8;
-        wifiBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.6 blue:0.1 alpha:0.12];
+        wifiBox.backgroundColor = [UIColor colorWithRed:0.98 green:0.75 blue:0.1 alpha:0.12];
         wifiBox.layer.borderWidth = 1.0;
-        wifiBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.6 blue:0.1 alpha:0.4].CGColor;
+        wifiBox.layer.borderColor = [UIColor colorWithRed:0.95 green:0.65 blue:0.1 alpha:0.4].CGColor;
 
         UILabel *wifiLbl = [[UILabel alloc] init];
         wifiLbl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1419,31 +1461,6 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             [sameIpLbl.bottomAnchor constraintEqualToAnchor:sameIpBox.bottomAnchor constant:-8]
         ]];
         [inner addArrangedSubview:sameIpBox];
-    }
-
-    if (self.info.ipCheckCompleted && self.info.ipIsHosting) {
-        UIView *warnBox = [[UIView alloc] init];
-        warnBox.translatesAutoresizingMaskIntoConstraints = NO;
-        warnBox.layer.cornerRadius = 8;
-        warnBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.3 blue:0.2 alpha:0.12];
-        warnBox.layer.borderWidth = 1.0;
-        warnBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.2 alpha:0.4].CGColor;
-
-        UILabel *warnLbl = [[UILabel alloc] init];
-        warnLbl.translatesAutoresizingMaskIntoConstraints = NO;
-        warnLbl.numberOfLines = 0;
-        warnLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-        warnLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
-        warnLbl.text = @"⚠️ CẢNH BÁO NGUY HIỂM: IP của bạn là DATACENTER / HOSTING (Máy chủ/VPS)!\n• Zalo Anti-Fraud sẽ lập tức gắn cờ 'Bot reg' và Vô Hiệu Hoá tài khoản.\n• HÃY ĐỔI SANG: Proxy 4G Mobile hoặc Proxy Dân Cư (Residential) sạch!";
-        [warnBox addSubview:warnLbl];
-
-        [NSLayoutConstraint activateConstraints:@[
-            [warnLbl.topAnchor constraintEqualToAnchor:warnBox.topAnchor constant:8],
-            [warnLbl.leadingAnchor constraintEqualToAnchor:warnBox.leadingAnchor constant:10],
-            [warnLbl.trailingAnchor constraintEqualToAnchor:warnBox.trailingAnchor constant:-10],
-            [warnLbl.bottomAnchor constraintEqualToAnchor:warnBox.bottomAnchor constant:-8]
-        ]];
-        [inner addArrangedSubview:warnBox];
     }
 
     return card;
@@ -1600,6 +1617,28 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:cleanBadge
                                           isWarning:(self.info.sandboxKB >= 6144.0)]];
 
+    // Vệ Sinh Keychain Zalo
+    NSString *kcVal = self.info.keychainCleanPassed ? @"0 Token Tồn Dư" : [NSString stringWithFormat:@"Còn %ld Token cũ", (long)self.info.keychainRemainingCount];
+    NSString *kcBadge = self.info.keychainCleanPassed ? @"Sạch 100% ✅" : @"Cần Deep Wipe ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Vệ Sinh Keychain Zalo"
+                                              value:kcVal
+                                              badge:kcBadge
+                                          isWarning:!self.info.keychainCleanPassed]];
+
+    // Dữ Liệu WebKit / Cookies
+    NSString *wkBadge = self.info.webkitCleanPassed ? @"Đã xóa trắng ✅" : @"Có Cookie cũ ⚠️";
+    [inner addArrangedSubview:[self createRowWithKey:@"Dữ Liệu WebKit / Cookies"
+                                              value:self.info.webkitCleanPassed ? @"Không lưu trữ web" : @"Chứa dữ liệu Web"
+                                              badge:wkBadge
+                                          isWarning:!self.info.webkitCleanPassed]];
+
+    // Bộ Nhớ Tạm (Clipboard)
+    NSString *clipBadge = self.info.clipboardCleanPassed ? @"Trống ✅" : @"Đang lưu text ⚠️";
+    [inner addArrangedSubview:[self createRowWithKey:@"Bộ Nhớ Tạm (Clipboard)"
+                                              value:self.info.clipboardCleanPassed ? @"Sạch (Không lưu token)" : @"Có dữ liệu tạm"
+                                              badge:clipBadge
+                                          isWarning:!self.info.clipboardCleanPassed]];
+
     [inner addArrangedSubview:[self createRowWithKey:@"LevelDB C++ & Groups"
                                               value:self.info.leveldbOK ? @"Thông suốt 100%" : @"Lỗi truy cập"
                                               badge:self.info.leveldbOK ? @"✅" : @"❌"
@@ -1624,17 +1663,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               isWarning:NO]];
     }
 
+    BOOL isOrig = [self.info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
+    NSString *kcIsoVal = isOrig ? @"Zalo Gốc (Tự động xóa sạch)" : (self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định");
+    NSString *kcIsoBadge = (isOrig || self.info.keychainIsolated) ? @"Bảo vệ an toàn ✅" : @"Chưa cô lập ⚠️";
     [inner addArrangedSubview:[self createRowWithKey:@"Phân Vùng Keychain"
-                                              value:self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định"
-                                              badge:self.info.keychainIsolated ? @"Cách ly 100% ✅" : @"Chưa cô lập ❌"
-                                          isWarning:!self.info.keychainIsolated]];
-
-    NSString *kcVal = (self.info.keychainItemCount == 0) ? @"0 Token (Sạch 100%)" : [NSString stringWithFormat:@"%ld Token còn sót", (long)self.info.keychainItemCount];
-    NSString *kcBadge = (self.info.keychainItemCount == 0) ? @"Sạch 100% ✅" : @"Cần Wipe Lại ❌";
-    [inner addArrangedSubview:[self createRowWithKey:@"Vệ Sinh Keychain Zalo"
-                                              value:kcVal
-                                              badge:kcBadge
-                                          isWarning:(self.info.keychainItemCount > 0)]];
+                                              value:kcIsoVal
+                                              badge:kcIsoBadge
+                                          isWarning:!(isOrig || self.info.keychainIsolated)]];
 
     return card;
 }
