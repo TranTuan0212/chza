@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface ZTFloatingButton : UIButton
 + (instancetype)sharedButton;
 - (void)attachToWindow:(UIWindow *)window;
@@ -31,8 +33,10 @@
 extern "C" {
 #endif
 
-UIViewController *ZTGetTopViewController(void);
+UIViewController * _Nullable ZTGetTopViewController(void);
 
 #ifdef __cplusplus
 }
 #endif
+
+NS_ASSUME_NONNULL_END

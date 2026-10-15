@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *carrierName;
 @property (nonatomic, copy) NSString *carrierMCC;
 @property (nonatomic, copy) NSString *carrierMNC;
+@property (nonatomic, copy, nullable) NSString *carrierCountryCode;
 @property (nonatomic, assign) double sandboxKB;
 @property (nonatomic, assign) BOOL leveldbOK;
 @property (nonatomic, assign) BOOL isHiddenProv;
