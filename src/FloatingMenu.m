@@ -729,13 +729,14 @@ UIViewController *ZTGetTopViewController(void) {
     [top presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)applyRegionOnly:(NSString *)region {
+- (void)applyRegion:(NSString *)region preferredCarrier:(nullable NSString *)prefCarrier {
     ZTSettings *s = [ZTSettings sharedSettings];
     s.regionMode = region;
+    s.preferredCarrier = prefCarrier ?: @"";
     if ([region isEqualToString:@"US_STUDENT"]) {
         NSArray *userNames = @[@"Huy's iPhone", @"Nam's iPhone", @"Trang's iPhone", @"Alex's iPhone", @"Minh's iPhone"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-        s.carrierName = @"T-Mobile";
+        s.carrierName = prefCarrier.length > 0 ? prefCarrier : @"T-Mobile";
         s.carrierMCC = @"310";
         s.carrierMNC = @"260";
         s.carrierCountryCode = @"us";
@@ -745,7 +746,7 @@ UIViewController *ZTGetTopViewController(void) {
     } else if ([region isEqualToString:@"US"]) {
         NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-        s.carrierName = @"Verizon";
+        s.carrierName = prefCarrier.length > 0 ? prefCarrier : @"Verizon";
         s.carrierMCC = @"311";
         s.carrierMNC = @"480";
         s.carrierCountryCode = @"us";
@@ -755,25 +756,53 @@ UIViewController *ZTGetTopViewController(void) {
     } else if ([region isEqualToString:@"PL"]) {
         NSArray *userNames = @[@"iPhone Michała", @"iPhone Piotra", @"iPhone Jakuba", @"iPhone Anny", @"iPhone Julii"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-        s.carrierName = @"Play";
         s.carrierMCC = @"260";
-        s.carrierMNC = @"06";
         s.carrierCountryCode = @"pl";
         s.localeIdentifier = @"pl_PL";
         s.preferredLanguages = @[@"pl-PL", @"en-PL"];
         s.timeZoneName = @"Europe/Warsaw";
+        NSString *cleanPref = [prefCarrier lowercaseString];
+        if ([cleanPref containsString:@"orange"]) {
+            s.carrierName = @"Orange";
+            s.carrierMNC = @"03";
+        } else if ([cleanPref containsString:@"plus"]) {
+            s.carrierName = @"Plus";
+            s.carrierMNC = @"01";
+        } else if ([cleanPref containsString:@"t-mobile"]) {
+            s.carrierName = @"T-Mobile";
+            s.carrierMNC = @"02";
+        } else {
+            s.carrierName = @"Play";
+            s.carrierMNC = @"06";
+        }
     } else {
         NSArray *userNames = @[@"iPhone của Tuấn", @"iPhone của Linh", @"iPhone (2)", @"iPhone của Huy", @"iPhone của Nam"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
-        s.carrierName = @"Viettel";
-        s.carrierMCC = @"452";
-        s.carrierMNC = @"04";
         s.carrierCountryCode = @"vn";
         s.localeIdentifier = @"vi_VN";
         s.preferredLanguages = @[@"vi-VN", @"en-VN"];
         s.timeZoneName = @"Asia/Ho_Chi_Minh";
+        s.carrierMCC = @"452";
+        NSString *cleanPref = [prefCarrier lowercaseString];
+        if ([cleanPref containsString:@"vina"]) {
+            s.carrierName = @"VINAPHONE";
+            s.carrierMNC = @"02";
+        } else if ([cleanPref containsString:@"mobi"]) {
+            s.carrierName = @"VN MOBIFONE";
+            s.carrierMNC = @"01";
+        } else if ([cleanPref containsString:@"vietnamobile"]) {
+            s.carrierName = @"Vietnamobile";
+            s.carrierMNC = @"05";
+        } else {
+            s.carrierName = @"Viettel";
+            s.carrierMNC = @"04";
+        }
     }
     [s saveSettings];
+}
+
+- (void)applyRegionOnly:(NSString *)region {
+    [self applyRegion:region preferredCarrier:nil];
 }
 
 - (void)showRegionSelectionMenuFrom:(UIViewController *)top {
@@ -814,10 +843,37 @@ UIViewController *ZTGetTopViewController(void) {
         [top presentViewController:done animated:YES completion:nil];
     }]];
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self applyRegionOnly:@"PL"];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan: SIM Play (260-06)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self applyRegion:@"PL" preferredCarrier:@"Play"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.deviceName]
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@, MNC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.carrierMNC, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan: SIM Orange (260-03)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self applyRegion:@"PL" preferredCarrier:@"Orange"];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@, MNC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.carrierMNC, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan: SIM Plus (260-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self applyRegion:@"PL" preferredCarrier:@"Plus"];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@, MNC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.carrierMNC, s.deviceName]
+                                                               preferredStyle:UIAlertControllerStyleAlert];
+        [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:done animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan: SIM T-Mobile (260-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self applyRegion:@"PL" preferredCarrier:@"T-Mobile"];
+        UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Ba Lan (+48).\n• SIM: %@ (PL - MCC %@, MNC %@)\n• Múi giờ: Europe/Warsaw\n• Tên máy: %@", s.carrierName, s.carrierMCC, s.carrierMNC, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
         [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:done animated:YES completion:nil];
@@ -954,7 +1010,23 @@ UIViewController *ZTGetTopViewController(void) {
         [self startInAppDeepWipeSequenceWithRegion:@"US" preferredCarrier:nil from:top];
     }]];
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Play (260-06)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Play" from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Orange (260-03)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Orange" from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Plus (260-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Plus" from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM T-Mobile (260-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"T-Mobile" from:top];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Ba Lan)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:nil from:top];
     }]];
 

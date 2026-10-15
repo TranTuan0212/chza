@@ -71,6 +71,51 @@ static void update_zt_synced_timezone_pref(NSString *tzName) {
                                          NULL, NULL, YES);
 }
 
+static void update_zt_carrier_pref(NSString *carrierName, NSString *mcc, NSString *mnc, NSString *countryCode, NSString *regionMode, NSString *localeId, NSString *tzName) {
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+            if (shared) {
+                if (carrierName) [shared setValue:carrierName forKey:@"carrierName"];
+                if (carrierName) [shared setValue:carrierName forKey:@"preferredCarrier"];
+                if (mcc) [shared setValue:mcc forKey:@"carrierMCC"];
+                if (mnc) [shared setValue:mnc forKey:@"carrierMNC"];
+                if (countryCode) [shared setValue:countryCode forKey:@"carrierCountryCode"];
+                if (regionMode) [shared setValue:regionMode forKey:@"regionMode"];
+                if (localeId) [shared setValue:localeId forKey:@"localeIdentifier"];
+                if (tzName) [shared setValue:tzName forKey:@"timeZoneName"];
+                SEL selSave = NSSelectorFromString(@"saveSettings");
+                if ([shared respondsToSelector:selSave]) {
+                    [shared performSelector:selSave];
+                }
+            }
+#pragma clang diagnostic pop
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
+    if (carrierName) {
+        dict[@"carrierName"] = carrierName;
+        dict[@"preferredCarrier"] = carrierName;
+    }
+    if (mcc) dict[@"carrierMCC"] = mcc;
+    if (mnc) dict[@"carrierMNC"] = mnc;
+    if (countryCode) dict[@"carrierCountryCode"] = countryCode;
+    if (regionMode) dict[@"regionMode"] = regionMode;
+    if (localeId) dict[@"localeIdentifier"] = localeId;
+    if (tzName) dict[@"timeZoneName"] = tzName;
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+    [dict writeToFile:path atomically:YES];
+    chmod([path UTF8String], 0666);
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.sonhu.zalotweak/settingschanged"),
+                                         NULL, NULL, YES);
+}
+
 @implementation ZTDiagnosticInfo
 @end
 
@@ -434,6 +479,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 @property (nonatomic, strong) UIButton *fetchIpBtn;
 @property (nonatomic, strong) UIActivityIndicatorView *spinner;
 @property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, assign) BOOL allowHostingIP;
 
 @end
 
@@ -563,6 +609,10 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
 - (void)reloadCardViews {
     [self refreshLiveCleanlinessStatus];
+    if (self.allowHostingIP && self.info.ipIsHosting) {
+        self.info.ipCleanPassed = YES;
+        self.info.ipTypeDesc = @"Hosting / Datacenter (Đã xác nhận sạch thủ công) ⚠️";
+    }
 
     // Xoá các view cũ ngoại trừ pairInputCard (để không bị mất text người dùng vừa gõ)
     for (UIView *v in [self.contentStack.arrangedSubviews copy]) {
@@ -1072,8 +1122,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 }
 
                 if (strongSelf.info.ipIsHosting) {
-                    strongSelf.info.ipTypeDesc = @"Datacenter / Hosting / VPS ❌";
-                    strongSelf.info.ipCleanPassed = NO;
+                    if (strongSelf.allowHostingIP) {
+                        strongSelf.info.ipTypeDesc = @"Hosting / Datacenter (Đã xác nhận sạch thủ công) ⚠️";
+                        strongSelf.info.ipCleanPassed = YES;
+                    } else {
+                        strongSelf.info.ipTypeDesc = @"Datacenter / Hosting / VPS ❌";
+                        strongSelf.info.ipCleanPassed = NO;
+                    }
                 } else if (strongSelf.info.ipIsMobile) {
                     strongSelf.info.ipTypeDesc = @"4G/5G Cellular Mobile (Cực Sạch) ✅";
                     strongSelf.info.ipCleanPassed = YES;
@@ -1338,6 +1393,18 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         ]];
         [inner addArrangedSubview:warnBox];
 
+        UIButton *quickCarrierBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        quickCarrierBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [quickCarrierBtn.heightAnchor constraintEqualToConstant:44].active = YES;
+        quickCarrierBtn.layer.cornerRadius = 10;
+        quickCarrierBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        NSString *quickTitle = [NSString stringWithFormat:@"⚡ ĐỔI SIM SANG [%@] KHỚP SĐT NGAY", self.info.suggestedCarrier.uppercaseString];
+        [quickCarrierBtn setTitle:quickTitle forState:UIControlStateNormal];
+        [quickCarrierBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        quickCarrierBtn.backgroundColor = [UIColor colorWithRed:0.12 green:0.65 blue:0.3 alpha:1.0];
+        [quickCarrierBtn addTarget:self action:@selector(applySuggestedCarrierDirectlyAction) forControlEvents:UIControlEventTouchUpInside];
+        [inner addArrangedSubview:quickCarrierBtn];
+
         UIButton *wipeCarrierBtn = [UIButton buttonWithType:UIButtonTypeSystem];
         wipeCarrierBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [wipeCarrierBtn.heightAnchor constraintEqualToConstant:44].active = YES;
@@ -1378,7 +1445,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             if (mgr && [mgr respondsToSelector:wipeSel]) {
                 typedef void (*WipeFunc)(id, SEL, NSString *, NSString *, NSString *);
                 WipeFunc fn = (WipeFunc)[mgr methodForSelector:wipeSel];
-                fn(mgr, wipeSel, @"VN", carrier, self.info.currentIP);
+                NSString *targetRegion = (self.info.phoneCountryCode.length > 0) ? self.info.phoneCountryCode : @"VN";
+                fn(mgr, wipeSel, targetRegion, carrier, self.info.currentIP);
                 return;
             }
 #pragma clang diagnostic pop
@@ -1474,16 +1542,20 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         UIView *warnBox = [[UIView alloc] init];
         warnBox.translatesAutoresizingMaskIntoConstraints = NO;
         warnBox.layer.cornerRadius = 8;
-        warnBox.backgroundColor = [UIColor colorWithRed:0.95 green:0.3 blue:0.2 alpha:0.12];
+        warnBox.backgroundColor = self.allowHostingIP ? [UIColor colorWithRed:0.2 green:0.7 blue:0.3 alpha:0.12] : [UIColor colorWithRed:0.95 green:0.3 blue:0.2 alpha:0.12];
         warnBox.layer.borderWidth = 1.0;
-        warnBox.layer.borderColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.2 alpha:0.4].CGColor;
+        warnBox.layer.borderColor = self.allowHostingIP ? [UIColor colorWithRed:0.2 green:0.7 blue:0.3 alpha:0.4].CGColor : [UIColor colorWithRed:0.9 green:0.3 blue:0.2 alpha:0.4].CGColor;
 
         UILabel *warnLbl = [[UILabel alloc] init];
         warnLbl.translatesAutoresizingMaskIntoConstraints = NO;
         warnLbl.numberOfLines = 0;
         warnLbl.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
-        warnLbl.textColor = [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
-        warnLbl.text = @"⚠️ CẢNH BÁO NGUY HIỂM: IP của bạn là DATACENTER / HOSTING (Máy chủ/VPS)!\n• Zalo Anti-Fraud sẽ lập tức gắn cờ 'Bot reg' và Vô Hiệu Hoá tài khoản.\n• HÃY ĐỔI SANG: Proxy 4G Mobile hoặc Proxy Dân Cư (Residential) sạch!";
+        warnLbl.textColor = self.allowHostingIP ? [UIColor colorWithRed:0.1 green:0.6 blue:0.2 alpha:1.0] : [UIColor colorWithRed:0.85 green:0.2 blue:0.15 alpha:1.0];
+        if (self.allowHostingIP) {
+            warnLbl.text = @"🟢 ĐÃ XÁC NHẬN SẠCH THỦ CÔNG:\n• Bạn đã đánh dấu kiểm tra IP này sạch trên web. Hệ thống bỏ qua cảnh báo Datacenter và cho phép bạn tiến hành Reg nick!";
+        } else {
+            warnLbl.text = @"⚠️ CẢNH BÁO NGUY HIỂM: Cơ sở dữ liệu ip-api gán cờ DATACENTER / HOSTING (Máy chủ/VPS)!\n• Nếu bạn đã kiểm tra IP này trên web (Whoer, Scamalytics...) và thấy sạch, hãy bấm nút bên dưới để chấp nhận IP.";
+        }
         [warnBox addSubview:warnLbl];
 
         [NSLayoutConstraint activateConstraints:@[
@@ -1493,6 +1565,23 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             [warnLbl.bottomAnchor constraintEqualToAnchor:warnBox.bottomAnchor constant:-8]
         ]];
         [inner addArrangedSubview:warnBox];
+
+        UIButton *allowBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        allowBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [allowBtn.heightAnchor constraintEqualToConstant:40].active = YES;
+        allowBtn.layer.cornerRadius = 8;
+        allowBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        if (self.allowHostingIP) {
+            [allowBtn setTitle:@"✅ ĐÃ CHẤP NHẬN IP NÀY (BẤM ĐỂ HỦY BỎ)" forState:UIControlStateNormal];
+            [allowBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            allowBtn.backgroundColor = [UIColor colorWithRed:0.1 green:0.65 blue:0.25 alpha:1.0];
+        } else {
+            [allowBtn setTitle:@"🛡️ Tôi đã tự check web, IP này sạch -> Cho phép dùng" forState:UIControlStateNormal];
+            [allowBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            allowBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.45 blue:0.85 alpha:1.0];
+        }
+        [allowBtn addTarget:self action:@selector(toggleAllowHostingIPAction) forControlEvents:UIControlEventTouchUpInside];
+        [inner addArrangedSubview:allowBtn];
     }
 
     // Cảnh báo nếu đang dùng WiFi
@@ -1709,6 +1798,20 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:kcBadge
                                           isWarning:!self.info.keychainCleanPassed]];
 
+    if (!self.info.keychainCleanPassed) {
+        UIButton *purgeKcBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        purgeKcBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [purgeKcBtn.heightAnchor constraintEqualToConstant:40].active = YES;
+        purgeKcBtn.layer.cornerRadius = 8;
+        purgeKcBtn.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+        NSString *kcTitle = [NSString stringWithFormat:@"🧹 XÓA SẠCH %ld TOKEN KEYCHAIN NGAY", (long)self.info.keychainRemainingCount];
+        [purgeKcBtn setTitle:kcTitle forState:UIControlStateNormal];
+        [purgeKcBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        purgeKcBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
+        [purgeKcBtn addTarget:self action:@selector(purgeKeychainDirectlyAction) forControlEvents:UIControlEventTouchUpInside];
+        [inner addArrangedSubview:purgeKcBtn];
+    }
+
     // Dữ Liệu WebKit / Cookies
     NSString *wkBadge = self.info.webkitCleanPassed ? @"Đã xóa trắng ✅" : @"Có Cookie cũ ⚠️";
     [inner addArrangedSubview:[self createRowWithKey:@"Dữ Liệu WebKit / Cookies"
@@ -1773,6 +1876,176 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:isWarning]];
 
     return card;
+}
+
+#pragma mark - Action Handlers (Bypass Hosting, Sync Carrier, Purge Keychain)
+
+- (void)toggleAllowHostingIPAction {
+    self.allowHostingIP = !self.allowHostingIP;
+    if (self.allowHostingIP && self.info.ipIsHosting) {
+        self.info.ipCleanPassed = YES;
+        self.info.ipTypeDesc = @"Hosting / Datacenter (Đã xác nhận sạch thủ công) ⚠️";
+    } else if (!self.allowHostingIP && self.info.ipIsHosting) {
+        self.info.ipCleanPassed = NO;
+        self.info.ipTypeDesc = @"Datacenter / Hosting / VPS ❌";
+    }
+    [self reloadCardViews];
+}
+
+- (void)applySuggestedCarrierDirectlyAction {
+    NSString *carrier = self.info.suggestedCarrier ?: @"Viettel";
+    NSString *targetRegion = (self.info.phoneCountryCode.length > 0) ? self.info.phoneCountryCode : @"VN";
+
+    NSString *carrierName = carrier;
+    NSString *mcc = @"452";
+    NSString *mnc = @"04";
+    NSString *countryCode = @"vn";
+    NSString *regionMode = @"VN";
+    NSString *localeId = @"vi_VN";
+    NSString *tzName = @"Asia/Ho_Chi_Minh";
+
+    NSString *cleanCarrier = carrier.lowercaseString;
+    if ([targetRegion isEqualToString:@"PL"] || [cleanCarrier containsString:@"play"] || [cleanCarrier containsString:@"orange"] || [cleanCarrier containsString:@"plus"] || [cleanCarrier containsString:@"poland"]) {
+        regionMode = @"PL";
+        countryCode = @"pl";
+        localeId = @"pl_PL";
+        tzName = @"Europe/Warsaw";
+        mcc = @"260";
+        if ([cleanCarrier containsString:@"orange"]) {
+            carrierName = @"Orange";
+            mnc = @"03";
+        } else if ([cleanCarrier containsString:@"plus"]) {
+            carrierName = @"Plus";
+            mnc = @"01";
+        } else if ([cleanCarrier containsString:@"t-mobile"]) {
+            carrierName = @"T-Mobile";
+            mnc = @"02";
+        } else {
+            carrierName = @"Play";
+            mnc = @"06";
+        }
+    } else if ([targetRegion isEqualToString:@"US"] || [cleanCarrier containsString:@"verizon"] || [cleanCarrier containsString:@"at&t"]) {
+        regionMode = @"US";
+        countryCode = @"us";
+        localeId = @"en_US";
+        tzName = @"America/New_York";
+        if ([cleanCarrier containsString:@"verizon"]) {
+            carrierName = @"Verizon";
+            mcc = @"311";
+            mnc = @"480";
+        } else if ([cleanCarrier containsString:@"at&t"]) {
+            carrierName = @"AT&T";
+            mcc = @"310";
+            mnc = @"410";
+        } else {
+            carrierName = @"T-Mobile";
+            mcc = @"310";
+            mnc = @"260";
+        }
+    } else {
+        regionMode = @"VN";
+        countryCode = @"vn";
+        localeId = @"vi_VN";
+        tzName = @"Asia/Ho_Chi_Minh";
+        mcc = @"452";
+        if ([cleanCarrier containsString:@"vina"]) {
+            carrierName = @"VINAPHONE";
+            mnc = @"02";
+        } else if ([cleanCarrier containsString:@"mobi"]) {
+            carrierName = @"VN MOBIFONE";
+            mnc = @"01";
+        } else if ([cleanCarrier containsString:@"vietnamobile"]) {
+            carrierName = @"Vietnamobile";
+            mnc = @"05";
+        } else {
+            carrierName = @"Viettel";
+            mnc = @"04";
+        }
+    }
+
+    // Cập nhật Preferences & Darwin Notification
+    update_zt_carrier_pref(carrierName, mcc, mnc, countryCode, regionMode, localeId, tzName);
+
+    // Cập nhật ZTMenuManager nếu có
+    Class menuCls = NSClassFromString(@"ZTMenuManager");
+    if (menuCls && [menuCls respondsToSelector:@selector(sharedManager)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        id mgr = [menuCls performSelector:@selector(sharedManager)];
+        SEL applySel = NSSelectorFromString(@"applyRegion:preferredCarrier:");
+        if (mgr && [mgr respondsToSelector:applySel]) {
+            typedef void (*ApplyFunc)(id, SEL, NSString *, NSString *);
+            ApplyFunc fn = (ApplyFunc)[mgr methodForSelector:applySel];
+            fn(mgr, applySel, regionMode, carrierName);
+        }
+#pragma clang diagnostic pop
+    }
+
+    // Cập nhật trực tiếp info hiện tại
+    self.info.carrierName = carrierName;
+    self.info.carrierMCC = mcc;
+    self.info.carrierMNC = mnc;
+    self.info.carrierCountryCode = countryCode;
+    self.info.regionName = regionMode;
+    self.info.localeIdentifier = localeId;
+    self.info.timeZoneName = tzName;
+
+    // Chạy lại đối chiếu
+    [self performFullCheckWithPhone:(self.phoneField.text ?: self.info.inputPhone) proxy:(self.proxyField.text ?: self.info.currentIP) isAuto:NO];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"⚡ ĐÃ ĐỒNG BỘ NHÀ MẠNG"
+                                                                  message:[NSString stringWithFormat:@"Đã đồng bộ SIM máy sang [%@] (MCC %@, MNC %@) khớp với SĐT.\n\n⚠️ Lưu ý: Vì đây là đổi SIM trong phiên hiện tại, nếu có thể hãy bấm Deep Wipe bên dưới để cấp thiết bị cắm SIM mới ngay từ giây đầu tiên khởi động.", carrierName, mcc, mnc]
+                                                           preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)purgeKeychainDirectlyAction {
+    UIAlertController *confirm = [UIAlertController alertControllerWithTitle:@"🧹 XÓA SẠCH TOKEN KEYCHAIN"
+                                                                     message:@"Hệ thống sẽ xóa sạch toàn bộ token, session Zalo còn lưu trong Keychain để đảm bảo vệ sinh 100% trước khi đăng ký nick mới.\n\nBạn có muốn thực hiện ngay không?"
+                                                              preferredStyle:UIAlertControllerStyleAlert];
+
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Xóa Sạch Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        NSArray *secClasses = @[
+            (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecClassInternetPassword,
+            (__bridge id)kSecClassCertificate,
+            (__bridge id)kSecClassKey,
+            (__bridge id)kSecClassIdentity
+        ];
+        NSArray *secGroups = @[
+            @"",
+            @"group.vn.com.vng.zingalo",
+            @"group.com.vng.zalo",
+            @"group.com.zing.zalo",
+            @"vn.com.vng.zingalo"
+        ];
+        for (id secClass in secClasses) {
+            for (NSString *grp in secGroups) {
+                NSMutableDictionary *query = [NSMutableDictionary dictionary];
+                query[(__bridge id)kSecClass] = secClass;
+                if (grp.length > 0) {
+                    query[(__bridge id)kSecAttrAccessGroup] = grp;
+                }
+                SecItemDelete((__bridge CFDictionaryRef)query);
+            }
+        }
+
+        [self reloadCardViews];
+
+        NSString *resMsg = (self.info.keychainRemainingCount == 0)
+            ? @"✅ Toàn bộ Token Keychain Zalo đã được dọn sạch 100%!"
+            : [NSString stringWithFormat:@"⚠️ Đã dọn dẹp Keychain, còn sót lại %ld token (có thể thuộc Keychain hệ thống).", (long)self.info.keychainRemainingCount];
+
+        UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"Kết Quả Dọn Keychain"
+                                                                           message:resMsg
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+        [doneAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:doneAlert animated:YES completion:nil];
+    }]];
+
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 @end

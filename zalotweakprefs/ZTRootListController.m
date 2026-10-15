@@ -622,7 +622,23 @@ static void sync_license_to_all_locations(void) {
         [self performWipeAndApplyWithRegion:@"US" preferredCarrier:nil];
     }]];
 
-    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Ba Lan (+48) [Play / Orange / Plus / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Play (260-06)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:@"Play"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Orange (260-03)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:@"Orange"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Plus (260-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:@"Plus"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM T-Mobile (260-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:@"T-Mobile"];
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Ba Lan)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self performWipeAndApplyWithRegion:@"PL" preferredCarrier:nil];
     }]];
 
