@@ -1763,15 +1763,11 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     if (top) {
         [top presentViewController:doneAlert animated:YES completion:^{
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                [stdUD removeObjectForKey:@"kTimeDeviceChangedKey"];
-                [stdUD removeObjectForKey:@"kOldSessionKey"];
-                [stdUD removeObjectForKey:@"kOldLoginIndentifierKey"];
-                [stdUD synchronize];
-                _exit(0);
+                exit(0);
             });
         }];
     } else {
-        _exit(0);
+        exit(0);
     }
 }
 

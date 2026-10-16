@@ -475,7 +475,7 @@ static void purge_entire_sandbox_safely(void) {
     // Process Pool lúc này là nguyên nhân hàng đầu gây crash SIGABRT/SIGSEGV!
     // Việc xóa Clipboard và WebKit DataStore đã được thực hiện an toàn ngay lúc bấm Deep Wipe trong app.
 
-    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites & standardUserDefaults
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.com.vng.zalo",
@@ -495,15 +495,6 @@ static void purge_entire_sandbox_safely(void) {
             }
             [ud synchronize];
         }
-    }
-    NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
-    if (stdUD) {
-        NSDictionary *stdDict = [stdUD dictionaryRepresentation];
-        for (NSString *k in stdDict.allKeys) {
-            if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
-            [stdUD removeObjectForKey:k];
-        }
-        [stdUD synchronize];
     }
 
     // 5. Xả sạch cache mạng bộ nhớ RAM
@@ -1607,25 +1598,12 @@ static int my_uname(struct utsname *buf) {
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    CTCarrier *origCarrier = %orig;
-    if (origCarrier) return origCarrier;
-    static CTCarrier *s_fallbackCarrier = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        s_fallbackCarrier = [[%c(CTCarrier) alloc] init];
-    });
-    return s_fallbackCarrier;
+    return %orig;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    NSDictionary *origDict = %orig;
-    if (origDict && origDict.count > 0) return origDict;
-    CTCarrier *carrier = [self subscriberCellularProvider];
-    if (carrier) {
-        return @{@"0000000100000001": carrier};
-    }
-    return origDict;
+    return %orig;
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {
@@ -2700,14 +2678,25 @@ static BOOL s_in_bundle_hook = NO;
     return [NSUserDefaults standardUserDefaults];
 }
 
-- (id)objectForKey:(NSString *)defaultName {
-    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+- (void)setObject:(id)value forKey:(NSString *)defaultName {
+    if (defaultName && [defaultName isKindOfClass:[NSString class]]) {
         if ([defaultName isEqualToString:@"kTimeDeviceChangedKey"] ||
             [defaultName isEqualToString:@"kOldSessionKey"] ||
             [defaultName isEqualToString:@"kOldLoginIndentifierKey"]) {
-            id currentUid = %orig(@"kSessionUid");
-            if (!currentUid) {
-                [self removeObjectForKey:defaultName];
+            if (is_tweak_active()) {
+                return;
+            }
+        }
+    }
+    %orig;
+}
+
+- (id)objectForKey:(NSString *)defaultName {
+    if (defaultName && [defaultName isKindOfClass:[NSString class]]) {
+        if ([defaultName isEqualToString:@"kTimeDeviceChangedKey"] ||
+            [defaultName isEqualToString:@"kOldSessionKey"] ||
+            [defaultName isEqualToString:@"kOldLoginIndentifierKey"]) {
+            if (is_tweak_active()) {
                 if ([ZTSettings sharedSettings].enableAuditLog) {
                     logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> (nil) [ĐÃ CHẶN DẤU VẾT ĐỔI MÁY CŨ]", defaultName]);
                 }
