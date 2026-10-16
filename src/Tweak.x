@@ -659,7 +659,12 @@ static void purge_entire_sandbox_safely(void) {
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
+                    NSString *savedTZ = dict[@"timeZoneName"];
                     [self generateNewProfile];
+                    if (savedTZ.length > 0) {
+                        self.timeZoneName = savedTZ;
+                    }
+                    [self saveSettings];
                     reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
                     return;
                 } else {

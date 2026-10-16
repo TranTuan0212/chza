@@ -22,12 +22,14 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)presentMainMenuFrom:(nullable UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)showAdvancedSettingsFrom:(UIViewController *)top;
-- (void)showQuickTimezonePickerFrom:(UIViewController *)top;
+- (void)startAutoUSWipeSequenceFrom:(UIViewController *)top;
+- (void)startAutoVNWipeSequenceFrom:(UIViewController *)top;
 - (void)confirmDeepWipeFrom:(UIViewController *)top;
 - (void)promptSmartAutoWipeFrom:(UIViewController *)top;
 - (void)performInAppDeepWipe;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region;
 - (void)performInAppDeepWipeWithRegion:(NSString *)region preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(nullable NSString *)currentIP;
+- (void)performInAppDeepWipeWithRegion:(NSString *)region preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(nullable NSString *)currentIP targetTimeZone:(nullable NSString *)targetTimeZone;
 - (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top;
 @end
 

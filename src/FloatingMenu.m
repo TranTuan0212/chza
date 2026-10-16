@@ -17,21 +17,10 @@
 #import <netinet/in.h>
 #import <dlfcn.h>
 
-// Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở
+// Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở một cách an toàn
 static void sever_all_network_sockets_immediately(void) {
     [[NSURLSession sharedSession] invalidateAndCancel];
     [[NSURLCache sharedURLCache] removeAllCachedResponses];
-
-    int maxFd = getdtablesize();
-    if (maxFd > 1024) maxFd = 1024;
-    for (int fd = 3; fd < maxFd; fd++) {
-        struct sockaddr_storage ss;
-        socklen_t sslen = sizeof(ss);
-        if (getpeername(fd, (struct sockaddr *)&ss, &sslen) == 0) {
-            shutdown(fd, SHUT_RDWR);
-            close(fd);
-        }
-    }
 }
 
 #pragma clang diagnostic push
@@ -123,6 +112,52 @@ static uint64_t get_directory_size(NSString *path) {
     return total;
 }
 
+static void fetch_public_ip(void (^completion)(NSString *ip));
+
+static void fetch_network_geo_profile(void (^completion)(NSString *ip, NSString *countryCode, NSString *timezone, NSString *isp)) {
+    uint64_t now = (uint64_t)[[NSDate date] timeIntervalSince1970];
+    NSString *urlStr = [NSString stringWithFormat:@"http://ip-api.com/json?_t=%llu", (unsigned long long)now];
+
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.URLCache = nil;
+    config.requestCachePolicy = NSURLRequestReloadIgnoringLocalAndRemoteCacheData;
+    config.timeoutIntervalForRequest = 4.0;
+    config.timeoutIntervalForResource = 4.0;
+    config.HTTPShouldSetCookies = NO;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]
+                                                       cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
+                                                   timeoutInterval:4.0];
+    [req setValue:@"close" forHTTPHeaderField:@"Connection"];
+
+    [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        if (data && !error) {
+            NSError *jsonErr = nil;
+            NSDictionary *dict = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonErr];
+            if ([dict isKindOfClass:[NSDictionary class]]) {
+                NSString *queryIP = dict[@"query"];
+                NSString *cCode = dict[@"countryCode"];
+                NSString *tz = dict[@"timezone"];
+                NSString *ispName = dict[@"isp"] ?: dict[@"org"];
+                if (queryIP.length >= 7) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        [session finishTasksAndInvalidate];
+                        completion(queryIP, cCode ?: @"US", tz ?: @"America/New_York", ispName ?: @"");
+                    });
+                    return;
+                }
+            }
+        }
+
+        // Dự phòng nếu ip-api.com không phản hồi kịp
+        fetch_public_ip(^(NSString *backupIP) {
+            [session finishTasksAndInvalidate];
+            completion(backupIP, @"US", @"America/New_York", @"");
+        });
+    }] resume];
+}
+
 static void fetch_public_ip(void (^completion)(NSString *ip)) {
     uint64_t now = (uint64_t)[[NSDate date] timeIntervalSince1970];
     NSString *urlStr = [NSString stringWithFormat:@"https://api.ipify.org?format=text&_t=%llu", (unsigned long long)now];
@@ -130,17 +165,15 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
     NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
     config.URLCache = nil;
     config.requestCachePolicy = NSURLRequestReloadIgnoringLocalAndRemoteCacheData;
-    config.timeoutIntervalForRequest = 6.0;
-    config.timeoutIntervalForResource = 6.0;
+    config.timeoutIntervalForRequest = 4.0;
+    config.timeoutIntervalForResource = 4.0;
     config.HTTPShouldSetCookies = NO;
     NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
 
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlStr]
                                                        cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
-                                                   timeoutInterval:6.0];
+                                                   timeoutInterval:4.0];
     [req setValue:@"close" forHTTPHeaderField:@"Connection"];
-    [req setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
-    [req setValue:@"no-cache" forHTTPHeaderField:@"Pragma"];
 
     [[session dataTaskWithRequest:req completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
         NSString *ipStr = nil;
@@ -148,32 +181,10 @@ static void fetch_public_ip(void (^completion)(NSString *ip)) {
             ipStr = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             ipStr = [ipStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         }
-        if (ipStr.length >= 7 && ([ipStr containsString:@"."] || [ipStr containsString:@":"])) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [session finishTasksAndInvalidate];
-                completion(ipStr);
-            });
-            return;
-        }
-
-        // Nguồn dự phòng nếu api.ipify.org bị nghẽn do proxy
-        NSMutableURLRequest *backupReq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"https://icanhazip.com?_t=%llu", (unsigned long long)now]]
-                                                                 cachePolicy:NSURLRequestReloadIgnoringLocalAndRemoteCacheData
-                                                             timeoutInterval:6.0];
-        [backupReq setValue:@"close" forHTTPHeaderField:@"Connection"];
-        [backupReq setValue:@"no-cache" forHTTPHeaderField:@"Cache-Control"];
-
-        [[session dataTaskWithRequest:backupReq completionHandler:^(NSData * _Nullable bdata, NSURLResponse * _Nullable bresp, NSError * _Nullable berr) {
-            NSString *bip = nil;
-            if (bdata && !berr) {
-                bip = [[NSString alloc] initWithData:bdata encoding:NSUTF8StringEncoding];
-                bip = [bip stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            }
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [session finishTasksAndInvalidate];
-                completion((bip.length >= 7 && ([bip containsString:@"."] || [bip containsString:@":"])) ? bip : @"Không xác định");
-            });
-        }] resume];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [session finishTasksAndInvalidate];
+            completion((ipStr.length >= 7) ? ipStr : @"Không xác định");
+        });
     }] resume];
 }
 
@@ -506,34 +517,43 @@ UIViewController *ZTGetTopViewController(void) {
         deviceDisplay = @"(Chưa cấp máy ảo - Đang dùng máy thật)";
     }
 
-    NSString *message = [NSString stringWithFormat:@"%@\n\n📱 Thiết Bị Giả Lập: %@", guidance, deviceDisplay];
+    NSString *regionDisplay = [settings.regionMode isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" : @"🇻🇳 Việt Nam (+84)";
+    NSString *simDisplay = settings.carrierName.length > 0 ? settings.carrierName : ([settings.regionMode isEqualToString:@"US"] ? @"T-Mobile" : @"Viettel");
+    NSString *tzDisplay = settings.timeZoneName.length > 0 ? settings.timeZoneName : ([settings.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
 
-    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:title
+    NSString *message = [NSString stringWithFormat:@"📱 THÔNG SỐ ĐANG DÙNG:\n• Khu Vực: %@ | SIM: %@\n• Múi Giờ: %@\n• Thiết Bị: %@",
+                         regionDisplay, simDisplay, tzDisplay, deviceDisplay];
+
+    UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🛡️ ZALOTWEAK - MENU CHÍNH"
                                                                    message:message
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
-    // Nút 0: Hiển thị Hạn Bản Quyền ngay ngoài Menu chính
-    NSString *licButtonTitle = [NSString stringWithFormat:@"🛡️ HẠN KEY: %@", licStatusText];
-    [sheet addAction:[UIAlertAction actionWithTitle:licButtonTitle
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(UIAlertAction *action) {
-        [self showLicenseMenuFrom:top];
-    }]];
-
-    // Nút 1: Deep Wipe & Cấp Máy Mới (Chọn SIM 1 chạm)
-    NSString *wipeButtonTitle = isLicensed ? @"🚀 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (Chọn SIM)" : @"🔒 [1️⃣] Deep Wipe Sạch & Cấp Máy Mới (Cần Key)";
-    [sheet addAction:[UIAlertAction actionWithTitle:wipeButtonTitle
+    // Nút 1: Wipe & Cấp Máy Mỹ (Auto Giờ Proxy)
+    NSString *usWipeTitle = isLicensed ? @"🚀 [1️⃣] WIPE SẠCH & CẤP MÁY MỸ (AUTO GIỜ PROXY)" : @"🔒 [1️⃣] WIPE MÁY MỸ (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:usWipeTitle
                                              style:UIAlertActionStyleDestructive
                                            handler:^(UIAlertAction *action) {
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-            [self showLicenseRequiredAlertFrom:top featureName:@"Deep Wipe & Cấp Máy Mới"];
+            [self showLicenseRequiredAlertFrom:top featureName:@"Wipe & Cấp Máy Mỹ"];
             return;
         }
-        [self confirmDeepWipeFrom:top];
+        [self startAutoUSWipeSequenceFrom:top];
     }]];
 
-    // Nút 2: Đối Chiếu SĐT + Proxy & Kiểm Tra Độ Sạch Trước Khi Reg
-    NSString *diagButtonTitle = isLicensed ? @"🎯 [2️⃣] Đối Chiếu SĐT + Proxy & Kiểm Tra Toàn Diện" : @"🔒 [2️⃣] Đối Chiếu SĐT + Proxy (Cần Key)";
+    // Nút 2: Wipe & Cấp Máy Việt Nam (Khớp 4G)
+    NSString *vnWipeTitle = isLicensed ? @"🇻🇳 [2️⃣] WIPE SẠCH & CẤP MÁY VIỆT NAM (KHỚP 4G)" : @"🔒 [2️⃣] WIPE MÁY VN (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:vnWipeTitle
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Wipe & Cấp Máy Việt Nam"];
+            return;
+        }
+        [self startAutoVNWipeSequenceFrom:top];
+    }]];
+
+    // Nút 3: Kiểm Tra Độ Sạch Trước Khi Reg
+    NSString *diagButtonTitle = isLicensed ? @"🎯 [3️⃣] Kiểm Tra Độ Sạch & Đối Chiếu Toàn Diện" : @"🔒 [3️⃣] Kiểm Tra Độ Sạch (Cần Key)";
     [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
@@ -544,8 +564,8 @@ UIViewController *ZTGetTopViewController(void) {
         [self showPreRegDiagnosticFrom:top];
     }]];
 
-    // Nút 3: Cài Đặt Nâng Cao & Bản Quyền
-    NSString *advButtonTitle = isLicensed ? @"⚙️ [3️⃣] Cài Đặt Nâng Cao & Quản Lý Profile" : @"🛡️ [3️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
+    // Nút 4: Cài Đặt Khác & Bản Quyền
+    NSString *advButtonTitle = isLicensed ? [NSString stringWithFormat:@"⚙️ [4️⃣] Cài Đặt Khác (Key: %@)", licStatusText] : @"🛡️ [4️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
     [sheet addAction:[UIAlertAction actionWithTitle:advButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
@@ -588,29 +608,7 @@ UIViewController *ZTGetTopViewController(void) {
         [self showAuditLogMenuFrom:presenter];
     }]];
 
-    // 4. Bật / Tắt Fake Múi Giờ
-    ZTSettings *settings = [ZTSettings sharedSettings];
-    NSString *tzStatus = settings.enableFakeTimeZone ? [NSString stringWithFormat:@"🟢 Đang Fake (%@)", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh"] : @"⚪ Dùng Giờ Thật Máy (Gốc)";
-    NSString *tzTitle = [NSString stringWithFormat:@"🕒 Múi Giờ Hệ Thống: %@", tzStatus];
-    [advSheet addAction:[UIAlertAction actionWithTitle:tzTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.enableFakeTimeZone = !settings.enableFakeTimeZone;
-        [settings saveSettings];
-        NSString *msg = settings.enableFakeTimeZone
-            ? [NSString stringWithFormat:@"Đã BẬT Fake Múi Giờ.\nZalo sẽ đọc múi giờ giả: [%@]", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh"]
-            : @"Đã TẮT Fake Múi Giờ.\nZalo sẽ đọc trực tiếp Múi Giờ Thật của máy bạn (Khớp 100%% với mạng 4G/WiFi đang dùng).";
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Cập Nhật Múi Giờ"
-                                                                   message:msg
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [presenter presentViewController:c animated:YES completion:nil];
-    }]];
-
-    // 5. Chọn Múi Giờ Thủ Công
-    [advSheet addAction:[UIAlertAction actionWithTitle:@"🌐 Đổi Nhanh Múi Giờ (Việt Nam / Mỹ / Ba Lan...)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self showQuickTimezonePickerFrom:presenter];
-    }]];
-
-    // 6. Tạm ẩn nút nổi
+    // 4. Tạm ẩn nút nổi
     [advSheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Trên Màn Hình" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [[ZTFloatingButton sharedButton] hide];
         UIAlertController *hint = [UIAlertController alertControllerWithTitle:@"Đã Ẩn Nút Nổi"
@@ -997,85 +995,60 @@ UIViewController *ZTGetTopViewController(void) {
     [top presentViewController:alert animated:YES completion:nil];
 }
 
-- (void)showQuickTimezonePickerFrom:(UIViewController *)top {
-    ZTSettings *settings = [ZTSettings sharedSettings];
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 CHỌN MÚI GIỜ GIẢ LẬP"
-                                                                   message:[NSString stringWithFormat:@"• Múi giờ hiện tại: %@\n• Trạng thái Fake: %@\n\nChọn múi giờ bạn muốn Zalo ghi nhận:", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh", settings.enableFakeTimeZone ? @"🟢 Đang Bật" : @"⚪ Đang Tắt (Dùng giờ máy)"]
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+- (void)startAutoUSWipeSequenceFrom:(UIViewController *)top {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    if (!presenter) return;
 
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (Asia/Ho_Chi_Minh - GMT+7) [Khớp 4G VN]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.timeZoneName = @"Asia/Ho_Chi_Minh";
-        settings.enableFakeTimeZone = YES;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                   message:@"Đã chuyển múi giờ sang Việt Nam (Asia/Ho_Chi_Minh, GMT+7).\nKhớp 100% với mạng 4G Việt Nam!"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Bờ Đông New York (America/New_York - GMT-5)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.timeZoneName = @"America/New_York";
-        settings.enableFakeTimeZone = YES;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/New_York, GMT-5)."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Miền Trung Chicago (America/Chicago - GMT-6)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.timeZoneName = @"America/Chicago";
-        settings.enableFakeTimeZone = YES;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/Chicago, GMT-6)."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Bờ Tây California (America/Los_Angeles - GMT-7)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.timeZoneName = @"America/Los_Angeles";
-        settings.enableFakeTimeZone = YES;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/Los_Angeles, GMT-7)."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan (Europe/Warsaw - GMT+2)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        settings.timeZoneName = @"Europe/Warsaw";
-        settings.enableFakeTimeZone = YES;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                   message:@"Đã chuyển múi giờ sang Ba Lan (Europe/Warsaw, GMT+2)."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"⚪ Tắt Fake - Dùng Múi Giờ Thật Của Máy" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        settings.enableFakeTimeZone = NO;
-        [settings saveSettings];
-        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Tắt Fake Múi Giờ"
-                                                                   message:@"Zalo sẽ đọc trực tiếp múi giờ thực của máy bạn (Khớp 100% với mạng 4G/WiFi đang dùng)."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [top presentViewController:c animated:YES completion:nil];
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
-
-    if (alert.popoverPresentationController) {
-        alert.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
-        alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        [self showLicenseRequiredAlertFrom:presenter featureName:@"Wipe & Cấp Máy Mỹ"];
+        return;
     }
 
-    [top presentViewController:alert animated:YES completion:nil];
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"⚡ Đang Quét Múi Giờ Proxy..."
+                                                                   message:@"Đang truy vấn IP qua Proxy để tự động nhận diện Bang (State), Múi Giờ và Nhà Mạng Mỹ phù hợp..."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [presenter presentViewController:loading animated:YES completion:^{
+        fetch_network_geo_profile(^(NSString *queryIP, NSString *countryCode, NSString *timezone, NSString *isp) {
+            NSString *effectiveTZ = (timezone.length > 0) ? timezone : @"America/New_York";
+
+            NSString *carrier = @"T-Mobile";
+            NSString *cleanISP = [isp lowercaseString];
+            if ([cleanISP containsString:@"verizon"] || [cleanISP containsString:@"cellco"]) {
+                carrier = @"Verizon";
+            } else if ([cleanISP containsString:@"at&t"] || [cleanISP containsString:@"cingular"]) {
+                carrier = @"AT&T";
+            } else {
+                carrier = @"T-Mobile";
+            }
+
+            [loading dismissViewControllerAnimated:YES completion:^{
+                [self performInAppDeepWipeWithRegion:@"US" preferredCarrier:carrier currentIP:queryIP targetTimeZone:effectiveTZ];
+            }];
+        });
+    }];
+}
+
+- (void)startAutoVNWipeSequenceFrom:(UIViewController *)top {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    if (!presenter) return;
+
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        [self showLicenseRequiredAlertFrom:presenter featureName:@"Wipe & Cấp Máy Việt Nam"];
+        return;
+    }
+
+    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"⚡ Đang Ghi Nhận Mạng 4G..."
+                                                                   message:@"Đang kiểm tra IP mạng 4G trước khi Wipe và khởi tạo SIM Việt Nam chuẩn..."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [presenter presentViewController:loading animated:YES completion:^{
+        fetch_public_ip(^(NSString *currentIP) {
+            [loading dismissViewControllerAnimated:YES completion:^{
+                [self performInAppDeepWipeWithRegion:@"VN" preferredCarrier:nil currentIP:currentIP targetTimeZone:@"Asia/Ho_Chi_Minh"];
+            }];
+        });
+    }];
 }
 
 static BOOL parse_proxy_quick_wipe(NSString *proxyInput, NSString **outHost, NSNumber **outPort, NSString **outUser, NSString **outPass) {
@@ -1581,6 +1554,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP {
+    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:nil];
+}
+
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP targetTimeZone:(nullable NSString *)targetTimeZone {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         return;
     }
@@ -1718,6 +1695,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.regionMode = targetRegion ?: @"VN";
     settings.preferredCarrier = preferredCarrier ?: @"";
+    if (targetTimeZone.length > 0) {
+        settings.timeZoneName = targetTimeZone;
+    }
+    settings.enableFakeTimeZone = YES;
     settings.needsNewProfile = YES;
     settings.needsSandboxPurge = YES;
     BOOL isJB = NO;
@@ -1750,35 +1731,43 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
     sever_all_network_sockets_immediately();
 
-    // 7. Đóng app dứt khoát
+    // 7. Đóng app êm ái: Suspend trước để SpringBoard thu nhỏ scene về nền, sau đó exit(0) tránh lỗi "Scene client is invalid"
     UIViewController *top = get_top_view_controller();
-    NSString *baseRegionDesc = [targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                               ([targetRegion isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+    NSString *effectiveTZ = targetTimeZone.length > 0 ? targetTimeZone : (settings.timeZoneName ?: @"Asia/Ho_Chi_Minh");
+    NSString *baseRegionDesc = [targetRegion isEqualToString:@"US"] ? [NSString stringWithFormat:@"Hoa Kỳ (+1) [Múi giờ: %@]", effectiveTZ] :
+                               ([targetRegion isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
                                ([targetRegion isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
-    NSString *regionDesc = (preferredCarrier.length > 0) ? [NSString stringWithFormat:@"%@ (Cắm sẵn SIM %@)", baseRegionDesc, preferredCarrier] : baseRegionDesc;
-
+    NSString *regionDesc = (preferredCarrier.length > 0) ? [NSString stringWithFormat:@"%@ (SIM %@)", baseRegionDesc, preferredCarrier] : baseRegionDesc;
     NSString *msg = [NSString stringWithFormat:
-                     @"✅ ĐÃ DỌN SẠCH DỮ LIỆU ZALO CŨ!\n\n"
+                     @"✅ ĐÃ WIPE SẠCH & CẤP MÁY MỚI!\n\n"
                      @"• SIM & Khu Vực: %@\n"
-                     @"• Keychain & Cache: Làm sạch 100%%\n"
-                     @"• Socket & TCP: Đã ngắt kết nối tuyệt đối\n"
-                     @"• File Backup .adbk: Được bảo vệ an toàn\n\n"
-                     @"✈️ BƯỚC TIẾP THEO:\n"
-                     @"Bật Chế Độ Máy Bay trong 5 giây rồi tắt đi để làm mới IP 4G, sau đó mở lại Zalo!",
-                     regionDesc];
+                     @"• Múi Giờ: %@\n"
+                     @"• Keychain & Sandbox: Sạch 100%%\n"
+                     @"• Kết Nối & Cache: Đã ngắt tuyệt đối\n\n"
+                     @"⚡ App sẽ tự thu nhỏ và thoát êm trong giây lát.\nMở lại Zalo để bắt đầu!",
+                     regionDesc, effectiveTZ];
 
-    UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🧹 Wipe Xong - Đang Thoát Zalo"
+    UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🧹 Deep Wipe Hoàn Tất"
                                                                        message:msg
                                                                 preferredStyle:UIAlertControllerStyleAlert];
+
+    void (^cleanExitBlock)(void) = ^{
+        if ([[UIApplication sharedApplication] respondsToSelector:@selector(suspend)]) {
+            [[UIApplication sharedApplication] performSelector:@selector(suspend)];
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            exit(0);
+        });
+    };
 
     if (top) {
         [top presentViewController:doneAlert animated:YES completion:^{
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                exit(0);
+                cleanExitBlock();
             });
         }];
     } else {
-        exit(0);
+        cleanExitBlock();
     }
 }
 
