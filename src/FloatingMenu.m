@@ -19,8 +19,19 @@
 
 // Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở một cách an toàn
 static void sever_all_network_sockets_immediately(void) {
-    [[NSURLSession sharedSession] invalidateAndCancel];
     [[NSURLCache sharedURLCache] removeAllCachedResponses];
+    @try {
+        [[NSURLSession sharedSession] getAllTasksWithCompletionHandler:^(NSArray<NSURLSessionTask *> * _Nonnull tasks) {
+            for (NSURLSessionTask *task in tasks) {
+                [task cancel];
+            }
+        }];
+    } @catch (NSException *e) {
+        // Safe fallback
+    }
+    for (NSHTTPCookie *cookie in [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies]) {
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] deleteCookie:cookie];
+    }
 }
 
 #pragma clang diagnostic push
@@ -1751,18 +1762,37 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
                                                                        message:msg
                                                                 preferredStyle:UIAlertControllerStyleAlert];
 
+    __block BOOL exitTriggered = NO;
     void (^cleanExitBlock)(void) = ^{
+        if (exitTriggered) return;
+        exitTriggered = YES;
         if ([[UIApplication sharedApplication] respondsToSelector:@selector(suspend)]) {
             [[UIApplication sharedApplication] performSelector:@selector(suspend)];
         }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            exit(0);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if ([[UIApplication sharedApplication] respondsToSelector:@selector(_terminateWithStatus:)]) {
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [[UIApplication sharedApplication] performSelector:@selector(_terminateWithStatus:) withObject:0];
+                #pragma clang diagnostic pop
+            } else if ([[UIApplication sharedApplication] respondsToSelector:@selector(terminateWithSuccess)]) {
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [[UIApplication sharedApplication] performSelector:@selector(terminateWithSuccess)];
+                #pragma clang diagnostic pop
+            } else {
+                exit(0);
+            }
         });
     };
 
+    [doneAlert addAction:[UIAlertAction actionWithTitle:@"Đóng App Ngay" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        cleanExitBlock();
+    }]];
+
     if (top) {
         [top presentViewController:doneAlert animated:YES completion:^{
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 cleanExitBlock();
             });
         }];
