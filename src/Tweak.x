@@ -1609,16 +1609,34 @@ static int my_uname(struct utsname *buf) {
 
 %end
 
+static CTCarrier *get_fake_carrier(void) {
+    static CTCarrier *s_fake = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        @try {
+            s_fake = [[NSClassFromString(@"CTCarrier") alloc] init];
+        } @catch (NSException *e) {}
+    });
+    return s_fake;
+}
+
 %hook CTTelephonyNetworkInfo
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    return %orig;
+    CTCarrier *c = %orig;
+    return c ?: get_fake_carrier();
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    return %orig;
+    NSDictionary *origDict = %orig;
+    if (origDict && origDict.count > 0) return origDict;
+    CTCarrier *c = get_fake_carrier();
+    if (c) {
+        return @{@"0000000100000001": c};
+    }
+    return origDict;
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {

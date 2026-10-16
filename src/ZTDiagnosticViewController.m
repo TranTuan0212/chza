@@ -1791,6 +1791,12 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"Hợp lệ ✅"
                                           isWarning:NO]];
 
+    NSString *mnoLive = self.info.mnoCarrierName ?: (self.info.carrierName ?: @"Viettel");
+    [inner addArrangedSubview:[self createRowWithKey:@"Tên Mạng MNO (CoreTelephony)"
+                                              value:mnoLive
+                                              badge:@"Đã Cấp (Không Rỗng) ✅"
+                                          isWarning:NO]];
+
     return card;
 }
 
@@ -1889,6 +1895,12 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     [inner addArrangedSubview:[self createRowWithKey:@"Dịch Vụ Đẩy (APNs Push)"
                                               value:pushVal
                                               badge:pushBadge
+                                          isWarning:NO]];
+
+    NSString *didVal = self.info.telemetryDId ?: @"2001.SSZ-...";
+    [inner addArrangedSubview:[self createRowWithKey:@"Định Danh dId (Telemetry)"
+                                              value:didVal
+                                              badge:@"Đã Bù Đủ ✅"
                                           isWarning:NO]];
 
     return card;

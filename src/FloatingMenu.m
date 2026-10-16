@@ -1856,6 +1856,36 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.realBundleId = isClone ? [NSString stringWithFormat:@"%@ (Clone)", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
     info.apnsPushStatus = isClone ? @"32-Byte SHA256 Token (Đã giả lập)" : @"Hệ Thống APNs Apple";
 
+    NSString *liveMNO = s.carrierName ?: @"Viettel";
+    @try {
+        Class infoClass = NSClassFromString(@"CTTelephonyNetworkInfo");
+        if (infoClass) {
+            id telInfo = [[infoClass alloc] init];
+            if ([telInfo respondsToSelector:@selector(serviceSubscriberCellularProviders)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                NSDictionary *providers = [telInfo performSelector:@selector(serviceSubscriberCellularProviders)];
+                if (providers && providers.count > 0) {
+                    id carrier = providers.allValues.firstObject;
+                    if ([carrier respondsToSelector:@selector(carrierName)]) {
+                        NSString *name = [carrier performSelector:@selector(carrierName)];
+                        if (name.length > 0) liveMNO = name;
+                    }
+                }
+#pragma clang diagnostic pop
+            }
+        }
+    } @catch (NSException *e) {}
+    info.mnoCarrierName = liveMNO;
+
+    if (s.spoofedIDFV.length > 0) {
+        NSString *cleanId = [[s.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+        NSString *shortDId = cleanId.length > 12 ? [cleanId substringToIndex:12] : cleanId;
+        info.telemetryDId = [NSString stringWithFormat:@"2001.SSZ-%@...1", shortDId];
+    } else {
+        info.telemetryDId = @"Chưa cấp (Cần Wipe)";
+    }
+
     if (!s.hasConfiguredProfile) {
         info.currentIDFV = @"Chưa cấp (Cần Wipe)";
         info.serial = @"";
