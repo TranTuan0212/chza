@@ -352,9 +352,9 @@ static NSString *detect_real_system_machine(void) {
         profile.carrierMNC = c[@"mnc"];
         profile.carrierCountryCode = @"us";
         profile.localeIdentifier = @"en_US";
-        profile.preferredLanguages = @[@"en-US"];
-        NSArray *usTimezones = @[@"America/New_York", @"America/Chicago", @"America/Los_Angeles", @"America/Denver"];
-        profile.timeZoneName = usTimezones[arc4random_uniform((uint32_t)usTimezones.count)];
+        profile.preferredLanguages = @[@"en-US", @"vi-VN"];
+        // Chế độ Du Học Sinh Mỹ về Việt Nam: Giữ múi giờ Việt Nam (GMT+7) để khớp 100% với mạng 4G/WiFi VN
+        profile.timeZoneName = @"Asia/Ho_Chi_Minh";
     } else if ([curRegion isEqualToString:@"US"]) {
         NSArray *names = @[
             @"David's iPhone", @"Michael's iPhone", @"Sarah's iPhone", @"John's iPhone",

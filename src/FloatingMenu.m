@@ -588,7 +588,29 @@ UIViewController *ZTGetTopViewController(void) {
         [self showAuditLogMenuFrom:presenter];
     }]];
 
-    // 4. Tạm ẩn nút nổi
+    // 4. Bật / Tắt Fake Múi Giờ
+    ZTSettings *settings = [ZTSettings sharedSettings];
+    NSString *tzStatus = settings.enableFakeTimeZone ? [NSString stringWithFormat:@"🟢 Đang Fake (%@)", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh"] : @"⚪ Dùng Giờ Thật Máy (Gốc)";
+    NSString *tzTitle = [NSString stringWithFormat:@"🕒 Múi Giờ Hệ Thống: %@", tzStatus];
+    [advSheet addAction:[UIAlertAction actionWithTitle:tzTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.enableFakeTimeZone = !settings.enableFakeTimeZone;
+        [settings saveSettings];
+        NSString *msg = settings.enableFakeTimeZone
+            ? [NSString stringWithFormat:@"Đã BẬT Fake Múi Giờ.\nZalo sẽ đọc múi giờ giả: [%@]", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh"]
+            : @"Đã TẮT Fake Múi Giờ.\nZalo sẽ đọc trực tiếp Múi Giờ Thật của máy bạn (Khớp 100%% với mạng 4G/WiFi đang dùng).";
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Cập Nhật Múi Giờ"
+                                                                   message:msg
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [presenter presentViewController:c animated:YES completion:nil];
+    }]];
+
+    // 5. Chọn Múi Giờ Thủ Công
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"🌐 Đổi Nhanh Múi Giờ (Việt Nam / Mỹ / Ba Lan...)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self showQuickTimezonePickerFrom:presenter];
+    }]];
+
+    // 6. Tạm ẩn nút nổi
     [advSheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Trên Màn Hình" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [[ZTFloatingButton sharedButton] hide];
         UIAlertController *hint = [UIAlertController alertControllerWithTitle:@"Đã Ẩn Nút Nổi"
@@ -741,8 +763,8 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMNC = @"260";
         s.carrierCountryCode = @"us";
         s.localeIdentifier = @"en_US";
-        s.preferredLanguages = @[@"en-US"];
-        s.timeZoneName = @"America/New_York";
+        s.preferredLanguages = @[@"en-US", @"vi-VN"];
+        s.timeZoneName = @"Asia/Ho_Chi_Minh";
     } else if ([region isEqualToString:@"US"]) {
         NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
@@ -828,7 +850,7 @@ UIViewController *ZTGetTopViewController(void) {
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Du Học Sinh Mỹ (+1) [T-Mobile / AT&T / Mint]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         [self applyRegionOnly:@"US_STUDENT"];
         UIAlertController *done = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
-                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Du Học Sinh Mỹ (+1).\n• SIM: %@ (US)\n• Tên máy: %@\n\n💡 MẸO: Hãy bật mạng 4G trước khi Reg để Zalo duyệt mượt 100%%.", s.carrierName, s.deviceName]
+                                                                      message:[NSString stringWithFormat:@"Đã chuyển sang Du Học Sinh Mỹ (+1).\n• SIM: %@ (US)\n• Múi giờ: Asia/Ho_Chi_Minh (Khớp 4G VN)\n• Tên máy: %@\n\n💡 MẸO: Hãy bật mạng 4G trước khi Reg để Zalo duyệt mượt 100%%.", s.carrierName, s.deviceName]
                                                                preferredStyle:UIAlertControllerStyleAlert];
         [done addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:done animated:YES completion:nil];
@@ -972,6 +994,76 @@ UIViewController *ZTGetTopViewController(void) {
         alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
     }
     
+    [top presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showQuickTimezonePickerFrom:(UIViewController *)top {
+    ZTSettings *settings = [ZTSettings sharedSettings];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🌐 CHỌN MÚI GIỜ GIẢ LẬP"
+                                                                   message:[NSString stringWithFormat:@"• Múi giờ hiện tại: %@\n• Trạng thái Fake: %@\n\nChọn múi giờ bạn muốn Zalo ghi nhận:", settings.timeZoneName ?: @"Asia/Ho_Chi_Minh", settings.enableFakeTimeZone ? @"🟢 Đang Bật" : @"⚪ Đang Tắt (Dùng giờ máy)"]
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Việt Nam (Asia/Ho_Chi_Minh - GMT+7) [Khớp 4G VN]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.timeZoneName = @"Asia/Ho_Chi_Minh";
+        settings.enableFakeTimeZone = YES;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                   message:@"Đã chuyển múi giờ sang Việt Nam (Asia/Ho_Chi_Minh, GMT+7).\nKhớp 100% với mạng 4G Việt Nam!"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Bờ Đông New York (America/New_York - GMT-5)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.timeZoneName = @"America/New_York";
+        settings.enableFakeTimeZone = YES;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/New_York, GMT-5)."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Bờ Tây California (America/Los_Angeles - GMT-7)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.timeZoneName = @"America/Los_Angeles";
+        settings.enableFakeTimeZone = YES;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/Los_Angeles, GMT-7)."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Ba Lan (Europe/Warsaw - GMT+2)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.timeZoneName = @"Europe/Warsaw";
+        settings.enableFakeTimeZone = YES;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                   message:@"Đã chuyển múi giờ sang Ba Lan (Europe/Warsaw, GMT+2)."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"⚪ Tắt Fake - Dùng Múi Giờ Thật Của Máy" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        settings.enableFakeTimeZone = NO;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Tắt Fake Múi Giờ"
+                                                                   message:@"Zalo sẽ đọc trực tiếp múi giờ thực của máy bạn (Khớp 100% với mạng 4G/WiFi đang dùng)."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+
     [top presentViewController:alert animated:YES completion:nil];
 }
 
@@ -1894,7 +1986,11 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 6. Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ
     info.localeIdentifier = s.localeIdentifier ?: @"vi_VN";
-    info.timeZoneName = s.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    if (s.enableFakeTimeZone) {
+        info.timeZoneName = s.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+    } else {
+        info.timeZoneName = [NSTimeZone systemTimeZone].name ?: @"Asia/Ho_Chi_Minh";
+    }
     NSTimeZone *tz = [NSTimeZone timeZoneWithName:info.timeZoneName];
     NSInteger gmtSec = tz ? [tz secondsFromGMT] : 25200;
     int gmtH = (int)(gmtSec / 3600);
@@ -1904,17 +2000,22 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     BOOL isVNMode = [s.regionMode isEqualToString:@"VN"] || !s.regionMode;
     BOOL isPLMode = [s.regionMode isEqualToString:@"PL"];
-    BOOL isUSMode = [s.regionMode isEqualToString:@"US"] || [s.regionMode isEqualToString:@"US_STUDENT"];
+    BOOL isUSMode = [s.regionMode isEqualToString:@"US"];
+    BOOL isUSStudentMode = [s.regionMode isEqualToString:@"US_STUDENT"];
     BOOL isVNSim = [s.carrierMCC isEqualToString:@"452"];
     BOOL isPLSim = [s.carrierMCC isEqualToString:@"260"];
     BOOL isUSSim = [s.carrierMCC isEqualToString:@"310"] || [s.carrierMCC isEqualToString:@"311"];
     BOOL isVNTz = [info.timeZoneName containsString:@"Ho_Chi_Minh"] || [info.timeZoneName containsString:@"Bangkok"] || [info.timeZoneName containsString:@"Saigon"];
     BOOL isPLTz = [info.timeZoneName containsString:@"Warsaw"];
     BOOL isUSTz = [info.timeZoneName containsString:@"America"] || [info.timeZoneName containsString:@"New_York"] || [info.timeZoneName containsString:@"Chicago"] || [info.timeZoneName containsString:@"Los_Angeles"] || [info.timeZoneName containsString:@"Denver"];
-    if (isVNMode) {
+    if (!s.enableFakeTimeZone) {
+        info.regionSyncPassed = YES;
+    } else if (isVNMode) {
         info.regionSyncPassed = isVNSim && isVNTz;
     } else if (isPLMode) {
         info.regionSyncPassed = isPLSim && isPLTz;
+    } else if (isUSStudentMode) {
+        info.regionSyncPassed = isUSSim && (isVNTz || isUSTz);
     } else if (isUSMode) {
         info.regionSyncPassed = isUSSim && isUSTz;
     } else {

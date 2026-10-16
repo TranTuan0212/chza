@@ -21,6 +21,7 @@
 @property (nonatomic, assign) uint64_t bootTimeSec;        // kern.boottime sec
 @property (nonatomic, assign) uint64_t birthTimeSec;       // st_birthtime sec (theo vòng đời Apple)
 @property (nonatomic, assign) BOOL autoSyncTimezoneWithIP; // Tự động đồng bộ timezone theo GeoIP của Proxy
+@property (nonatomic, assign) BOOL enableFakeTimeZone;     // Bật/Tắt ép múi giờ giả (Mặc định YES, nếu NO sẽ trả về múi giờ thật của máy)
 @property (nonatomic, strong) NSString *bootSessionUUID;   // kern.bootsessionuuid
 @property (nonatomic, strong) NSString *spoofedIDFV;       // identifierForVendor UUID
 @property (nonatomic, strong) NSString *spoofedIDFA;       // advertisingIdentifier IDFA

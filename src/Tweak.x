@@ -592,6 +592,7 @@ static void purge_entire_sandbox_safely(void) {
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.birthTimeSec = [dict[@"birthTimeSec"] unsignedLongLongValue] ?: 0;
         self.autoSyncTimezoneWithIP = dict[@"autoSyncTimezoneWithIP"] != nil ? [dict[@"autoSyncTimezoneWithIP"] boolValue] : YES;
+        self.enableFakeTimeZone = dict[@"enableFakeTimeZone"] != nil ? [dict[@"enableFakeTimeZone"] boolValue] : YES;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
@@ -770,6 +771,7 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"bootTimeSec"] = @(self.bootTimeSec);
     dict[@"birthTimeSec"] = @(self.birthTimeSec);
     dict[@"autoSyncTimezoneWithIP"] = @(self.autoSyncTimezoneWithIP);
+    dict[@"enableFakeTimeZone"] = @(self.enableFakeTimeZone);
     dict[@"bootSessionUUID"] = self.bootSessionUUID ?: @"";
     dict[@"spoofedIDFV"] = self.spoofedIDFV;
     dict[@"spoofedIDFA"] = self.spoofedIDFA ?: @"00000000-0000-0000-0000-000000000000";
@@ -1637,7 +1639,11 @@ static void update_cached_locale_and_tz(void) {
         tzName = @"Asia/Ho_Chi_Minh";
     }
     s_cachedLocale = [NSLocale localeWithLocaleIdentifier:locId];
-    s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
+    if ([ZTSettings sharedSettings].enableFakeTimeZone) {
+        s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
+    } else {
+        s_cachedTimeZone = nil;
+    }
     s_in_tz_hook = NO;
     s_in_locale_hook = NO;
 }
@@ -1671,6 +1677,12 @@ static void update_cached_locale_and_tz(void) {
 
 + (NSTimeZone *)systemTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+        }
+        return %orig;
+    }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
     }
@@ -1686,6 +1698,12 @@ static void update_cached_locale_and_tz(void) {
 
 + (NSTimeZone *)localTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+        }
+        return %orig;
+    }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
     }
@@ -1701,6 +1719,12 @@ static void update_cached_locale_and_tz(void) {
 
 + (NSTimeZone *)defaultTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+        }
+        return %orig;
+    }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
     }
