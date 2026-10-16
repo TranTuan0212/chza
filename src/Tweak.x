@@ -381,7 +381,13 @@ static void clear_all_network_caches(void) {
     }
 }
 
+static BOOL s_logged_c_bid = NO;
+static BOOL s_logged_c_info_bid = NO;
+
 static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
+    s_logged_c_bid = NO;
+    s_logged_c_info_bid = NO;
+
     NSString *home = NSHomeDirectory();
     if (!home) return;
     NSString *docDir = [home stringByAppendingPathComponent:@"Documents"];
@@ -395,13 +401,16 @@ static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
     [df setDateFormat:@"yyyy-MM-dd HH:mm:ss"];
     NSString *timeStr = [df stringFromDate:[NSDate date]];
 
+    NSString *appType = is_original_zalo_app() ? @"Zalo Gốc (vn.com.vng.zingalo)" : @"Zalo Clone (Đã bẻ hướng C-layer & APNs Token)";
+
     NSString *header = [NSString stringWithFormat:
         @"================================================================================\n"
         @"🚀 [SYSTEM-INIT] === BẮT ĐẦU PHIÊN AUDIT MỚI SAU DEEP WIPE ===\n"
         @"🕒 Thời gian kích hoạt: %@\n"
         @"📱 Thiết bị: %@ | IDFV: %@\n"
+        @"📦 Gói Ứng Dụng: %@\n"
         @"================================================================================\n\n",
-        timeStr, machine ?: @"iPhone", idfv ?: @"N/A"];
+        timeStr, machine ?: @"iPhone", idfv ?: @"N/A", appType];
 
     [header writeToFile:auditPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
     chmod([auditPath UTF8String], 0666);
@@ -1985,6 +1994,10 @@ static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
             void *caller0 = __builtin_return_address(0);
             void *caller1 = __builtin_return_address(1);
             if (!is_system_caller(caller0, caller1)) {
+                if (!s_logged_c_bid) {
+                    s_logged_c_bid = YES;
+                    logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetIdentifier() -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+                }
                 s_in_c_bundle_hook = NO;
                 return CFSTR("vn.com.vng.zingalo");
             }
@@ -2008,6 +2021,10 @@ static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFS
                 void *caller0 = __builtin_return_address(0);
                 void *caller1 = __builtin_return_address(1);
                 if (!is_system_caller(caller0, caller1)) {
+                    if (!s_logged_c_info_bid) {
+                        s_logged_c_info_bid = YES;
+                        logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetValueForInfoDictionaryKey(CFBundleIdentifier) -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+                    }
                     s_in_c_bundle_hook = NO;
                     return CFSTR("vn.com.vng.zingalo");
                 }
@@ -4015,6 +4032,10 @@ static void scan_zalo_security_modules_async(void) {
                       s.screenScale,
                       s.spoofedIDFV,
                       [[ZTSecurityManager sharedManager] getLicenseStatusText]]);
+
+            if (!is_original_zalo_app()) {
+                logAudit(@"CLONE-SYNC", @"[ZALO CLONE] Kích hoạt cơ chế chuẩn App Store: 1) Bẻ hướng C-layer CFBundleGetIdentifier & InfoDictionary -> vn.com.vng.zingalo | 2) Bẻ hướng NSBundle mainBundle -> vn.com.vng.zingalo | 3) Nạp APNs Device Token 32-byte SHA-256 | 4) Bỏ qua lỗi APNs iOS");
+            }
 
             // 1. Đồng bộ Vùng, Ngôn ngữ & Múi giờ
             NSString *langStr = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";

@@ -1845,6 +1845,17 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.iosVersion = [[UIDevice currentDevice] systemVersion];
     info.bundleId = [[NSBundle mainBundle] bundleIdentifier];
 
+    CFBundleRef mb = CFBundleGetMainBundle();
+    CFStringRef cfBid = mb ? CFBundleGetIdentifier(mb) : NULL;
+    info.cfBundleId = cfBid ? (__bridge NSString *)cfBid : info.bundleId;
+
+    NSString *mainPath = [[NSBundle mainBundle] bundlePath];
+    BOOL isClone = [mainPath.lowercaseString containsString:@"zaloclone"] ||
+                   (![info.bundleId isEqualToString:@"vn.com.vng.zingalo"] && ![info.bundleId isEqualToString:@"com.vng.zalo"]);
+    info.isCloneApp = isClone;
+    info.realBundleId = isClone ? [NSString stringWithFormat:@"%@ (Clone)", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
+    info.apnsPushStatus = isClone ? @"32-Byte SHA256 Token (Đã giả lập)" : @"Hệ Thống APNs Apple";
+
     if (!s.hasConfiguredProfile) {
         info.currentIDFV = @"Chưa cấp (Cần Wipe)";
         info.serial = @"";

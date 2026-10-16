@@ -1877,6 +1877,20 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:kcIsoBadge
                                           isWarning:!(isOrig || self.info.keychainIsolated)]];
 
+    NSString *cBidVal = self.info.cfBundleId ?: @"vn.com.vng.zingalo";
+    NSString *cBidBadge = self.info.isCloneApp ? @"Đã Bẻ Hướng C ✅" : @"App Store Gốc ✅";
+    [inner addArrangedSubview:[self createRowWithKey:@"Mã Gói C-Layer (CFBundle)"
+                                              value:cBidVal
+                                              badge:cBidBadge
+                                          isWarning:NO]];
+
+    NSString *pushVal = self.info.apnsPushStatus ?: (self.info.isCloneApp ? @"32-Byte SHA256 Token" : @"Hệ Thống APNs Apple");
+    NSString *pushBadge = self.info.isCloneApp ? @"Đã Giả Lập ✅" : @"Chuẩn Apple ✅";
+    [inner addArrangedSubview:[self createRowWithKey:@"Dịch Vụ Đẩy (APNs Push)"
+                                              value:pushVal
+                                              badge:pushBadge
+                                          isWarning:NO]];
+
     return card;
 }
 

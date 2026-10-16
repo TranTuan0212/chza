@@ -12,6 +12,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *deviceMachine;
 @property (nonatomic, copy) NSString *iosVersion;
 @property (nonatomic, copy) NSString *bundleId;
+@property (nonatomic, copy, nullable) NSString *cfBundleId;
+@property (nonatomic, copy, nullable) NSString *realBundleId;
+@property (nonatomic, copy, nullable) NSString *apnsPushStatus;
+@property (nonatomic, assign) BOOL isCloneApp;
 @property (nonatomic, copy) NSString *idfa;
 @property (nonatomic, copy) NSString *serial;
 @property (nonatomic, copy) NSString *wifiMAC;
