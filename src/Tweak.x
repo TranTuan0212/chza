@@ -1973,23 +1973,34 @@ static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
 
 // Bẻ hướng hàm C CoreFoundation CFBundleGetIdentifier & CFBundleGetValueForInfoDictionaryKey cho Zalo Clone
 static CFStringRef (*orig_CFBundleGetIdentifier)(CFBundleRef bundle) = NULL;
+static __thread BOOL s_in_c_bundle_hook = NO;
 static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
+    if (s_in_c_bundle_hook) {
+        return orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
+    }
+    s_in_c_bundle_hook = YES;
     if (is_tweak_active() && !is_original_zalo_app()) {
         CFBundleRef mb = CFBundleGetMainBundle();
         if (bundle == mb || !bundle) {
             void *caller0 = __builtin_return_address(0);
             void *caller1 = __builtin_return_address(1);
             if (!is_system_caller(caller0, caller1)) {
-                logAudit(@"BUNDLE-ID", @"Zalo gọi hàm C CFBundleGetIdentifier() -> [BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                s_in_c_bundle_hook = NO;
                 return CFSTR("vn.com.vng.zingalo");
             }
         }
     }
-    return orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
+    CFStringRef res = orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
+    s_in_c_bundle_hook = NO;
+    return res;
 }
 
 static CFTypeRef (*orig_CFBundleGetValueForInfoDictionaryKey)(CFBundleRef bundle, CFStringRef key) = NULL;
 static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFStringRef key) {
+    if (s_in_c_bundle_hook) {
+        return orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
+    }
+    s_in_c_bundle_hook = YES;
     if (is_tweak_active() && !is_original_zalo_app() && key) {
         if (CFEqual(key, kCFBundleIdentifierKey) || CFStringCompare(key, CFSTR("CFBundleIdentifier"), 0) == kCFCompareEqualTo) {
             CFBundleRef mb = CFBundleGetMainBundle();
@@ -1997,13 +2008,15 @@ static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFS
                 void *caller0 = __builtin_return_address(0);
                 void *caller1 = __builtin_return_address(1);
                 if (!is_system_caller(caller0, caller1)) {
-                    logAudit(@"BUNDLE-ID", @"Zalo gọi hàm C CFBundleGetValueForInfoDictionaryKey('CFBundleIdentifier') -> [BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                    s_in_c_bundle_hook = NO;
                     return CFSTR("vn.com.vng.zingalo");
                 }
             }
         }
     }
-    return orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
+    CFTypeRef res = orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
+    s_in_c_bundle_hook = NO;
+    return res;
 }
 
 
@@ -2817,14 +2830,18 @@ static BOOL s_in_bundle_hook = NO;
 
 - (void)setDelegate:(id<UIApplicationDelegate>)delegate {
     if (delegate && is_tweak_active() && !is_original_zalo_app()) {
+        static Class s_swappedDelClass = nil;
         Class delClass = [delegate class];
-        SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
-        Method m = class_getInstanceMethod(delClass, failSel);
-        if (m) {
-            IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
-                logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[CLONE-FIX] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
-            });
-            method_setImplementation(m, noop);
+        if (delClass && delClass != s_swappedDelClass) {
+            s_swappedDelClass = delClass;
+            SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
+            Method m = class_getInstanceMethod(delClass, failSel);
+            if (m) {
+                IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
+                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[CLONE-FIX] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
+                });
+                method_setImplementation(m, noop);
+            }
         }
     }
     %orig;
