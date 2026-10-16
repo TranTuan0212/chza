@@ -584,6 +584,308 @@ static void sync_license_to_all_locations(void) {
 
 #pragma mark - Actions
 
+static BOOL prefs_parse_proxy_quick(NSString *proxyInput, NSString **outHost, NSNumber **outPort, NSString **outUser, NSString **outPass) {
+    if (!proxyInput || proxyInput.length == 0) return NO;
+    NSString *clean = [proxyInput stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([clean containsString:@"@"]) {
+        NSArray *parts = [clean componentsSeparatedByString:@"@"];
+        if (parts.count == 2) {
+            NSString *authPart = parts[0];
+            NSString *hostPart = parts[1];
+            NSArray *authTokens = [authPart componentsSeparatedByString:@":"];
+            if (authTokens.count == 2) {
+                if (outUser) *outUser = authTokens[0];
+                if (outPass) *outPass = authTokens[1];
+            }
+            NSArray *hostTokens = [hostPart componentsSeparatedByString:@":"];
+            if (hostTokens.count == 2) {
+                if (outHost) *outHost = hostTokens[0];
+                if (outPort) *outPort = @([hostTokens[1] integerValue]);
+                return YES;
+            }
+        }
+    }
+    NSArray *tokens = [clean componentsSeparatedByString:@":"];
+    if (tokens.count == 4) {
+        if (outHost) *outHost = tokens[0];
+        if (outPort) *outPort = @([tokens[1] integerValue]);
+        if (outUser) *outUser = tokens[2];
+        if (outPass) *outPass = tokens[3];
+        return YES;
+    } else if (tokens.count == 2) {
+        if (outHost) *outHost = tokens[0];
+        if (outPort) *outPort = @([tokens[1] integerValue]);
+        return YES;
+    } else if (tokens.count == 1) {
+        if (outHost) *outHost = tokens[0];
+        if (outPort) *outPort = @(80);
+        return YES;
+    }
+    return NO;
+}
+
+static void prefs_fetch_geoip_for_auto_wipe(NSString *proxyText, void (^completion)(NSString * _Nullable queryIP, NSString * _Nullable timezone, NSString * _Nullable countryCode)) {
+    NSString *host = nil, *user = nil, *pass = nil;
+    NSNumber *port = nil;
+    NSDictionary *proxyDict = nil;
+    NSString *targetIP = nil;
+
+    NSString *clean = [proxyText stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (clean.length > 0) {
+        if ([clean containsString:@":"] || [clean containsString:@"@"]) {
+            if (prefs_parse_proxy_quick(clean, &host, &port, &user, &pass)) {
+                NSRegularExpression *ipRegex = [NSRegularExpression regularExpressionWithPattern:@"^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$" options:0 error:nil];
+                NSUInteger matches = [ipRegex numberOfMatchesInString:host options:0 range:NSMakeRange(0, host.length)];
+                if (matches > 0 && user.length == 0 && pass.length == 0) {
+                    targetIP = host;
+                } else {
+                    NSMutableDictionary *p = [NSMutableDictionary dictionary];
+                    p[@"HTTPEnable"] = @YES;
+                    p[@"HTTPProxy"] = host;
+                    p[@"HTTPPort"] = port ?: @(80);
+                    if (user.length > 0) p[(NSString *)kCFProxyUsernameKey] = user;
+                    if (pass.length > 0) p[(NSString *)kCFProxyPasswordKey] = pass;
+                    proxyDict = [p copy];
+                    targetIP = nil;
+                }
+            }
+        } else {
+            targetIP = clean;
+        }
+    }
+
+    NSString *urlString = (targetIP.length > 0 && ![targetIP containsString:@":"])
+        ? [NSString stringWithFormat:@"http://ip-api.com/json/%@?fields=status,countryCode,timezone,query", targetIP]
+        : @"http://ip-api.com/json/?fields=status,countryCode,timezone,query";
+
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) {
+        if (completion) completion(nil, nil, nil);
+        return;
+    }
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.timeoutIntervalForRequest = 6.0;
+    config.timeoutIntervalForResource = 6.0;
+    if (proxyDict && proxyDict.count > 0) {
+        config.connectionProxyDictionary = proxyDict;
+    }
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+    [[session dataTaskWithURL:url completionHandler:^(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error) {
+        if (data && !error) {
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if (json && [json[@"status"] isEqualToString:@"success"]) {
+                NSString *query = json[@"query"];
+                NSString *tz = json[@"timezone"];
+                NSString *cc = json[@"countryCode"];
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    if (completion) completion(query, tz, cc);
+                });
+                return;
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(nil, nil, nil);
+        });
+    }] resume];
+}
+
+static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
+                                              NSString **outRegion,
+                                              NSString **outCarrierName,
+                                              NSString **outMCC,
+                                              NSString **outMNC,
+                                              NSString **outCountryName,
+                                              NSString **outDefaultTZ) {
+    if (!rawPhone || rawPhone.length == 0) {
+        if (outRegion) *outRegion = @"VN";
+        if (outCarrierName) *outCarrierName = @"Viettel";
+        if (outMCC) *outMCC = @"452";
+        if (outMNC) *outMNC = @"04";
+        if (outCountryName) *outCountryName = @"Việt Nam (+84)";
+        if (outDefaultTZ) *outDefaultTZ = @"Asia/Ho_Chi_Minh";
+        return;
+    }
+
+    NSMutableString *digits = [NSMutableString string];
+    for (NSUInteger i = 0; i < rawPhone.length; i++) {
+        unichar c = [rawPhone characterAtIndex:i];
+        if (c >= '0' && c <= '9') {
+            [digits appendFormat:@"%C", c];
+        }
+    }
+
+    BOOL isPL = NO;
+    BOOL isVN = NO;
+    BOOL isUS = NO;
+    NSString *cleanDigits = [digits copy];
+
+    if ([rawPhone hasPrefix:@"+48"] || ([cleanDigits hasPrefix:@"48"] && cleanDigits.length == 11)) {
+        isPL = YES;
+        if ([cleanDigits hasPrefix:@"48"]) {
+            cleanDigits = [cleanDigits substringFromIndex:2];
+        }
+    } else if (cleanDigits.length == 9 && ([cleanDigits hasPrefix:@"4"] || [cleanDigits hasPrefix:@"5"] || [cleanDigits hasPrefix:@"6"] || [cleanDigits hasPrefix:@"7"] || [cleanDigits hasPrefix:@"8"])) {
+        isPL = YES;
+    } else if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
+        isVN = YES;
+        if ([cleanDigits hasPrefix:@"84"]) {
+            cleanDigits = [@"0" stringByAppendingString:[cleanDigits substringFromIndex:2]];
+        }
+    } else if ([cleanDigits hasPrefix:@"0"] && cleanDigits.length == 10) {
+        isVN = YES;
+    } else if ([rawPhone hasPrefix:@"+1"] || ([cleanDigits hasPrefix:@"1"] && cleanDigits.length == 11)) {
+        isUS = YES;
+        if ([cleanDigits hasPrefix:@"1"]) {
+            cleanDigits = [cleanDigits substringFromIndex:1];
+        }
+    } else if (cleanDigits.length == 10) {
+        isUS = YES;
+    }
+
+    if (isPL) {
+        if (outRegion) *outRegion = @"PL";
+        if (outCountryName) *outCountryName = @"Ba Lan (+48)";
+        if (outDefaultTZ) *outDefaultTZ = @"Europe/Warsaw";
+        if (outMCC) *outMCC = @"260";
+
+        NSString *carrier = @"Play";
+        NSString *mnc = @"06";
+        if (cleanDigits.length >= 2) {
+            NSString *p2 = [cleanDigits substringToIndex:2];
+            if ([p2 isEqualToString:@"45"] || [p2 isEqualToString:@"53"] || [p2 isEqualToString:@"57"] || [p2 isEqualToString:@"73"] || [p2 isEqualToString:@"79"]) {
+                carrier = @"Play";
+                mnc = @"06";
+            } else if ([p2 isEqualToString:@"50"] || [p2 isEqualToString:@"51"]) {
+                carrier = @"Orange";
+                mnc = @"03";
+            } else if ([p2 isEqualToString:@"60"] || [p2 isEqualToString:@"66"] || [p2 isEqualToString:@"72"]) {
+                carrier = @"Plus";
+                mnc = @"01";
+            } else if ([p2 isEqualToString:@"69"] || [p2 isEqualToString:@"78"] || [p2 isEqualToString:@"88"]) {
+                carrier = @"T-Mobile";
+                mnc = @"02";
+            }
+        }
+        if (outCarrierName) *outCarrierName = carrier;
+        if (outMNC) *outMNC = mnc;
+    } else if (isUS) {
+        if (outRegion) *outRegion = @"US";
+        if (outCountryName) *outCountryName = @"Hoa Kỳ (+1)";
+        if (outDefaultTZ) *outDefaultTZ = @"America/New_York";
+        if (outCarrierName) *outCarrierName = @"T-Mobile";
+        if (outMCC) *outMCC = @"310";
+        if (outMNC) *outMNC = @"260";
+    } else {
+        if (outRegion) *outRegion = @"VN";
+        if (outCountryName) *outCountryName = @"Việt Nam (+84)";
+        if (outDefaultTZ) *outDefaultTZ = @"Asia/Ho_Chi_Minh";
+        if (outMCC) *outMCC = @"452";
+
+        NSString *carrier = @"Viettel";
+        NSString *mnc = @"04";
+        if (cleanDigits.length >= 3) {
+            NSString *p3 = [cleanDigits substringToIndex:3];
+            if ([p3 isEqualToString:@"090"] || [p3 isEqualToString:@"093"] || [p3 isEqualToString:@"089"] ||
+                [p3 isEqualToString:@"070"] || [p3 isEqualToString:@"079"] || [p3 isEqualToString:@"077"] ||
+                [p3 isEqualToString:@"076"] || [p3 isEqualToString:@"078"]) {
+                carrier = @"VN MOBIFONE";
+                mnc = @"01";
+            } else if ([p3 isEqualToString:@"096"] || [p3 isEqualToString:@"097"] || [p3 isEqualToString:@"098"] ||
+                       [p3 isEqualToString:@"086"] || [p3 isEqualToString:@"032"] || [p3 isEqualToString:@"033"] ||
+                       [p3 isEqualToString:@"034"] || [p3 isEqualToString:@"035"] || [p3 isEqualToString:@"036"] ||
+                       [p3 isEqualToString:@"037"] || [p3 isEqualToString:@"038"] || [p3 isEqualToString:@"039"]) {
+                carrier = @"Viettel";
+                mnc = @"04";
+            } else if ([p3 isEqualToString:@"091"] || [p3 isEqualToString:@"094"] || [p3 isEqualToString:@"088"] ||
+                       [p3 isEqualToString:@"081"] || [p3 isEqualToString:@"082"] || [p3 isEqualToString:@"083"] ||
+                       [p3 isEqualToString:@"084"] || [p3 isEqualToString:@"085"] || [p3 isEqualToString:@"087"] || [p3 isEqualToString:@"055"]) {
+                carrier = @"VINAPHONE";
+                mnc = @"02";
+            } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"] || [p3 isEqualToString:@"052"]) {
+                carrier = @"Vietnamobile";
+                mnc = @"05";
+            }
+        }
+        if (outCarrierName) *outCarrierName = carrier;
+        if (outMNC) *outMNC = mnc;
+    }
+}
+
+- (void)promptSmartAutoWipe {
+    NSString *clip = [UIPasteboard generalPasteboard].string ?: @"";
+    NSString *prefilledPhone = @"";
+    NSString *cleanClip = [[clip componentsSeparatedByCharactersInSet:[[NSCharacterSet characterSetWithCharactersInString:@"+0123456789"] invertedSet]] componentsJoinedByString:@""];
+    if (cleanClip.length >= 8 && cleanClip.length <= 15) {
+        prefilledPhone = [clip stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    }
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎯 WIPE THÔNG MINH THEO SĐT"
+                                                                   message:@"Nhập số điện thoại chuẩn bị đăng ký.\nHệ thống sẽ tự nhận diện Nhà Mạng (Plus, Play, Orange, Viettel...) và quét IP để tự động đồng bộ Múi Giờ chuẩn:"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+        textField.placeholder = @"Ví dụ: +48661795935 hoặc 098...";
+        textField.text = prefilledPhone;
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+        textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+    }];
+
+    [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
+        textField.placeholder = @"Proxy/IP (Để trống nếu dùng IP 4G/WiFi hiện tại)";
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+    }];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🚀 Tự Động Wipe Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        UITextField *phoneField = alert.textFields.firstObject;
+        UITextField *proxyField = (alert.textFields.count > 1) ? alert.textFields[1] : nil;
+
+        NSString *rawPhone = [phoneField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        if (rawPhone.length == 0) {
+            UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Chưa Nhập SĐT"
+                                                                         message:@"Vui lòng nhập hoặc dán số điện thoại để hệ thống nhận diện nhà mạng thích hợp!"
+                                                                  preferredStyle:UIAlertControllerStyleAlert];
+            [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:err animated:YES completion:nil];
+            return;
+        }
+
+        NSString *targetRegion = nil, *carrierName = nil, *mcc = nil, *mnc = nil, *countryName = nil, *defaultTZ = nil;
+        prefs_analyze_phone_for_auto_wipe(rawPhone, &targetRegion, &carrierName, &mcc, &mnc, &countryName, &defaultTZ);
+
+        NSString *proxyText = [proxyField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+        UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"⚡ Đang Phân Tích & Quét IP..."
+                                                                       message:[NSString stringWithFormat:@"• SĐT: %@ (%@)\n• Nhận diện SIM: %@ (%@-%@)\n• Đang kiểm tra IP & múi giờ...", rawPhone, countryName, carrierName, mcc, mnc]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [self presentViewController:loading animated:YES completion:^{
+            prefs_fetch_geoip_for_auto_wipe(proxyText, ^(NSString *queryIP, NSString *timezone, NSString *countryCode) {
+                NSString *effectiveTZ = timezone.length > 0 ? timezone : defaultTZ;
+                BOOL isVN = [targetRegion isEqualToString:@"VN"] || [countryCode isEqualToString:@"VN"];
+                BOOL isPL = [targetRegion isEqualToString:@"PL"] || [countryCode isEqualToString:@"PL"];
+                if (isVN) {
+                    effectiveTZ = @"Asia/Ho_Chi_Minh";
+                } else if (isPL) {
+                    effectiveTZ = @"Europe/Warsaw";
+                }
+
+                NSMutableDictionary *dict = load_current_mutable_prefs_dict();
+                dict[@"timeZoneName"] = effectiveTZ;
+                dict[@"regionMode"] = targetRegion;
+                dict[@"preferredCarrier"] = carrierName;
+                save_dict_to_all_locations(dict);
+
+                [loading dismissViewControllerAnimated:YES completion:^{
+                    [self performWipeAndApplyWithRegion:targetRegion preferredCarrier:carrierName];
+                }];
+            });
+        }];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
+
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)applyAndWipeCleanSequence:(PSSpecifier *)specifier {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
@@ -597,6 +899,10 @@ static void sync_license_to_all_locations(void) {
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🧹 CHỌN SIM & KHU VỰC THIẾT BỊ MỚI"
                                                                    message:@"Chọn khu vực SIM mong muốn cho thiết bị mới. Hệ thống sẽ tự động tắt Zalo, dọn sạch dữ liệu cũ và cấp profile máy sạch sẽ hoàn toàn:"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🎯 [AUTO] Wipe Tự Động Theo SĐT & Múi Giờ IP" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+        [self promptSmartAutoWipe];
+    }]];
 
     [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Viettel (452-04)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"Viettel"];

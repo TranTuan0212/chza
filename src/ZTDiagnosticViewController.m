@@ -345,7 +345,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
         if ([cleanDigits hasPrefix:@"48"]) {
             cleanDigits = [cleanDigits substringFromIndex:2];
         }
-    } else if (cleanDigits.length == 9 && ([currentProfileRegion isEqualToString:@"PL"] || [currentProfileRegion containsString:@"Ba Lan"] || [currentProfileRegion containsString:@"Poland"])) {
+    } else if (cleanDigits.length == 9 && ([cleanDigits hasPrefix:@"4"] || [cleanDigits hasPrefix:@"5"] || [cleanDigits hasPrefix:@"6"] || [cleanDigits hasPrefix:@"7"] || [cleanDigits hasPrefix:@"8"] || [currentProfileRegion isEqualToString:@"PL"] || [currentProfileRegion containsString:@"Ba Lan"] || [currentProfileRegion containsString:@"Poland"])) {
         isPL = YES;
     } else if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
         isVN = YES;
@@ -1416,26 +1416,44 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         wipeCarrierBtn.backgroundColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
         [wipeCarrierBtn addTarget:self action:@selector(wipeWithSuggestedCarrierAction) forControlEvents:UIControlEventTouchUpInside];
         [inner addArrangedSubview:wipeCarrierBtn];
+    } else if (self.info.phoneCheckCompleted && self.info.matchCarrierPassed) {
+        UIButton *wipeSameCarrierBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        wipeSameCarrierBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [wipeSameCarrierBtn.heightAnchor constraintEqualToConstant:44].active = YES;
+        wipeSameCarrierBtn.layer.cornerRadius = 10;
+        wipeSameCarrierBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
+        NSString *carrierToShow = (self.info.suggestedCarrier ?: self.info.carrierName ?: @"Viettel").uppercaseString;
+        NSString *btnTitle = [NSString stringWithFormat:@"🚀 DEEP WIPE CẤP MÁY MỚI CẮM SIM [%@]", carrierToShow];
+        [wipeSameCarrierBtn setTitle:btnTitle forState:UIControlStateNormal];
+        [wipeSameCarrierBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        wipeSameCarrierBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
+        [wipeSameCarrierBtn addTarget:self action:@selector(wipeWithSuggestedCarrierAction) forControlEvents:UIControlEventTouchUpInside];
+        [inner addArrangedSubview:wipeSameCarrierBtn];
     }
 
     return card;
 }
 
 - (void)wipeWithSuggestedCarrierAction {
-    NSString *carrier = self.info.suggestedCarrier ?: @"Viettel";
+    NSString *carrier = self.info.suggestedCarrier ?: (self.info.carrierName ?: @"Viettel");
+    NSString *tzDesc = (self.info.ipTimezone.length > 0) ? self.info.ipTimezone : (self.info.timeZoneName ?: @"Mặc định");
     NSString *msg = [NSString stringWithFormat:
         @"Hệ thống sẽ thực hiện:\n\n"
         @"1. 🧹 Quét sạch toàn bộ Sandbox, Keychain và Caches Zalo cũ.\n"
         @"2. 📱 Sinh thiết bị mới 100%% cắm sẵn SIM [%@] ngay từ giây đầu tiên khởi động.\n"
-        @"3. ✈️ Tự động đóng app an toàn để bạn Bật/Tắt Chế Độ Máy Bay đổi IP 4G trước khi mở lại.\n\n"
+        @"3. ⏰ Đồng bộ múi giờ IP: %@.\n"
+        @"4. ✈️ Tự động đóng app an toàn để bạn Bật/Tắt Chế Độ Máy Bay đổi IP 4G trước khi mở lại.\n\n"
         @"Bạn có chắc chắn muốn tiến hành Deep Wipe ngay không?",
-        carrier.uppercaseString];
+        carrier.uppercaseString, tzDesc];
 
     UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"🧹 XÁC NHẬN DEEP WIPE"
                                                                           message:msg
                                                                    preferredStyle:UIAlertControllerStyleAlert];
 
     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Tiến Hành Wipe Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
+        if (self.info.ipTimezone.length > 0) {
+            update_zt_synced_timezone_pref(self.info.ipTimezone);
+        }
         Class menuCls = NSClassFromString(@"ZTMenuManager");
         if (menuCls && [menuCls respondsToSelector:@selector(sharedManager)]) {
 #pragma clang diagnostic push
