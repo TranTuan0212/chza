@@ -465,8 +465,7 @@ static NSString *detect_real_system_machine(void) {
         NSArray *carriers = @[
             @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
             @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
-            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
-            @{@"name": @"Vietnamobile",  @"mcc": @"452", @"mnc": @"05"}
+            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"}
         ];
         NSDictionary *c = nil;
         if (preferredCarrier.length > 0) {
@@ -478,7 +477,6 @@ static NSString *detect_real_system_machine(void) {
                     ([cleanPref containsString:@"viettel"] && [cName containsString:@"viettel"]) ||
                     ([cleanPref containsString:@"vina"] && [cName containsString:@"vina"]) ||
                     ([cleanPref containsString:@"mobi"] && [cName containsString:@"mobi"]) ||
-                    ([cleanPref containsString:@"vietnamobile"] && [cName containsString:@"vietnamobile"]) ||
                     [cleanPref isEqualToString:cMnc]) {
                     c = item;
                     break;

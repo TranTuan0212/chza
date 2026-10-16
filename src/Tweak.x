@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <Security/Security.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <CFNetwork/CFNetwork.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
 #import <mach-o/dyld.h>
@@ -1970,6 +1971,42 @@ static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
     return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(applicationID) : true;
 }
 
+// Bẻ hướng hàm C CoreFoundation CFBundleGetIdentifier & CFBundleGetValueForInfoDictionaryKey cho Zalo Clone
+static CFStringRef (*orig_CFBundleGetIdentifier)(CFBundleRef bundle) = NULL;
+static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
+        CFBundleRef mb = CFBundleGetMainBundle();
+        if (bundle == mb || !bundle) {
+            void *caller0 = __builtin_return_address(0);
+            void *caller1 = __builtin_return_address(1);
+            if (!is_system_caller(caller0, caller1)) {
+                logAudit(@"BUNDLE-ID", @"Zalo gọi hàm C CFBundleGetIdentifier() -> [BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                return CFSTR("vn.com.vng.zingalo");
+            }
+        }
+    }
+    return orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
+}
+
+static CFTypeRef (*orig_CFBundleGetValueForInfoDictionaryKey)(CFBundleRef bundle, CFStringRef key) = NULL;
+static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFStringRef key) {
+    if (is_tweak_active() && !is_original_zalo_app() && key) {
+        if (CFEqual(key, kCFBundleIdentifierKey) || CFStringCompare(key, CFSTR("CFBundleIdentifier"), 0) == kCFCompareEqualTo) {
+            CFBundleRef mb = CFBundleGetMainBundle();
+            if (bundle == mb || !bundle) {
+                void *caller0 = __builtin_return_address(0);
+                void *caller1 = __builtin_return_address(1);
+                if (!is_system_caller(caller0, caller1)) {
+                    logAudit(@"BUNDLE-ID", @"Zalo gọi hàm C CFBundleGetValueForInfoDictionaryKey('CFBundleIdentifier') -> [BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                    return CFSTR("vn.com.vng.zingalo");
+                }
+            }
+        }
+    }
+    return orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
+}
+
+
 
 // Ẩn BSSID của trạm phát WiFi (tránh phát hiện chung router)
 static CFDictionaryRef (*orig_CNCopyCurrentNetworkInfo)(CFStringRef interfaceName);
@@ -2749,6 +2786,50 @@ static BOOL s_in_bundle_hook = NO;
 
 %hook UIApplication
 
+- (BOOL)isRegisteredForRemoteNotifications {
+    if (is_tweak_active() && !is_original_zalo_app()) {
+        return YES;
+    }
+    return %orig;
+}
+
+- (void)registerForRemoteNotifications {
+    %orig;
+    if (is_tweak_active() && !is_original_zalo_app()) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            id delegate = self.delegate;
+            SEL sel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
+            if (delegate && [delegate respondsToSelector:sel]) {
+                NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
+                const char *cStr = [seed UTF8String];
+                unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+                CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
+                NSData *fakeToken = [NSData dataWithBytes:hash length:32];
+                #pragma clang diagnostic push
+                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+                [delegate application:self didRegisterForRemoteNotificationsWithDeviceToken:fakeToken];
+                #pragma clang diagnostic pop
+                logAudit(@"PUSH-TOKEN", @"[CLONE-FIX] Đã nạp thành công APNs Device Token 32-byte chuẩn Apple cho Zalo Clone!");
+            }
+        });
+    }
+}
+
+- (void)setDelegate:(id<UIApplicationDelegate>)delegate {
+    if (delegate && is_tweak_active() && !is_original_zalo_app()) {
+        Class delClass = [delegate class];
+        SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
+        Method m = class_getInstanceMethod(delClass, failSel);
+        if (m) {
+            IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
+                logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[CLONE-FIX] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
+            });
+            method_setImplementation(m, noop);
+        }
+    }
+    %orig;
+}
+
 - (BOOL)canOpenURL:(NSURL *)url {
     if (url) {
         NSString *scheme = [[url scheme] lowercaseString];
@@ -3114,6 +3195,12 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 [newExt replaceOccurrencesOfString:@"\"mno\":\"--\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
                 extModified = YES;
             }
+        }
+        if ([newExt containsString:@"\"dId\":\"\""] && settings.spoofedIDFV.length > 0) {
+            NSString *cleanId = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+            NSString *targetDId = [NSString stringWithFormat:@"\"dId\":\"2001.SSZ-%@.1\"", cleanId];
+            [newExt replaceOccurrencesOfString:@"\"dId\":\"\"" withString:targetDId options:0 range:NSMakeRange(0, newExt.length)];
+            extModified = YES;
         }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
@@ -3823,6 +3910,10 @@ static void scan_zalo_security_modules_async(void) {
         universal_hook_c_function("CFPreferencesCopyAppValue", (void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
         universal_hook_c_function("CFPreferencesSetAppValue", (void *)CFPreferencesSetAppValue, (void *)my_CFPreferencesSetAppValue, (void **)&orig_CFPreferencesSetAppValue);
         universal_hook_c_function("CFPreferencesAppSynchronize", (void *)CFPreferencesAppSynchronize, (void *)my_CFPreferencesAppSynchronize, (void **)&orig_CFPreferencesAppSynchronize);
+
+        // Hook CoreFoundation Bundle Identifier (C-Layer Redirection cho Zalo Clone)
+        universal_hook_c_function("CFBundleGetIdentifier", (void *)CFBundleGetIdentifier, (void *)my_CFBundleGetIdentifier, (void **)&orig_CFBundleGetIdentifier);
+        universal_hook_c_function("CFBundleGetValueForInfoDictionaryKey", (void *)CFBundleGetValueForInfoDictionaryKey, (void *)my_CFBundleGetValueForInfoDictionaryKey, (void **)&orig_CFBundleGetValueForInfoDictionaryKey);
 
         // Hook Security Framework (Keychain Isolation)
         universal_hook_c_function("SecItemCopyMatching", (void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
