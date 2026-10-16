@@ -3128,7 +3128,23 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
         modified = YES;
     }
 
-    // 3. Khử rò rỉ model máy thật trong Body nếu gửi lên centralized.zaloapp.com
+    // 3. Khử rò rỉ ngôn ngữ Tiếng Việt trong Header Accept-Language nếu Profile là Mỹ / Quốc tế
+    NSString *acceptLang = [mutReq valueForHTTPHeaderField:@"Accept-Language"];
+    if (acceptLang) {
+        BOOL isUSRegion = [settings.regionMode isEqualToString:@"US"] || [settings.regionMode isEqualToString:@"US_STUDENT"];
+        BOOL isPLRegion = [settings.regionMode isEqualToString:@"PL"];
+        if (isUSRegion && ([acceptLang containsString:@"vi-VN"] || [acceptLang containsString:@"vi;"] || [acceptLang containsString:@"vi,"])) {
+            [mutReq setValue:@"en-US,en;q=0.9" forHTTPHeaderField:@"Accept-Language"];
+            modified = YES;
+            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ tiếng Việt trong Accept-Language: '%@' -> [ĐÃ CHUẨN HOÁ] en-US,en;q=0.9", acceptLang]);
+        } else if (isPLRegion && ([acceptLang containsString:@"vi-VN"] || [acceptLang containsString:@"vi;"])) {
+            [mutReq setValue:@"pl-PL,pl;q=0.9,en;q=0.8" forHTTPHeaderField:@"Accept-Language"];
+            modified = YES;
+            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ tiếng Việt trong Accept-Language: '%@' -> [ĐÃ CHUẨN HOÁ] pl-PL,pl;q=0.9,en;q=0.8", acceptLang]);
+        }
+    }
+
+    // 4. Khử rò rỉ model máy thật, múi giờ và ngôn ngữ trong Body nếu gửi lên centralized.zaloapp.com
     NSString *urlStr = origReq.URL.absoluteString ?: @"";
     if ([urlStr containsString:@"centralized.zaloapp.com"]) {
         NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
@@ -3147,6 +3163,34 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                         logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
                     }
                 }
+
+                // Chuẩn hoá múi giờ gửi lên centralized.zaloapp.com telemetry
+                BOOL isUSRegion = [settings.regionMode isEqualToString:@"US"] || [settings.regionMode isEqualToString:@"US_STUDENT"];
+                if ((settings.enableFakeTimeZone || isUSRegion) && settings.timeZoneName.length > 0) {
+                    NSString *targetTZ = settings.timeZoneName;
+                    NSString *escapedTargetTZ = [targetTZ stringByReplacingOccurrencesOfString:@"/" withString:@"\\/"];
+                    if ([mutBody containsString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\""] || [mutBody containsString:@"\"tz\":\"Asia/Ho_Chi_Minh\""]) {
+                        [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", escapedTargetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
+                        [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", targetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ múi giờ VN 'Asia/Ho_Chi_Minh' trong centralized telemetry -> [ĐÃ FAKE] %@", targetTZ]);
+                    }
+                }
+
+                if (isUSRegion) {
+                    if ([mutBody containsString:@"\"lang\":\"vi-VN\""] || [mutBody containsString:@"\"lang\":\"vi_VN\""]) {
+                        [mutBody replaceOccurrencesOfString:@"\"lang\":\"vi-VN\"" withString:@"\"lang\":\"en-US\"" options:0 range:NSMakeRange(0, mutBody.length)];
+                        [mutBody replaceOccurrencesOfString:@"\"lang\":\"vi_VN\"" withString:@"\"lang\":\"en-US\"" options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                        logAudit(@"OUTBOUND-SANITIZE", @"Đã khử rò rỉ ngôn ngữ vi-VN trong centralized telemetry -> [ĐÃ FAKE] en-US");
+                    }
+                    if (settings.carrierName.length > 0 && [mutBody containsString:@"\"mno\":\"\""]) {
+                        NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+                        [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                    }
+                }
+
                 if (bodyModified) {
                     NSData *newBody = [mutBody dataUsingEncoding:NSUTF8StringEncoding];
                     if (ioBodyData && *ioBodyData) {

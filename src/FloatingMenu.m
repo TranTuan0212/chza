@@ -763,8 +763,8 @@ UIViewController *ZTGetTopViewController(void) {
         s.carrierMNC = @"260";
         s.carrierCountryCode = @"us";
         s.localeIdentifier = @"en_US";
-        s.preferredLanguages = @[@"en-US", @"vi-VN"];
-        s.timeZoneName = @"Asia/Ho_Chi_Minh";
+        s.preferredLanguages = @[@"en-US"];
+        s.timeZoneName = @"America/New_York";
     } else if ([region isEqualToString:@"US"]) {
         NSArray *userNames = @[@"David's iPhone", @"Michael's iPhone", @"iPhone", @"Sarah's iPhone"];
         s.deviceName = userNames[arc4random_uniform((uint32_t)userNames.count)];
@@ -1020,6 +1020,17 @@ UIViewController *ZTGetTopViewController(void) {
         [settings saveSettings];
         UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
                                                                    message:@"Đã chuyển múi giờ sang Mỹ (America/New_York, GMT-5)."
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+        [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Mỹ - Miền Trung Chicago (America/Chicago - GMT-6)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        settings.timeZoneName = @"America/Chicago";
+        settings.enableFakeTimeZone = YES;
+        [settings saveSettings];
+        UIAlertController *c = [UIAlertController alertControllerWithTitle:@"Đã Cập Nhật"
+                                                                   message:@"Đã chuyển múi giờ sang Mỹ (America/Chicago, GMT-6)."
                                                             preferredStyle:UIAlertControllerStyleAlert];
         [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:c animated:YES completion:nil];
