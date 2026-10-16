@@ -1441,6 +1441,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     if ([lower hasSuffix:@".adbk"] ||
         [lower containsString:@"appsmanager"] ||
         [lower containsString:@"com.sonhu.zalotweak"] ||
+        [lower containsString:@"splashboard"] ||
+        [lower containsString:@"saved application state"] ||
         [lower isEqualToString:@"zaloaudit.log"] ||
         [lower isEqualToString:@"zalotraffic.har"]) {
         return;
@@ -1457,6 +1459,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         if ([subLower hasSuffix:@".adbk"] ||
             [subLower containsString:@"appsmanager"] ||
             [subLower containsString:@"com.sonhu.zalotweak"] ||
+            [subLower containsString:@"splashboard"] ||
+            [subLower containsString:@"saved application state"] ||
             [subLower isEqualToString:@"zaloaudit.log"] ||
             [subLower isEqualToString:@"zalotraffic.har"]) {
             continue;
@@ -1465,7 +1469,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         wipe_directory_recursively_safely(fm, fullPath);
     }
     NSString *lastComp = [dirPath lastPathComponent];
-    if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
+    if (![lastComp isEqualToString:@"Library"] &&
+        ![lastComp isEqualToString:@"Documents"] &&
+        ![lastComp isEqualToString:@"tmp"] &&
+        ![lastComp isEqualToString:@"Application Support"]) {
         [fm removeItemAtPath:dirPath error:nil];
     }
 }
@@ -1560,6 +1567,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     for (NSString *item in libItems) {
         NSString *lower = [item lowercaseString];
         if ([lower containsString:@"com.sonhu.zalotweak"]) continue;
+        if ([lower containsString:@"splashboard"] || [lower containsString:@"saved application state"]) continue;
         NSString *subDir = [libDir stringByAppendingPathComponent:item];
         if ([lower isEqualToString:@"preferences"]) {
             NSArray *pItems = [fm contentsOfDirectoryAtPath:subDir error:nil];

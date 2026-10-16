@@ -324,6 +324,8 @@ static void purge_directory_recursively_safely(NSString *targetPath) {
     if ([lower hasSuffix:@".adbk"] ||
         [lower containsString:@"appsmanager"] ||
         [lower containsString:@"com.sonhu.zalotweak"] ||
+        [lower containsString:@"splashboard"] ||
+        [lower containsString:@"saved application state"] ||
         [lower containsString:@"zaloaudit.log"] ||
         [lower containsString:@"zalotraffic.har"]) {
         return;
@@ -340,6 +342,8 @@ static void purge_directory_recursively_safely(NSString *targetPath) {
         if ([subLower hasSuffix:@".adbk"] ||
             [subLower containsString:@"appsmanager"] ||
             [subLower containsString:@"com.sonhu.zalotweak"] ||
+            [subLower containsString:@"splashboard"] ||
+            [subLower containsString:@"saved application state"] ||
             [subLower isEqualToString:@"zaloaudit.log"] ||
             [subLower isEqualToString:@"zalotraffic.har"]) {
             continue;
@@ -347,9 +351,12 @@ static void purge_directory_recursively_safely(NSString *targetPath) {
         NSString *fullSub = [targetPath stringByAppendingPathComponent:sub];
         purge_directory_recursively_safely(fullSub);
     }
-    // Không xoá chính thư mục gốc Library hoặc Documents
+    // Không xoá chính thư mục gốc Library, Documents, tmp hoặc Application Support
     NSString *lastComp = [targetPath lastPathComponent];
-    if (![lastComp isEqualToString:@"Library"] && ![lastComp isEqualToString:@"Documents"] && ![lastComp isEqualToString:@"tmp"]) {
+    if (![lastComp isEqualToString:@"Library"] &&
+        ![lastComp isEqualToString:@"Documents"] &&
+        ![lastComp isEqualToString:@"tmp"] &&
+        ![lastComp isEqualToString:@"Application Support"]) {
         [fm removeItemAtPath:targetPath error:nil];
     }
 }
@@ -505,6 +512,7 @@ static void purge_entire_sandbox_safely(void) {
     for (NSString *item in libItems) {
         NSString *lower = [item lowercaseString];
         if ([lower containsString:@"com.sonhu.zalotweak"]) continue;
+        if ([lower containsString:@"splashboard"] || [lower containsString:@"saved application state"]) continue;
 
         NSString *subDir = [libDir stringByAppendingPathComponent:item];
         if ([lower isEqualToString:@"preferences"]) {
@@ -904,8 +912,15 @@ static NSString *mask_sensitive_data(NSString *input) {
     if (!input || input.length == 0) return input;
     NSMutableString *str = [input mutableCopy];
 
-    // Mask JSON tokens & keys: "(token|authToken|refreshToken|privateKey|sdkId|zaId)":"..."
-    NSRegularExpression *jwtRegex = [NSRegularExpression regularExpressionWithPattern:@"\"(token|authToken|refreshToken|privateKey|sdkId|zaId)\"\\s*:\\s*\"([^\"]+)\"" options:0 error:nil];
+    static NSRegularExpression *jwtRegex = nil;
+    static NSRegularExpression *paramRegex = nil;
+    static dispatch_once_t s_regexToken;
+    dispatch_once(&s_regexToken, ^{
+        jwtRegex = [NSRegularExpression regularExpressionWithPattern:@"\"(token|authToken|refreshToken|privateKey|sdkId|zaId)\"\\s*:\\s*\"([^\"]+)\"" options:0 error:nil];
+        paramRegex = [NSRegularExpression regularExpressionWithPattern:@"(api_key|sig|sdkId|X-Goog-Api-Key)[=:\\s]+([a-zA-Z0-9_-]{12,})" options:0 error:nil];
+    });
+
+    // Mask JSON tokens & keys
     if (jwtRegex) {
         NSArray *matches = [jwtRegex matchesInString:str options:0 range:NSMakeRange(0, str.length)];
         for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
@@ -918,8 +933,7 @@ static NSString *mask_sensitive_data(NSString *input) {
         }
     }
 
-    // Mask query & header params: (api_key|sig|sdkId|X-Goog-Api-Key)
-    NSRegularExpression *paramRegex = [NSRegularExpression regularExpressionWithPattern:@"(api_key|sig|sdkId|X-Goog-Api-Key)[=:\\s]+([a-zA-Z0-9_-]{12,})" options:0 error:nil];
+    // Mask query & header params
     if (paramRegex) {
         NSArray *matches = [paramRegex matchesInString:str options:0 range:NSMakeRange(0, str.length)];
         for (NSTextCheckingResult *match in [matches reverseObjectEnumerator]) {
@@ -984,9 +998,11 @@ static void logAudit(NSString *category, NSString *detail) {
 
 static int (*orig_sysctl)(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) = NULL;
 static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    if (!name || namelen < 2 || !is_tweak_active()) {
+    static __thread BOOL s_in_sysctl = NO;
+    if (s_in_sysctl || !name || namelen < 2 || !is_tweak_active()) {
         return orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : sysctl(name, namelen, oldp, oldlenp, newp, newlen);
     }
+    s_in_sysctl = YES;
 
     ZTSettings *settings = [ZTSettings sharedSettings];
 
@@ -999,6 +1015,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, val, copy_len);
             }
             if (oldlenp) *oldlenp = val_len;
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == HW_MODEL) {
@@ -1009,6 +1026,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, val, copy_len);
             }
             if (oldlenp) *oldlenp = val_len;
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == HW_NCPU || name[1] == HW_AVAILCPU) {
@@ -1017,6 +1035,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, &cpu, sizeof(uint32_t));
             }
             if (oldlenp) *oldlenp = sizeof(uint32_t);
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == HW_MEMSIZE) {
@@ -1025,6 +1044,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, &ram, sizeof(uint64_t));
             }
             if (oldlenp) *oldlenp = sizeof(uint64_t);
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == HW_PHYSMEM) {
@@ -1033,6 +1053,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, &ram32, sizeof(uint32_t));
             }
             if (oldlenp) *oldlenp = sizeof(uint32_t);
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == HW_PAGESIZE) {
@@ -1041,6 +1062,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, &pagesize, sizeof(uint32_t));
             }
             if (oldlenp) *oldlenp = sizeof(uint32_t);
+            s_in_sysctl = NO;
             return 0;
         }
 #ifdef HW_L2CACHESIZE
@@ -1055,6 +1077,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 }
             }
             if (oldlenp) *oldlenp = sizeof(uint64_t);
+            s_in_sysctl = NO;
             return 0;
         }
 #endif
@@ -1067,6 +1090,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, &bt, sizeof(struct timeval));
             }
             if (oldlenp) *oldlenp = sizeof(struct timeval);
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == KERN_OSVERSION && settings.kernOsVersion.length > 0) {
@@ -1077,6 +1101,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, val, copy_len);
             }
             if (oldlenp) *oldlenp = val_len;
+            s_in_sysctl = NO;
             return 0;
         }
         if (name[1] == KERN_HOSTNAME && settings.deviceName.length > 0) {
@@ -1087,24 +1112,25 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
                 memcpy(oldp, val, copy_len);
             }
             if (oldlenp) *oldlenp = val_len;
+            s_in_sysctl = NO;
             return 0;
         }
     }
 
+    s_in_sysctl = NO;
     return orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : sysctl(name, namelen, oldp, oldlenp, newp, newlen);
 }
 
 static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    if (!name || !is_tweak_active()) {
+    static __thread BOOL s_in_sysctlbyname = NO;
+    if (s_in_sysctlbyname || !name || !is_tweak_active()) {
         return orig_sysctlbyname ? orig_sysctlbyname(name, oldp, oldlenp, newp, newlen) : sysctlbyname(name, oldp, oldlenp, newp, newlen);
     }
-
-    logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"sysctlbyname('%s')", name]);
+    s_in_sysctlbyname = YES;
 
     ZTSettings *settings = [ZTSettings sharedSettings];
 
     if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE] %@", name, settings.deviceMachine]);
         const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1112,11 +1138,11 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "hw.model") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.model -> [ĐÃ FAKE] %@", settings.deviceModel]);
         const char *val = settings.deviceModel.length > 0 ? [settings.deviceModel UTF8String] : "D10AP";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1124,11 +1150,11 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "kern.osproductversion") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.osproductversion -> [ĐÃ FAKE] %@", settings.systemVersion]);
         const char *val = settings.systemVersion.length > 0 ? [settings.systemVersion UTF8String] : "15.7.2";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1136,11 +1162,11 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "kern.osversion") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.osversion -> [ĐÃ FAKE] %@", settings.kernOsVersion]);
         const char *val = settings.kernOsVersion.length > 0 ? [settings.kernOsVersion UTF8String] : "19H218";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1148,6 +1174,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
@@ -1157,22 +1184,22 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         strcmp(name, "hw.activecpu") == 0 ||
         strcmp(name, "hw.logicalcpu_max") == 0 ||
         strcmp(name, "hw.physicalcpu_max") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE] %u core", name, settings.ncpu]);
         uint32_t cpu = settings.ncpu;
         if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
             memcpy(oldp, &cpu, sizeof(uint32_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint32_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "hw.memsize") == 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.memsize -> [ĐÃ FAKE] %llu bytes (%llu GB)", settings.memsize, settings.memsize / (1024*1024*1024ULL)]);
         uint64_t ram = settings.memsize;
         if (oldp && oldlenp && *oldlenp >= sizeof(uint64_t)) {
             memcpy(oldp, &ram, sizeof(uint64_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint64_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
@@ -1182,22 +1209,22 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, &ram32, sizeof(uint32_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint32_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "hw.pagesize") == 0) {
-        logAudit(@"SYSCTL", @"hw.pagesize -> [ĐÃ FAKE] 16384 bytes");
         uint32_t pagesize = 16384;
         if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
             memcpy(oldp, &pagesize, sizeof(uint32_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint32_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "hw.l2cachesize") == 0) {
         uint64_t l2 = settings.l2cacheSize > 0 ? settings.l2cacheSize : 3145728ULL;
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"hw.l2cachesize -> [ĐÃ FAKE] %llu bytes", l2]);
         if (oldp && oldlenp) {
             if (*oldlenp >= sizeof(uint64_t)) {
                 memcpy(oldp, &l2, sizeof(uint64_t));
@@ -1207,21 +1234,21 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             }
         }
         if (oldlenp) *oldlenp = sizeof(uint64_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "sysctl.proc_translated") == 0) {
-        logAudit(@"SYSCTL", @"sysctl.proc_translated -> [ĐÃ FAKE] 0 (Native ARM)");
         int translated = 0;
         if (oldp && oldlenp && *oldlenp >= sizeof(int)) {
             memcpy(oldp, &translated, sizeof(int));
         }
         if (oldlenp) *oldlenp = sizeof(int);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "kern.boottime") == 0 && settings.bootTimeSec > 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.boottime -> [ĐÃ FAKE] Timestamp: %llu", settings.bootTimeSec]);
         struct timeval bt;
         bt.tv_sec = (time_t)settings.bootTimeSec;
         bt.tv_usec = (suseconds_t)((settings.bootTimeSec * 2654435761ULL) % 1000000ULL);
@@ -1229,11 +1256,11 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, &bt, sizeof(struct timeval));
         }
         if (oldlenp) *oldlenp = sizeof(struct timeval);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "kern.bootsessionuuid") == 0 && settings.bootSessionUUID.length > 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.bootsessionuuid -> [ĐÃ FAKE] %@", settings.bootSessionUUID]);
         const char *val = settings.bootSessionUUID.length > 0 ? [settings.bootSessionUUID UTF8String] : "00000000-0000-0000-0000-000000000000";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1241,11 +1268,11 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
     if (strcmp(name, "kern.hostname") == 0 && settings.deviceName.length > 0) {
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"kern.hostname -> [ĐÃ FAKE] %@", settings.deviceName]);
         const char *val = settings.deviceName.length > 0 ? [settings.deviceName UTF8String] : "iPhone";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
@@ -1253,6 +1280,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
             memcpy(oldp, val, copy_len);
         }
         if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
@@ -1269,20 +1297,23 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
                 supported = 1;
             }
         }
-        logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [ĐÃ FAKE THEO CHIP] %u", name, supported]);
         if (oldp && oldlenp && *oldlenp >= sizeof(uint32_t)) {
             memcpy(oldp, &supported, sizeof(uint32_t));
         }
         if (oldlenp) *oldlenp = sizeof(uint32_t);
+        s_in_sysctlbyname = NO;
         return 0;
     }
 
-    logAudit(@"SYSCTL", [NSString stringWithFormat:@"%s -> [CHƯA HOOK - LẤY TỰ NHIÊN TỪ MÁY]", name]);
+    s_in_sysctlbyname = NO;
     return orig_sysctlbyname ? orig_sysctlbyname(name, oldp, oldlenp, newp, newlen) : sysctlbyname(name, oldp, oldlenp, newp, newlen);
 }
 
 static int (*orig_uname)(struct utsname *buf);
 static int my_uname(struct utsname *buf) {
+    static __thread BOOL s_in_uname = NO;
+    if (s_in_uname) return orig_uname ? orig_uname(buf) : uname(buf);
+    s_in_uname = YES;
     int ret = orig_uname ? orig_uname(buf) : uname(buf);
     if (ret == 0 && is_tweak_active() && buf) {
         ZTSettings *settings = [ZTSettings sharedSettings];
@@ -1290,6 +1321,7 @@ static int my_uname(struct utsname *buf) {
             strlcpy(buf->machine, [settings.deviceMachine UTF8String], sizeof(buf->machine));
         }
     }
+    s_in_uname = NO;
     return ret;
 }
 
@@ -1563,30 +1595,12 @@ static int my_uname(struct utsname *buf) {
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    if ([ZTSettings sharedSettings].enableAuditLog) {
-        logAudit(@"CARRIER-CHECK", [NSString stringWithFormat:@"Zalo đọc SIM -> [%@ | MCC:%@ MNC:%@ ISO:%@]",
-                  [ZTSettings sharedSettings].carrierName ?: @"Viettel",
-                  [ZTSettings sharedSettings].carrierMCC ?: @"452",
-                  [ZTSettings sharedSettings].carrierMNC ?: @"04",
-                  [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
-    }
-    CTCarrier *origCarrier = %orig;
-    return origCarrier ?: [[CTCarrier alloc] init];
+    return %orig;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    if ([ZTSettings sharedSettings].enableAuditLog) {
-        logAudit(@"CARRIER-CHECK", [NSString stringWithFormat:@"Zalo đọc Multi-SIM -> [%@ | MCC:%@ MNC:%@ ISO:%@]",
-                  [ZTSettings sharedSettings].carrierName ?: @"Viettel",
-                  [ZTSettings sharedSettings].carrierMCC ?: @"452",
-                  [ZTSettings sharedSettings].carrierMNC ?: @"04",
-                  [ZTSettings sharedSettings].carrierCountryCode ?: @"vn"]);
-    }
-    NSDictionary *origDict = %orig;
-    if (origDict && origDict.count > 0) return origDict;
-    CTCarrier *carrier = [[CTCarrier alloc] init];
-    return @{@"0000000100000001": carrier};
+    return %orig;
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {
@@ -1702,51 +1716,8 @@ static void update_cached_locale_and_tz(void) {
 
 %end
 
-%hook UIScreen
-
-// Giữ nguyên bounds vật lý để UIWindow và cảm ứng hiển thị vừa vặn màn hình thực tế, không bị vỡ bố cục
-- (CGRect)bounds {
-    return %orig;
-}
-
-- (CGRect)nativeBounds {
-    if (!is_tweak_active()) {
-        return %orig;
-    }
-    CGFloat w = [ZTSettings sharedSettings].screenWidth;
-    CGFloat h = [ZTSettings sharedSettings].screenHeight;
-    CGFloat s = [ZTSettings sharedSettings].screenScale;
-    if (w > 0 && h > 0 && s > 0) {
-        CGRect orig = %orig;
-        CGFloat pw = w * s;
-        CGFloat ph = h * s;
-        if (orig.size.width > orig.size.height) {
-            return CGRectMake(0, 0, MAX(pw, ph), MIN(pw, ph));
-        }
-        return CGRectMake(0, 0, MIN(pw, ph), MAX(pw, ph));
-    }
-    return %orig;
-}
-
-- (CGFloat)scale {
-    if (!is_tweak_active()) {
-        return %orig;
-    }
-    CGFloat s = [ZTSettings sharedSettings].screenScale;
-    if (s > 0) return s;
-    return %orig;
-}
-
-- (CGFloat)nativeScale {
-    if (!is_tweak_active()) {
-        return %orig;
-    }
-    CGFloat s = [ZTSettings sharedSettings].screenScale;
-    if (s > 0) return s;
-    return %orig;
-}
-
-%end
+// Bảo toàn 100% thuộc tính hiển thị vật lý của UIScreen (bounds, nativeBounds, scale) để UIKit & Metal
+// render chuẩn xác, không bị lỗi buffer mismatch. Thông số màn hình fake được cung cấp qua MGCopyAnswer & Headers.
 
 // Đồng bộ Uptime với kern.boottime tuyệt đối
 %hook NSProcessInfo
@@ -1917,8 +1888,8 @@ static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringR
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
-            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, (__bridge CFStringRef)safeAppID) : NULL;
+            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
+            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, currentApp) : NULL;
         }
     }
     return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, applicationID) : NULL;
@@ -1929,8 +1900,8 @@ static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
-            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, (__bridge CFStringRef)safeAppID);
+            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
+            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, currentApp);
             return;
         }
     }
@@ -1942,8 +1913,8 @@ static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
         if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            NSString *safeAppID = [NSString stringWithFormat:@"com.sonhu.zaloclone.%@", appID];
-            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize((__bridge CFStringRef)safeAppID) : true;
+            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
+            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(currentApp) : true;
         }
     }
     return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(applicationID) : true;
@@ -2305,55 +2276,54 @@ static int my_openat(int fd, const char *path, int oflag, ...) {
 // ==========================================
 static CFTypeRef (*orig_MGCopyAnswer)(CFStringRef property) = NULL;
 static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
-    if (!property || CFGetTypeID(property) != CFStringGetTypeID() || !is_tweak_active()) {
+    static __thread BOOL s_in_mg = NO;
+    if (s_in_mg || !property || CFGetTypeID(property) != CFStringGetTypeID() || !is_tweak_active()) {
         return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
     }
+    s_in_mg = YES;
+
     NSString *prop = (__bridge NSString *)property;
     ZTSettings *settings = [ZTSettings sharedSettings];
 
-    // Ghi nhận radar toàn bộ truy vấn MobileGestalt phần cứng của Zalo
-    logAudit(@"DETECTION-RADAR", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer('%@')", prop]);
-
-    if (YES) {
-        if ([prop isEqualToString:@"SerialNumber"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"SerialNumber -> [ĐÃ FAKE] %@", settings.spoofedSerial]);
-            return settings.spoofedSerial ? (__bridge_retained CFTypeRef)[settings.spoofedSerial copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"UniqueDeviceID"]) {
-            NSString *udid = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"UniqueDeviceID -> [ĐÃ FAKE] %@", udid]);
-            return (__bridge_retained CFTypeRef)[udid copy];
-        }
-        if ([prop isEqualToString:@"WifiAddress"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"WifiAddress -> [ĐÃ FAKE] %@", settings.spoofedWifiMAC]);
-            return settings.spoofedWifiMAC ? (__bridge_retained CFTypeRef)[settings.spoofedWifiMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"BluetoothAddress"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"BluetoothAddress -> [ĐÃ FAKE] %@", settings.spoofedBluetoothMAC]);
-            return settings.spoofedBluetoothMAC ? (__bridge_retained CFTypeRef)[settings.spoofedBluetoothMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"UserAssignedDeviceName"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"UserAssignedDeviceName -> [ĐÃ FAKE] %@", settings.deviceName]);
-            return settings.deviceName ? (__bridge_retained CFTypeRef)[settings.deviceName copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"ProductType"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"ProductType -> [ĐÃ FAKE] %@", settings.deviceMachine]);
-            return settings.deviceMachine ? (__bridge_retained CFTypeRef)[settings.deviceMachine copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"ProductVersion"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"ProductVersion -> [ĐÃ FAKE] %@", settings.systemVersion]);
-            return settings.systemVersion ? (__bridge_retained CFTypeRef)[settings.systemVersion copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"BuildVersion"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"BuildVersion -> [ĐÃ FAKE] %@", settings.kernOsVersion]);
-            return settings.kernOsVersion ? (__bridge_retained CFTypeRef)[settings.kernOsVersion copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
-        if ([prop isEqualToString:@"HWModelStr"] || [prop isEqualToString:@"HardwarePlatform"]) {
-            logAudit(@"MGCopyAnswer", [NSString stringWithFormat:@"%@ -> [ĐÃ FAKE] %@", prop, settings.deviceModel]);
-            return settings.deviceModel ? (__bridge_retained CFTypeRef)[settings.deviceModel copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
-        }
+    if ([prop isEqualToString:@"SerialNumber"]) {
+        s_in_mg = NO;
+        return settings.spoofedSerial ? (__bridge_retained CFTypeRef)[settings.spoofedSerial copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"UniqueDeviceID"]) {
+        NSString *udid = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
+        s_in_mg = NO;
+        return (__bridge_retained CFTypeRef)[udid copy];
+    }
+    if ([prop isEqualToString:@"WifiAddress"]) {
+        s_in_mg = NO;
+        return settings.spoofedWifiMAC ? (__bridge_retained CFTypeRef)[settings.spoofedWifiMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"BluetoothAddress"]) {
+        s_in_mg = NO;
+        return settings.spoofedBluetoothMAC ? (__bridge_retained CFTypeRef)[settings.spoofedBluetoothMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"UserAssignedDeviceName"]) {
+        s_in_mg = NO;
+        return settings.deviceName ? (__bridge_retained CFTypeRef)[settings.deviceName copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"ProductType"]) {
+        s_in_mg = NO;
+        return settings.deviceMachine ? (__bridge_retained CFTypeRef)[settings.deviceMachine copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"ProductVersion"]) {
+        s_in_mg = NO;
+        return settings.systemVersion ? (__bridge_retained CFTypeRef)[settings.systemVersion copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"BuildVersion"]) {
+        s_in_mg = NO;
+        return settings.kernOsVersion ? (__bridge_retained CFTypeRef)[settings.kernOsVersion copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"HWModelStr"] || [prop isEqualToString:@"HardwarePlatform"]) {
+        s_in_mg = NO;
+        return settings.deviceModel ? (__bridge_retained CFTypeRef)[settings.deviceModel copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
     }
 
+    s_in_mg = NO;
     return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
 }
 

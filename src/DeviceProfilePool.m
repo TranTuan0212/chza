@@ -226,16 +226,18 @@ static NSString *detect_real_system_machine(void) {
         }
     }
 
-    // Nếu không khớp trực tiếp theo tên machine, dò theo kích thước màn hình vật lý
+    // Nếu không khớp trực tiếp theo tên machine, dò theo kích thước màn hình vật lý (chỉ khi UIApplication đã khởi chạy)
     if (matchedBaseSpec == NULL) {
-        CGRect scrBounds = [UIScreen mainScreen].bounds;
-        CGFloat scrScale = [UIScreen mainScreen].scale;
-        for (size_t i = 0; i < specCount; i++) {
-            if (fabs(kAppleDeviceSpecs[i].width - scrBounds.size.width) < 1.0 &&
-                fabs(kAppleDeviceSpecs[i].height - scrBounds.size.height) < 1.0 &&
-                fabs(kAppleDeviceSpecs[i].scale - scrScale) < 0.1) {
-                matchedBaseSpec = &kAppleDeviceSpecs[i];
-                break;
+        if ([NSThread isMainThread] && [UIApplication sharedApplication] != nil) {
+            CGRect scrBounds = [UIScreen mainScreen].bounds;
+            CGFloat scrScale = [UIScreen mainScreen].scale;
+            for (size_t i = 0; i < specCount; i++) {
+                if (fabs(kAppleDeviceSpecs[i].width - scrBounds.size.width) < 1.0 &&
+                    fabs(kAppleDeviceSpecs[i].height - scrBounds.size.height) < 1.0 &&
+                    fabs(kAppleDeviceSpecs[i].scale - scrScale) < 0.1) {
+                    matchedBaseSpec = &kAppleDeviceSpecs[i];
+                    break;
+                }
             }
         }
     }
