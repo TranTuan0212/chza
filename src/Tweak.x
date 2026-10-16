@@ -1653,22 +1653,27 @@ static void update_cached_locale_and_tz(void) {
 
 + (NSLocale *)currentLocale {
     if (!is_tweak_active() || s_in_locale_hook) return %orig;
+    s_in_locale_hook = YES;
     if (!s_cachedLocale) {
         update_cached_locale_and_tz();
     }
+    NSLocale *res = s_cachedLocale ?: %orig;
     if ([ZTSettings sharedSettings].enableAuditLog) {
         logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc NSLocale currentLocale -> [TRẢ VỀ %@]", [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN"]);
     }
-    return s_cachedLocale ?: %orig;
+    s_in_locale_hook = NO;
+    return res;
 }
 
 + (NSArray<NSString *> *)preferredLanguages {
-    if (!is_tweak_active()) return %orig;
+    if (!is_tweak_active() || s_in_locale_hook) return %orig;
+    s_in_locale_hook = YES;
     NSArray *langs = [ZTSettings sharedSettings].preferredLanguages;
     NSArray *res = (langs && langs.count > 0) ? langs : @[@"vi-VN", @"en-VN"];
     if ([ZTSettings sharedSettings].enableAuditLog) {
         logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc preferredLanguages -> [TRẢ VỀ %@]", [res componentsJoinedByString:@", "]]);
     }
+    s_in_locale_hook = NO;
     return res;
 }
 
@@ -1678,68 +1683,80 @@ static void update_cached_locale_and_tz(void) {
 
 + (NSTimeZone *)systemTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    NSTimeZone *result = nil;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        NSTimeZone *realTZ = %orig;
+        result = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
         }
-        return realTZ;
+    } else {
+        if (!s_cachedTimeZone) {
+            update_cached_locale_and_tz();
+        }
+        result = s_cachedTimeZone ?: %orig;
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
+            int hours = (int)(gmtSec / 3600);
+            int mins = abs((int)((gmtSec % 3600) / 60));
+            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
+        }
     }
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    if ([ZTSettings sharedSettings].enableAuditLog) {
-        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
-        int hours = (int)(gmtSec / 3600);
-        int mins = abs((int)((gmtSec % 3600) / 60));
-        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-    }
-    return s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return result;
 }
 
 + (NSTimeZone *)localTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    NSTimeZone *result = nil;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        NSTimeZone *realTZ = %orig;
+        result = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
         }
-        return realTZ;
+    } else {
+        if (!s_cachedTimeZone) {
+            update_cached_locale_and_tz();
+        }
+        result = s_cachedTimeZone ?: %orig;
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
+            int hours = (int)(gmtSec / 3600);
+            int mins = abs((int)((gmtSec % 3600) / 60));
+            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
+        }
     }
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    if ([ZTSettings sharedSettings].enableAuditLog) {
-        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
-        int hours = (int)(gmtSec / 3600);
-        int mins = abs((int)((gmtSec % 3600) / 60));
-        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-    }
-    return s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return result;
 }
 
 + (NSTimeZone *)defaultTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    NSTimeZone *result = nil;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        NSTimeZone *realTZ = %orig;
+        result = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
         }
-        return realTZ;
+    } else {
+        if (!s_cachedTimeZone) {
+            update_cached_locale_and_tz();
+        }
+        result = s_cachedTimeZone ?: %orig;
+        if ([ZTSettings sharedSettings].enableAuditLog) {
+            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
+            int hours = (int)(gmtSec / 3600);
+            int mins = abs((int)((gmtSec % 3600) / 60));
+            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
+        }
     }
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    if ([ZTSettings sharedSettings].enableAuditLog) {
-        NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
-        int hours = (int)(gmtSec / 3600);
-        int mins = abs((int)((gmtSec % 3600) / 60));
-        NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-        logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-    }
-    return s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return result;
 }
 
 %end
