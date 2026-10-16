@@ -475,7 +475,7 @@ static void purge_entire_sandbox_safely(void) {
     // Process Pool lúc này là nguyên nhân hàng đầu gây crash SIGABRT/SIGSEGV!
     // Việc xóa Clipboard và WebKit DataStore đã được thực hiện an toàn ngay lúc bấm Deep Wipe trong app.
 
-    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites & standardUserDefaults
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.com.vng.zalo",
@@ -490,10 +490,20 @@ static void purge_entire_sandbox_safely(void) {
         if (ud && ud != [NSUserDefaults standardUserDefaults]) {
             NSDictionary *d = [ud dictionaryRepresentation];
             for (NSString *k in d.allKeys) {
+                if ([k.lowercaseString containsString:@"zalotweak"]) continue;
                 [ud removeObjectForKey:k];
             }
             [ud synchronize];
         }
+    }
+    NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
+    if (stdUD) {
+        NSDictionary *stdDict = [stdUD dictionaryRepresentation];
+        for (NSString *k in stdDict.allKeys) {
+            if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
+            [stdUD removeObjectForKey:k];
+        }
+        [stdUD synchronize];
     }
 
     // 5. Xả sạch cache mạng bộ nhớ RAM
@@ -1597,12 +1607,25 @@ static int my_uname(struct utsname *buf) {
 
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    return %orig;
+    CTCarrier *origCarrier = %orig;
+    if (origCarrier) return origCarrier;
+    static CTCarrier *s_fallbackCarrier = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        s_fallbackCarrier = [[%c(CTCarrier) alloc] init];
+    });
+    return s_fallbackCarrier;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    return %orig;
+    NSDictionary *origDict = %orig;
+    if (origDict && origDict.count > 0) return origDict;
+    CTCarrier *carrier = [self subscriberCellularProvider];
+    if (carrier) {
+        return @{@"0000000100000001": carrier};
+    }
+    return origDict;
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {
@@ -2678,6 +2701,20 @@ static BOOL s_in_bundle_hook = NO;
 }
 
 - (id)objectForKey:(NSString *)defaultName {
+    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+        if ([defaultName isEqualToString:@"kTimeDeviceChangedKey"] ||
+            [defaultName isEqualToString:@"kOldSessionKey"] ||
+            [defaultName isEqualToString:@"kOldLoginIndentifierKey"]) {
+            id currentUid = %orig(@"kSessionUid");
+            if (!currentUid) {
+                [self removeObjectForKey:defaultName];
+                if ([ZTSettings sharedSettings].enableAuditLog) {
+                    logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> (nil) [ĐÃ CHẶN DẤU VẾT ĐỔI MÁY CŨ]", defaultName]);
+                }
+                return nil;
+            }
+        }
+    }
     id val = %orig;
     if ([ZTSettings sharedSettings].enableAuditLog && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         NSString *lower = [defaultName lowercaseString];
@@ -3057,6 +3094,16 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 extModified = YES;
             }
         }
+        if (settings.carrierName.length > 0) {
+            NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+            if ([newExt containsString:@"\"mno\":\"\""]) {
+                [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
+                extModified = YES;
+            } else if ([newExt containsString:@"\"mno\":\"--\""]) {
+                [newExt replaceOccurrencesOfString:@"\"mno\":\"--\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
+                extModified = YES;
+            }
+        }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
             modified = YES;
@@ -3128,7 +3175,16 @@ static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, N
             id mccObj = dataDict[@"mcc_mnc"];
             NSMutableDictionary *mccDict = [mccObj isKindOfClass:[NSDictionary class]] ? [mccObj mutableCopy] : [NSMutableDictionary dictionary];
 
-            NSString *oldMnc = mccDict[@"mnc"] ?: @"";
+            NSString *oldMcc = [NSString stringWithFormat:@"%@", mccDict[@"mcc"] ?: @""];
+            NSString *oldMnc = [NSString stringWithFormat:@"%@", mccDict[@"mnc"] ?: @""];
+
+            // Nếu đang Tắt Fake Múi Giờ và GeoIP máy chủ báo khác quốc gia với SIM Profile,
+            // giữ nguyên phản hồi gốc của Server để tránh xung đột cờ quốc gia giữa Client và Server!
+            if (oldMcc.length > 0 && ![oldMcc isEqualToString:s.carrierMCC] && !s.enableFakeTimeZone) {
+                logAudit(@"MNC-NORMALIZER", [NSString stringWithFormat:@"⚠️ GeoIP Server trả về MCC '%@' (MNC '%@') khác SIM Profile %@/%@ -> [GIỮ NGUYÊN GEOIP SERVER ĐỂ TRÁNH LỆCH PHA]", oldMcc, oldMnc, s.carrierMCC, s.carrierMNC]);
+                return origRespData;
+            }
+
             mccDict[@"mcc"] = s.carrierMCC;
             mccDict[@"mnc"] = s.carrierMNC;
 

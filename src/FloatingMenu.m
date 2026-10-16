@@ -1634,6 +1634,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         if (ud) {
             NSDictionary *dict = [ud dictionaryRepresentation];
             for (NSString *k in dict.allKeys) {
+                if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
                 [ud removeObjectForKey:k];
             }
             [ud synchronize];
@@ -1642,6 +1643,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
     NSDictionary *stdDict = [stdUD dictionaryRepresentation];
     for (NSString *k in stdDict.allKeys) {
+        if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
         [stdUD removeObjectForKey:k];
     }
     [stdUD synchronize];
@@ -1761,11 +1763,15 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     if (top) {
         [top presentViewController:doneAlert animated:YES completion:^{
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                exit(0);
+                [stdUD removeObjectForKey:@"kTimeDeviceChangedKey"];
+                [stdUD removeObjectForKey:@"kOldSessionKey"];
+                [stdUD removeObjectForKey:@"kOldLoginIndentifierKey"];
+                [stdUD synchronize];
+                _exit(0);
             });
         }];
     } else {
-        exit(0);
+        _exit(0);
     }
 }
 
