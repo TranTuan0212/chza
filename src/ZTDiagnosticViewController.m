@@ -1454,22 +1454,23 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         if (self.info.ipTimezone.length > 0) {
             update_zt_synced_timezone_pref(self.info.ipTimezone);
         }
-        Class menuCls = NSClassFromString(@"ZTMenuManager");
-        if (menuCls && [menuCls respondsToSelector:@selector(sharedManager)]) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            Class menuCls = NSClassFromString(@"ZTMenuManager");
+            if (menuCls && [menuCls respondsToSelector:@selector(sharedManager)]) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            id mgr = [menuCls performSelector:@selector(sharedManager)];
-            SEL wipeSel = NSSelectorFromString(@"performInAppDeepWipeWithRegion:preferredCarrier:currentIP:");
-            if (mgr && [mgr respondsToSelector:wipeSel]) {
-                typedef void (*WipeFunc)(id, SEL, NSString *, NSString *, NSString *);
-                WipeFunc fn = (WipeFunc)[mgr methodForSelector:wipeSel];
-                NSString *targetRegion = (self.info.phoneCountryCode.length > 0) ? self.info.phoneCountryCode : @"VN";
-                fn(mgr, wipeSel, targetRegion, carrier, self.info.currentIP);
-                return;
-            }
+                id mgr = [menuCls performSelector:@selector(sharedManager)];
+                SEL wipeSel = NSSelectorFromString(@"performInAppDeepWipeWithRegion:preferredCarrier:currentIP:");
+                if (mgr && [mgr respondsToSelector:wipeSel]) {
+                    typedef void (*WipeFunc)(id, SEL, NSString *, NSString *, NSString *);
+                    WipeFunc fn = (WipeFunc)[mgr methodForSelector:wipeSel];
+                    NSString *targetRegion = (self.info.phoneCountryCode.length > 0) ? self.info.phoneCountryCode : @"VN";
+                    fn(mgr, wipeSel, targetRegion, carrier, self.info.currentIP);
+                    return;
+                }
 #pragma clang diagnostic pop
-        }
-        [self dismissViewControllerAnimated:YES completion:nil];
+            }
+        });
     }]];
 
     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];

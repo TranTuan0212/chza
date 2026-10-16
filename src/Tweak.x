@@ -463,16 +463,12 @@ static void purge_entire_sandbox_safely(void) {
     // 1. Quét sạch toàn bộ Keychain của Zalo để không bị dính vết vi phạm của tài khoản cũ
     purge_all_zalo_keychain_safely();
 
-    // 2. Xóa sạch Pasteboard / Clipboard
-    @try {
-        [UIPasteboard generalPasteboard].items = @[];
-        [UIPasteboard generalPasteboard].string = @"";
-    } @catch (__unused NSException *e) {}
+    // 2. Tuyệt đối KHÔNG gọi [UIPasteboard generalPasteboard] và purge_webkit_data_safely() tại %ctor!
+    // Vì %ctor chạy trước hàm main() và UIApplicationMain(), việc gọi UIKit UI Server hoặc WebKit
+    // Process Pool lúc này là nguyên nhân hàng đầu gây crash SIGABRT/SIGSEGV!
+    // Việc xóa Clipboard và WebKit DataStore đã được thực hiện an toàn ngay lúc bấm Deep Wipe trong app.
 
-    // 3. Xóa sạch WebKit DataStore (Cookies, LocalStorage, IndexedDB)
-    purge_webkit_data_safely();
-
-    // 4. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.com.vng.zalo",
@@ -484,7 +480,7 @@ static void purge_entire_sandbox_safely(void) {
     ];
     for (NSString *suite in suitesToPurge) {
         NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:suite];
-        if (ud) {
+        if (ud && ud != [NSUserDefaults standardUserDefaults]) {
             NSDictionary *d = [ud dictionaryRepresentation];
             for (NSString *k in d.allKeys) {
                 [ud removeObjectForKey:k];
@@ -3483,7 +3479,9 @@ static void swizzle_session_delegate_class(Class cls) {
         }
         if ([ZTSettings sharedSettings].justGeneratedColdBoot) {
             [ZTSettings sharedSettings].justGeneratedColdBoot = NO;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIViewController *presenter = ZTGetTopViewController() ?: self;
+                if (!presenter || !presenter.view.window) return;
                 ZTSettings *s = [ZTSettings sharedSettings];
                 NSString *rDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
                                   ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
@@ -3501,7 +3499,7 @@ static void swizzle_session_delegate_class(Class cls) {
                                                                                 message:welcomeMsg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
                 [wAlert addAction:[UIAlertAction actionWithTitle:@"Bắt Đầu Sử Dụng" style:UIAlertActionStyleDefault handler:nil]];
-                [self presentViewController:wAlert animated:YES completion:nil];
+                [presenter presentViewController:wAlert animated:YES completion:nil];
             });
         }
     }

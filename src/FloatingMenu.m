@@ -1237,11 +1237,14 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
 
         NSString *rawPhone = [phoneField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if (rawPhone.length == 0) {
-            UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Chưa Nhập SĐT"
-                                                                         message:@"Vui lòng nhập hoặc dán số điện thoại để hệ thống nhận diện nhà mạng thích hợp!"
-                                                                  preferredStyle:UIAlertControllerStyleAlert];
-            [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-            [top presentViewController:err animated:YES completion:nil];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                UIViewController *p = get_top_view_controller() ?: top;
+                UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Chưa Nhập SĐT"
+                                                                             message:@"Vui lòng nhập hoặc dán số điện thoại để hệ thống nhận diện nhà mạng thích hợp!"
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+                [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+                [p presentViewController:err animated:YES completion:nil];
+            });
             return;
         }
 
@@ -1250,33 +1253,36 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
 
         NSString *proxyText = [proxyField.text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 
-        UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"⚡ Đang Phân Tích & Quét IP..."
-                                                                       message:[NSString stringWithFormat:@"• SĐT: %@ (%@)\n• Nhận diện SIM: %@ (%@-%@)\n• Đang kiểm tra IP & múi giờ...", rawPhone, countryName, carrierName, mcc, mnc]
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [top presentViewController:loading animated:YES completion:^{
-            fetch_geoip_for_auto_wipe(proxyText, ^(NSString *queryIP, NSString *timezone, NSString *countryCode) {
-                NSString *effectiveTZ = timezone.length > 0 ? timezone : defaultTZ;
-                BOOL isVN = [targetRegion isEqualToString:@"VN"] || [countryCode isEqualToString:@"VN"];
-                BOOL isPL = [targetRegion isEqualToString:@"PL"] || [countryCode isEqualToString:@"PL"];
-                if (isVN) {
-                    effectiveTZ = @"Asia/Ho_Chi_Minh";
-                } else if (isPL) {
-                    effectiveTZ = @"Europe/Warsaw";
-                }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *p = get_top_view_controller() ?: top;
+            UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"⚡ Đang Phân Tích & Quét IP..."
+                                                                           message:[NSString stringWithFormat:@"• SĐT: %@ (%@)\n• Nhận diện SIM: %@ (%@-%@)\n• Đang kiểm tra IP & múi giờ...", rawPhone, countryName, carrierName, mcc, mnc]
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+            [p presentViewController:loading animated:YES completion:^{
+                fetch_geoip_for_auto_wipe(proxyText, ^(NSString *queryIP, NSString *timezone, NSString *countryCode) {
+                    NSString *effectiveTZ = timezone.length > 0 ? timezone : defaultTZ;
+                    BOOL isVN = [targetRegion isEqualToString:@"VN"] || [countryCode isEqualToString:@"VN"];
+                    BOOL isPL = [targetRegion isEqualToString:@"PL"] || [countryCode isEqualToString:@"PL"];
+                    if (isVN) {
+                        effectiveTZ = @"Asia/Ho_Chi_Minh";
+                    } else if (isPL) {
+                        effectiveTZ = @"Europe/Warsaw";
+                    }
 
-                ZTSettings *settings = [ZTSettings sharedSettings];
-                settings.timeZoneName = effectiveTZ;
-                settings.localeIdentifier = isPL ? @"pl_PL" : (isVN ? @"vi_VN" : @"en_US");
-                settings.preferredLanguages = isPL ? @[@"pl-PL", @"en-PL"] : (isVN ? @[@"vi-VN", @"en-VN"] : @[@"en-US"]);
-                settings.preferredCarrier = carrierName;
-                settings.regionMode = targetRegion;
-                [settings saveSettings];
+                    ZTSettings *settings = [ZTSettings sharedSettings];
+                    settings.timeZoneName = effectiveTZ;
+                    settings.localeIdentifier = isPL ? @"pl_PL" : (isVN ? @"vi_VN" : @"en_US");
+                    settings.preferredLanguages = isPL ? @[@"pl-PL", @"en-PL"] : (isVN ? @[@"vi-VN", @"en-VN"] : @[@"en-US"]);
+                    settings.preferredCarrier = carrierName;
+                    settings.regionMode = targetRegion;
+                    [settings saveSettings];
 
-                [loading dismissViewControllerAnimated:YES completion:^{
-                    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:carrierName currentIP:queryIP];
-                }];
-            });
-        }];
+                    [loading dismissViewControllerAnimated:YES completion:^{
+                        [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:carrierName currentIP:queryIP];
+                    }];
+                });
+            }];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
@@ -1296,56 +1302,95 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🎯 [AUTO] Wipe Tự Động Theo SĐT & Múi Giờ IP" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        [self promptSmartAutoWipeFrom:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self promptSmartAutoWipeFrom:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Viettel (452-04)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Viettel" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Viettel" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM VinaPhone (452-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VINAPHONE" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VINAPHONE" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM MobiFone (452-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Việt Nam)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:nil from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:nil from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Du Học Sinh Mỹ (+1) [T-Mobile / AT&T]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"US_STUDENT" preferredCarrier:nil from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"US_STUDENT" preferredCarrier:nil from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇺🇸 Wipe + Hoa Kỳ (+1) [Verizon / AT&T / T-Mobile]" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"US" preferredCarrier:nil from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"US" preferredCarrier:nil from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Play (260-06)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Play" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Play" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Orange (260-03)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Orange" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Orange" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM Plus (260-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Plus" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"Plus" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🇵🇱 Wipe + Cắm SIM T-Mobile (260-02)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"T-Mobile" from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:@"T-Mobile" from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🎲 Wipe + SIM Ngẫu Nhiên (Ba Lan)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:nil from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:@"PL" preferredCarrier:nil from:targetTop];
+        });
     }]];
 
     NSString *keepTitle = [NSString stringWithFormat:@"🔄 Giữ Vùng Hiện Tại (%@)", s.regionMode ?: @"VN"];
     [alert addAction:[UIAlertAction actionWithTitle:keepTitle style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
-        [self startInAppDeepWipeSequenceWithRegion:s.regionMode ?: @"VN" preferredCarrier:s.preferredCarrier from:top];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIViewController *targetTop = get_top_view_controller() ?: top;
+            [self startInAppDeepWipeSequenceWithRegion:s.regionMode ?: @"VN" preferredCarrier:s.preferredCarrier from:targetTop];
+        });
     }]];
 
     [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
@@ -1687,6 +1732,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.carrierName = s.carrierName ?: @"Viettel";
     info.carrierMCC = s.carrierMCC ?: @"452";
     info.carrierMNC = s.carrierMNC ?: @"04";
+    info.carrierCountryCode = s.carrierCountryCode ?: @"vn";
 
     // Đo dung lượng Sandbox
     NSString *home = NSHomeDirectory();
