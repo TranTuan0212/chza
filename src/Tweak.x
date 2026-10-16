@@ -1678,10 +1678,11 @@ static void update_cached_locale_and_tz(void) {
 + (NSTimeZone *)systemTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        NSTimeZone *realTZ = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
         }
-        return %orig;
+        return realTZ;
     }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
@@ -1699,10 +1700,11 @@ static void update_cached_locale_and_tz(void) {
 + (NSTimeZone *)localTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        NSTimeZone *realTZ = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
         }
-        return %orig;
+        return realTZ;
     }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
@@ -1720,10 +1722,11 @@ static void update_cached_locale_and_tz(void) {
 + (NSTimeZone *)defaultTimeZone {
     if (!is_tweak_active() || s_in_tz_hook) return %orig;
     if (![ZTSettings sharedSettings].enableFakeTimeZone) {
+        NSTimeZone *realTZ = %orig;
         if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", %orig.name]);
+            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", realTZ.name]);
         }
-        return %orig;
+        return realTZ;
     }
     if (!s_cachedTimeZone) {
         update_cached_locale_and_tz();
