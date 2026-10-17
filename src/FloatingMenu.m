@@ -516,6 +516,7 @@ UIViewController *ZTGetTopViewController(void) {
 
     ZTSettings *settings = [ZTSettings sharedSettings];
     BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
+    NSString *licStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
     NSString *deviceDisplay;
     if (settings.hasConfiguredProfile) {

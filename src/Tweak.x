@@ -2004,19 +2004,6 @@ static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime
     if (outAwakeUptime) *outAwakeUptime = awakeUptime;
 }
 
-static uint64_t seconds_to_mach_ticks(double seconds) {
-    static mach_timebase_info_data_t s_timebase = {0, 0};
-    if (s_timebase.denom == 0) {
-        mach_timebase_info(&s_timebase);
-        if (s_timebase.denom == 0) {
-            s_timebase.numer = 125;
-            s_timebase.denom = 3;
-        }
-    }
-    double ns = seconds * 1000000000.0;
-    return (uint64_t)((ns * (double)s_timebase.denom) / (double)s_timebase.numer);
-}
-
 static int (*orig_clock_gettime)(clockid_t clk_id, struct timespec *tp);
 static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
     int ret = orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
