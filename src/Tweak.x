@@ -2376,18 +2376,8 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
         return ret;
     }
 
-    void *c0 = __builtin_return_address(0);
-    void *c1 = __builtin_return_address(1);
-    if (!is_zalo_or_tweak_caller(c0, c1)) {
-        return 0;
-    }
-    if (is_system_caller(c0, c1)) {
-        return 0;
-    }
-
-    logAudit(@"VPN-CHECK", @"Zalo quét getifaddrs tìm giao diện VPN -> [ĐÃ ẨN TUN/UTUN]");
-
     struct ifaddrs *curr = *ifap;
+    BOOL modified = NO;
     while (curr) {
         if (curr->ifa_name) {
             const char *n = curr->ifa_name;
@@ -2399,9 +2389,13 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
                 // Không ngắt con trỏ danh sách liên kết để bảo vệ bộ nhớ malloc của freeifaddrs
                 // Thay vào đó, đổi tên interface thành pdp_ip để Zalo không nhận diện ra VPN
                 curr->ifa_name = "pdp_ip9";
+                modified = YES;
             }
         }
         curr = curr->ifa_next;
+    }
+    if (modified) {
+        logAudit(@"VPN-CHECK", @"Quét danh sách getifaddrs -> [ĐÃ ẨN SẠCH TUN/UTUN -> pdp_ip9]");
     }
     return 0;
 }

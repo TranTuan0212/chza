@@ -3,6 +3,7 @@
 #import <sys/sysctl.h>
 #import <sys/stat.h>
 #import <dlfcn.h>
+#import <ifaddrs.h>
 
 static NSString *get_zt_prefs_filepath(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
@@ -633,6 +634,23 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     self.info.keychainCleanPassed = (kcCount == 0);
     self.info.webkitCleanPassed = check_webkit_is_clean();
     self.info.clipboardCleanPassed = check_clipboard_is_clean();
+
+    struct ifaddrs *interfaces = NULL;
+    BOOL utunFound = NO;
+    if (getifaddrs(&interfaces) == 0) {
+        struct ifaddrs *temp = interfaces;
+        while (temp) {
+            if (temp->ifa_name) {
+                if (strncmp(temp->ifa_name, "utun", 4) == 0 || strncmp(temp->ifa_name, "ppp", 3) == 0) {
+                    utunFound = YES;
+                }
+            }
+            temp = temp->ifa_next;
+        }
+        freeifaddrs(interfaces);
+    }
+    self.info.ifaddrsCleanPassed = !utunFound;
+    self.info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip/en0 bảo toàn ✅";
 
     typedef NSString* (*zt_get_did_fn_t)(void);
     zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
