@@ -28,6 +28,7 @@
 #import <dlfcn.h>
 #import <time.h>
 #import <mach/mach_time.h>
+#import <pthread.h>
 #import "fishhook.h"
 #import "Config.h"
 #import "SecurityManager.h"
