@@ -205,6 +205,22 @@ static inline BOOL is_zalo_or_tweak_caller(const void *addr0, const void *addr1)
     return NO;
 }
 
+static inline BOOL is_network_system_caller(const void *addr) {
+    if (!addr) return NO;
+    Dl_info info;
+    if (raw_dladdr(addr, &info) && info.dli_fname) {
+        const char *f = info.dli_fname;
+        if (strstr(f, "CFNetwork") != NULL ||
+            strstr(f, "libnetwork") != NULL ||
+            strstr(f, "Network.framework") != NULL ||
+            strstr(f, "CoreTelephony") != NULL ||
+            strstr(f, "SystemConfiguration") != NULL) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static inline BOOL is_system_caller(const void *addr0, const void *addr1) {
     const void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
@@ -2312,14 +2328,16 @@ static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
         CFBundleRef mb = CFBundleGetMainBundle();
         if (bundle == mb || !bundle) {
             void *caller0 = __builtin_return_address(0);
-            void *caller1 = __builtin_return_address(1);
-            if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
-                if (!s_logged_c_bid) {
-                    s_logged_c_bid = YES;
-                    logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetIdentifier() -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+            if (!is_network_system_caller(caller0)) {
+                void *caller1 = __builtin_return_address(1);
+                if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                    if (!s_logged_c_bid) {
+                        s_logged_c_bid = YES;
+                        logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetIdentifier() -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+                    }
+                    s_in_c_bundle_hook = NO;
+                    return CFSTR("vn.com.vng.zingalo");
                 }
-                s_in_c_bundle_hook = NO;
-                return CFSTR("vn.com.vng.zingalo");
             }
         }
     }
@@ -2339,14 +2357,16 @@ static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFS
             CFBundleRef mb = CFBundleGetMainBundle();
             if (bundle == mb || !bundle) {
                 void *caller0 = __builtin_return_address(0);
-                void *caller1 = __builtin_return_address(1);
-                if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
-                    if (!s_logged_c_info_bid) {
-                        s_logged_c_info_bid = YES;
-                        logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetValueForInfoDictionaryKey(CFBundleIdentifier) -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+                if (!is_network_system_caller(caller0)) {
+                    void *caller1 = __builtin_return_address(1);
+                    if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                        if (!s_logged_c_info_bid) {
+                            s_logged_c_info_bid = YES;
+                            logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetValueForInfoDictionaryKey(CFBundleIdentifier) -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
+                        }
+                        s_in_c_bundle_hook = NO;
+                        return CFSTR("vn.com.vng.zingalo");
                     }
-                    s_in_c_bundle_hook = NO;
-                    return CFSTR("vn.com.vng.zingalo");
                 }
             }
         }
@@ -3092,10 +3112,12 @@ static BOOL s_in_bundle_hook = NO;
         // BẢO VỆ TẦNG MẠNG & KERNEL IOS:
         // CHỈ BẺ HƯỚNG KHI VÀ CHỈ KHI CALLER THỰC SỰ LÀ CODE CỦA ZALO APP
         void *caller0 = __builtin_return_address(0);
-        void *caller1 = __builtin_return_address(1);
-        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
-            logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-            return @"vn.com.vng.zingalo";
+        if (!is_network_system_caller(caller0)) {
+            void *caller1 = __builtin_return_address(1);
+            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                return @"vn.com.vng.zingalo";
+            }
         }
 
         return %orig;
@@ -3114,10 +3136,12 @@ static BOOL s_in_bundle_hook = NO;
             return %orig;
         }
         void *caller0 = __builtin_return_address(0);
-        void *caller1 = __builtin_return_address(1);
-        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
-            logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-            return @"vn.com.vng.zingalo";
+        if (!is_network_system_caller(caller0)) {
+            void *caller1 = __builtin_return_address(1);
+            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                return @"vn.com.vng.zingalo";
+            }
         }
         return %orig;
     }
@@ -3136,11 +3160,13 @@ static BOOL s_in_bundle_hook = NO;
             return dict;
         }
         void *caller0 = __builtin_return_address(0);
-        void *caller1 = __builtin_return_address(1);
-        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
-            NSMutableDictionary *mDict = [dict mutableCopy];
-            mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
-            return mDict;
+        if (!is_network_system_caller(caller0)) {
+            void *caller1 = __builtin_return_address(1);
+            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                NSMutableDictionary *mDict = [dict mutableCopy];
+                mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
+                return mDict;
+            }
         }
         return dict;
     }
