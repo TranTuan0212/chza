@@ -2275,25 +2275,25 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 3. Thông Tin SIM & Nhà Mạng (MNO)
     info.mnoCleanPassed = (info.mnoCarrierName.length > 0 && ![info.mnoCarrierName isEqualToString:@""]);
-    info.mnoStatusText = [NSString stringWithFormat:@"%@ (%@-%@) | extInfo khớp 100%% ✅", info.mnoCarrierName ?: @"Viettel", info.carrierMCC, info.carrierMNC];
+    info.mnoStatusText = [NSString stringWithFormat:@"%@ (%@-%@) | extInfo khớp", info.mnoCarrierName ?: @"Viettel", info.carrierMCC, info.carrierMNC];
 
     // 4. Đồng Bộ 3 Tầng Đồng Hồ Uptime
-    info.uptime3ClockDetails = [NSString stringWithFormat:@"Cont: %.1fh | Awake: %.1fh | Monotonic: Đồng bộ ✅", expectedContUp / 3600.0, liveAwakeUptime / 3600.0];
+    info.uptime3ClockDetails = [NSString stringWithFormat:@"Cont: %.1fh | Awake: %.1fh | Mono: Đồng bộ", expectedContUp / 3600.0, liveAwakeUptime / 3600.0];
 
     // 5. Bộ 3 Timestamp device_id
-    info.deviceIdDetails = [NSString stringWithFormat:@"%@ (ms1!=ms2!=ms3, nano tự nhiên) ✅", info.hardwareDeviceId];
+    info.deviceIdDetails = [NSString stringWithFormat:@"%@ (ms1!=ms2!=ms3)", info.hardwareDeviceId];
 
     // 6. Phần Cứng & Hệ Điều Hành
-    info.hardwareSummaryText = [NSString stringWithFormat:@"%@ | iOS %@ (%@) | Specs Chuẩn Apple ✅", info.deviceMachine ?: @"iPhone", info.iosVersion ?: @"", s.kernOsVersion ?: @"Build OK"];
+    info.hardwareSummaryText = [NSString stringWithFormat:@"%@ | iOS %@ (%@)", info.deviceMachine ?: @"iPhone", info.iosVersion ?: @"", s.kernOsVersion ?: @"Build OK"];
 
     // 7. Ẩn Dấu Vết Jailbreak & PAC Stripping
     info.pacStripPassed = YES;
-    info.pacStripText = @"arm64 / arm64e PAC Stripped (xpaci & ptrauth_strip) ✅";
+    info.pacStripText = @"arm64 / arm64e PAC Stripped";
     info.jbHidePassed = YES;
-    info.jbHideText = @"/var/jb, cydia_substitute trả về ENOENT ✅";
+    info.jbHideText = @"/var/jb, cydia_substitute trả về ENOENT";
 
     // 8. Push Tokens
-    info.pushTokensSummary = @"APNs (32B) & VoIP (32B) Sẵn Sàng ✅";
+    info.pushTokensSummary = @"APNs (32B) & VoIP (32B)";
 
     // Đánh giá Tổng quan
     info.preflightAllPassed = (info.socketCellularPassed &&

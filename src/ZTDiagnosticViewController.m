@@ -816,51 +816,127 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
     UILabel *keyLbl = [[UILabel alloc] init];
     keyLbl.translatesAutoresizingMaskIntoConstraints = NO;
-    keyLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+    keyLbl.font = [UIFont systemFontOfSize:12.5 weight:UIFontWeightMedium];
     if (@available(iOS 13.0, *)) {
         keyLbl.textColor = [UIColor secondaryLabelColor];
     } else {
         keyLbl.textColor = [UIColor darkGrayColor];
     }
     keyLbl.text = key;
+    [keyLbl setContentHuggingPriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
+    [keyLbl setContentCompressionResistancePriority:UILayoutPriorityDefaultHigh forAxis:UILayoutConstraintAxisHorizontal];
     [row addSubview:keyLbl];
+
+    UIView *badgeContainer = nil;
+    if (badge && badge.length > 0) {
+        badgeContainer = [[UIView alloc] init];
+        badgeContainer.translatesAutoresizingMaskIntoConstraints = NO;
+        badgeContainer.layer.cornerRadius = 6.0;
+        badgeContainer.layer.masksToBounds = YES;
+
+        UILabel *badgeLbl = [[UILabel alloc] init];
+        badgeLbl.translatesAutoresizingMaskIntoConstraints = NO;
+        badgeLbl.font = [UIFont systemFontOfSize:10.5 weight:UIFontWeightBold];
+        badgeLbl.textAlignment = NSTextAlignmentCenter;
+        badgeLbl.text = badge;
+
+        BOOL isError = isWarning || [badge containsString:@"❌"] || [badge containsString:@"🔴"] ||
+                       [badge containsString:@"TRÙNG"] || [badge containsString:@"Trùng"] ||
+                       [badge containsString:@"Lệch"] || [badge containsString:@"Lỗi"] ||
+                       [badge containsString:@"Rỗng"] || [badge containsString:@"Lộ"];
+
+        BOOL isCaution = !isError && ([badge containsString:@"⚠️"] || [badge containsString:@"🟡"] ||
+                                      [badge containsString:@"Chờ"] || [badge containsString:@"Máy Thật"] ||
+                                      [badge containsString:@"Chưa"]);
+
+        BOOL isSuccess = !isError && !isCaution && ([badge containsString:@"✅"] || [badge containsString:@"🟢"] ||
+                                                    [badge containsString:@"Mới"] || [badge containsString:@"Sạch"] ||
+                                                    [badge containsString:@"Khớp"] || [badge containsString:@"Chuẩn"] ||
+                                                    [badge containsString:@"Đồng Bộ"] || [badge containsString:@"Hợp lệ"] ||
+                                                    [badge containsString:@"Sẵn Sàng"] || [badge containsString:@"An Toàn"] ||
+                                                    [badge containsString:@"200 OK"] || [badge containsString:@"Ổn Định"]);
+
+        if (isError) {
+            badgeContainer.backgroundColor = [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:0.16];
+            badgeContainer.layer.borderWidth = 0.5;
+            badgeContainer.layer.borderColor = [UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:0.45].CGColor;
+            badgeLbl.textColor = [UIColor colorWithRed:0.86 green:0.14 blue:0.14 alpha:1.0];
+        } else if (isSuccess) {
+            badgeContainer.backgroundColor = [UIColor colorWithRed:0.18 green:0.8 blue:0.35 alpha:0.16];
+            badgeContainer.layer.borderWidth = 0.5;
+            badgeContainer.layer.borderColor = [UIColor colorWithRed:0.18 green:0.8 blue:0.35 alpha:0.45].CGColor;
+            badgeLbl.textColor = [UIColor colorWithRed:0.06 green:0.58 blue:0.2 alpha:1.0];
+        } else if (isCaution) {
+            badgeContainer.backgroundColor = [UIColor colorWithRed:1.0 green:0.65 blue:0.0 alpha:0.18];
+            badgeContainer.layer.borderWidth = 0.5;
+            badgeContainer.layer.borderColor = [UIColor colorWithRed:1.0 green:0.65 blue:0.0 alpha:0.45].CGColor;
+            badgeLbl.textColor = [UIColor colorWithRed:0.82 green:0.46 blue:0.0 alpha:1.0];
+        } else {
+            badgeContainer.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.12];
+            badgeContainer.layer.borderWidth = 0.5;
+            badgeContainer.layer.borderColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.35].CGColor;
+            badgeLbl.textColor = [UIColor colorWithRed:0.0 green:0.45 blue:0.9 alpha:1.0];
+        }
+
+        [badgeContainer addSubview:badgeLbl];
+        [NSLayoutConstraint activateConstraints:@[
+            [badgeLbl.topAnchor constraintEqualToAnchor:badgeContainer.topAnchor constant:3.0],
+            [badgeLbl.bottomAnchor constraintEqualToAnchor:badgeContainer.bottomAnchor constant:-3.0],
+            [badgeLbl.leadingAnchor constraintEqualToAnchor:badgeContainer.leadingAnchor constant:6.0],
+            [badgeLbl.trailingAnchor constraintEqualToAnchor:badgeContainer.trailingAnchor constant:-6.0]
+        ]];
+
+        [badgeContainer setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [badgeContainer setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+        [row addSubview:badgeContainer];
+    }
 
     UILabel *valLbl = [[UILabel alloc] init];
     valLbl.translatesAutoresizingMaskIntoConstraints = NO;
-    valLbl.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    valLbl.font = [UIFont systemFontOfSize:11.5 weight:UIFontWeightRegular];
     valLbl.textAlignment = NSTextAlignmentRight;
-
-    if (isWarning) {
-        valLbl.textColor = [UIColor colorWithRed:0.9 green:0.25 blue:0.2 alpha:1.0];
-    } else if (badge != nil && ([badge containsString:@"✅"] || [badge containsString:@"Mới"] || [badge containsString:@"Sạch"] || [badge containsString:@"Khớp"])) {
-        valLbl.textColor = [UIColor colorWithRed:0.1 green:0.65 blue:0.3 alpha:1.0];
+    valLbl.lineBreakMode = NSLineBreakByTruncatingTail;
+    if (@available(iOS 13.0, *)) {
+        valLbl.textColor = [UIColor labelColor];
     } else {
-        if (@available(iOS 13.0, *)) {
-            valLbl.textColor = [UIColor labelColor];
-        } else {
-            valLbl.textColor = [UIColor blackColor];
-        }
+        valLbl.textColor = [UIColor blackColor];
     }
-
-    if (badge.length > 0) {
-        valLbl.text = [NSString stringWithFormat:@"%@ (%@)", value ?: @"", badge];
-    } else {
-        valLbl.text = value ?: @"";
-    }
+    valLbl.text = value ?: @"";
+    [valLbl setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [valLbl setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
     [row addSubview:valLbl];
 
-    [NSLayoutConstraint activateConstraints:@[
-        [keyLbl.topAnchor constraintEqualToAnchor:row.topAnchor],
+    NSMutableArray *constraints = [NSMutableArray array];
+    [constraints addObjectsFromArray:@[
         [keyLbl.leadingAnchor constraintEqualToAnchor:row.leadingAnchor],
-        [keyLbl.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
-        [keyLbl.widthAnchor constraintLessThanOrEqualToAnchor:row.widthAnchor multiplier:0.45],
+        [keyLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+        [keyLbl.topAnchor constraintGreaterThanOrEqualToAnchor:row.topAnchor constant:3],
+        [keyLbl.bottomAnchor constraintLessThanOrEqualToAnchor:row.bottomAnchor constant:-3],
+        [keyLbl.widthAnchor constraintLessThanOrEqualToAnchor:row.widthAnchor multiplier:0.42],
 
-        [valLbl.topAnchor constraintEqualToAnchor:row.topAnchor],
-        [valLbl.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
-        [valLbl.bottomAnchor constraintEqualToAnchor:row.bottomAnchor],
-        [valLbl.leadingAnchor constraintGreaterThanOrEqualToAnchor:keyLbl.trailingAnchor constant:8]
+        [row.heightAnchor constraintGreaterThanOrEqualToConstant:26]
     ]];
 
+    if (badgeContainer) {
+        [constraints addObjectsFromArray:@[
+            [badgeContainer.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
+            [badgeContainer.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+            [badgeContainer.topAnchor constraintGreaterThanOrEqualToAnchor:row.topAnchor constant:2],
+            [badgeContainer.bottomAnchor constraintLessThanOrEqualToAnchor:row.bottomAnchor constant:-2],
+
+            [valLbl.leadingAnchor constraintGreaterThanOrEqualToAnchor:keyLbl.trailingAnchor constant:6],
+            [valLbl.trailingAnchor constraintEqualToAnchor:badgeContainer.leadingAnchor constant:-6],
+            [valLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor]
+        ]];
+    } else {
+        [constraints addObjectsFromArray:@[
+            [valLbl.leadingAnchor constraintGreaterThanOrEqualToAnchor:keyLbl.trailingAnchor constant:6],
+            [valLbl.trailingAnchor constraintEqualToAnchor:row.trailingAnchor],
+            [valLbl.centerYAnchor constraintEqualToAnchor:row.centerYAnchor]
+        ]];
+    }
+
+    [NSLayoutConstraint activateConstraints:constraints];
     return row;
 }
 
@@ -1583,11 +1659,11 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:self.info.countryApiPassed ? @"200 OK ✅" : @"Lỗi ❌"
                                           isWarning:!self.info.countryApiPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Interface Mạng utun/pdp"
-                                              value:self.info.ifaddrsCleanText ?: @"utun/ppp ẩn sạch ✅"
+                                              value:self.info.ifaddrsCleanText ?: @"utun/ppp ẩn sạch"
                                               badge:self.info.ifaddrsCleanPassed ? @"Ẩn Sạch ✅" : @"Lộ Interface ⚠️"
                                           isWarning:!self.info.ifaddrsCleanPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Bundle ID Tầng Mạng"
-                                              value:self.info.networkBundleIdText ?: @"Bảo vệ Kernel NECP ✅"
+                                              value:self.info.networkBundleIdText ?: @"Bảo vệ Kernel NECP"
                                               badge:@"Kernel OK ✅"
                                           isWarning:NO]];
 
@@ -1599,18 +1675,18 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:hasDid ? @"Đã Cấp 🟢" : (self.info.dIdReceivedPassed ? @"Sẵn Sàng ⚡" : @"Chưa có ⚠️")
                                           isWarning:!self.info.dIdReceivedPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Zalo Global ID (zagid)"
-                                              value:self.info.zagidStatusText ?: @"Khớp phiên định danh ✅"
+                                              value:self.info.zagidStatusText ?: @"Khớp phiên định danh"
                                               badge:self.info.zagidReceivedPassed ? @"Hợp lệ ✅" : @"Chưa có ⚠️"
                                           isWarning:!self.info.zagidReceivedPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Hàng Đợi Lỗi qos-talk"
-                                              value:self.info.qosStatusText ?: @"0 lỗi gửi về qos-talk ✅"
+                                              value:self.info.qosStatusText ?: @"0 lỗi gửi về qos-talk"
                                               badge:self.info.qosPassed ? @"Ổn Định 100% ✅" : @"Phát hiện lỗi ⚠️"
                                           isWarning:!self.info.qosPassed]];
 
     // 3. Thông Tin SIM & Nhà Mạng (MNO)
     [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"3. THÔNG TIN SIM & NHÀ MẠNG (MNO)"]];
     [inner addArrangedSubview:[self createRowWithKey:@"Nhà Mạng (MNO)"
-                                              value:self.info.mnoStatusText ?: @"Viettel (452-04) ✅"
+                                              value:self.info.mnoStatusText ?: @"Viettel (452-04)"
                                               badge:self.info.mnoCleanPassed ? @"Không rỗng ✅" : @"Rỗng MNO ❌"
                                           isWarning:!self.info.mnoCleanPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Header extInfo & Body"
@@ -2109,7 +2185,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     BOOL configured = self.info.hasConfiguredProfile;
     NSString *deviceFull = [NSString stringWithFormat:@"%@ (iOS %@)", self.info.deviceName ?: @"iPhone", self.info.iosVersion ?: @""];
-    [inner addArrangedSubview:[self createRowWithKey:@"Dòng Máy" value:deviceFull badge:configured ? nil : @"Máy Thật ⚠️" isWarning:!configured]];
+    [inner addArrangedSubview:[self createRowWithKey:@"Dòng Máy" value:deviceFull badge:configured ? @"Khớp Profile 🟢" : @"Máy Thật ⚠️" isWarning:!configured]];
 
     NSString *machineBadge = configured ? @"Khớp Profile ✅" : @"Máy Thật ⚠️";
     [inner addArrangedSubview:[self createRowWithKey:@"Machine (hw.machine)"
@@ -2184,7 +2260,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     [inner addArrangedSubview:[self createRowWithKey:@"Hồ Sơ Vùng (Region)"
                                               value:self.info.regionName ?: @"Việt Nam (+84)"
-                                              badge:nil
+                                              badge:@"Khu Vực 🌐"
                                           isWarning:NO]];
 
     NSString *tzDisplay = [NSString stringWithFormat:@"%@ (%@)", self.info.timeZoneName ?: @"Asia/Ho_Chi_Minh", self.info.timeZoneGMT ?: @"GMT+7"];
@@ -2332,9 +2408,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"🛡️" title:@"BẢN QUYỀN TWEAK"]];
 
     BOOL isWarning = !self.info.isLicensed;
+    NSString *licBadge = self.info.isLicensed ? @"Đã Kích Hoạt 🟢" : @"Chưa Kích Hoạt 🔴";
     [inner addArrangedSubview:[self createRowWithKey:@"Trạng Thái & Hạn Dùng"
                                               value:self.info.licenseStatusText ?: @"Chưa kích hoạt"
-                                              badge:nil
+                                              badge:licBadge
                                           isWarning:isWarning]];
 
     return card;
