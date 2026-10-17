@@ -26,6 +26,8 @@
 #import <stdarg.h>
 #import <stdio.h>
 #import <dlfcn.h>
+#import <time.h>
+#import <mach/mach_time.h>
 #import "fishhook.h"
 #import "Config.h"
 #import "SecurityManager.h"
@@ -33,6 +35,11 @@
 #import "DeviceProfilePool.h"
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
+static int (*orig_dladdr)(const void *addr, Dl_info *info) = NULL;
+
+static inline int raw_dladdr(const void *addr, Dl_info *info) {
+    return orig_dladdr ? orig_dladdr(addr, info) : dladdr(addr, info);
+}
 
 static inline void universal_hook_c_function(const char *name, void *symbol, void *replace, void **result) {
     if (dynamic_MSHookFunction && symbol) {
@@ -109,7 +116,7 @@ static inline BOOL is_device_jailbroken(void) {
     }
 
     Dl_info info;
-    if (dladdr((const void *)is_device_jailbroken, &info) && info.dli_fname) {
+    if (raw_dladdr((const void *)is_device_jailbroken, &info) && info.dli_fname) {
         NSString *dpath = [NSString stringWithUTF8String:info.dli_fname];
         NSString *appBundle = [[NSBundle mainBundle] bundlePath];
         if (appBundle && ![dpath hasPrefix:appBundle]) {
@@ -119,16 +126,26 @@ static inline BOOL is_device_jailbroken(void) {
     return NO;
 }
 
+static inline BOOL is_zalo_caller(void *addr0) {
+    if (!addr0) return NO;
+    Dl_info info0;
+    if (raw_dladdr(addr0, &info0) && info0.dli_fname) {
+        const char *f0 = info0.dli_fname;
+        if ((strstr(f0, ".app/") != NULL || strstr(f0, "/Zalo.app") != NULL) &&
+            strstr(f0, "Zalotweak") == NULL &&
+            strstr(f0, "roothide") == NULL &&
+            strstr(f0, "Substrate") == NULL &&
+            strstr(f0, "ellekit") == NULL) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
     // 1. Nếu trực tiếp người gọi (addr0) là code nằm trong Zalo.app (chính app Zalo gọi):
-    if (addr0) {
-        Dl_info info0;
-        if (dladdr(addr0, &info0) && info0.dli_fname) {
-            const char *f0 = info0.dli_fname;
-            if ((strstr(f0, ".app/") != NULL || strstr(f0, "/Zalo.app") != NULL) && strstr(f0, "Zalotweak") == NULL) {
-                return NO; // Chắc chắn là code thực thi của Zalo, không phải hệ thống
-            }
-        }
+    if (is_zalo_caller(addr0)) {
+        return NO; // Chắc chắn là code thực thi của Zalo, không phải hệ thống
     }
 
     // 2. Kiểm tra nếu là các framework/daemon hệ thống của Apple
@@ -136,7 +153,7 @@ static inline BOOL is_system_caller(void *addr0, void *addr1) {
     for (int i = 0; i < 2; i++) {
         if (!addrs[i]) continue;
         Dl_info info;
-        if (dladdr(addrs[i], &info) && info.dli_fname) {
+        if (raw_dladdr(addrs[i], &info) && info.dli_fname) {
             const char *fname = info.dli_fname;
             if (strstr(fname, "/System/Library/") != NULL ||
                 strstr(fname, "/usr/lib/") != NULL ||
@@ -432,6 +449,8 @@ static void purge_all_zalo_keychain_safely(void) {
     NSArray *groups = @[
         @"",
         @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
         @"vn.com.vng.zingalo"
@@ -488,6 +507,8 @@ static void purge_entire_sandbox_safely(void) {
     // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
         @"com.zing.zalo.chatMigrateStore",
@@ -539,7 +560,13 @@ static void purge_entire_sandbox_safely(void) {
     }
 
     // 8. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
-    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    NSArray *groupNames = @[
+        @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo"
+    ];
     for (NSString *grp in groupNames) {
         NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
         if (groupURL) {
@@ -1103,7 +1130,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
         if (name[1] == KERN_BOOTTIME && settings.bootTimeSec > 0) {
             struct timeval bt;
             bt.tv_sec = (time_t)settings.bootTimeSec;
-            bt.tv_usec = 345678;
+            bt.tv_usec = (suseconds_t)((settings.bootTimeSec * 2654435761ULL) % 1000000ULL);
             if (oldp && oldlenp && *oldlenp >= sizeof(struct timeval)) {
                 memcpy(oldp, &bt, sizeof(struct timeval));
             }
@@ -1622,34 +1649,52 @@ static CTCarrier *get_fake_carrier(void) {
 
 %hook CTTelephonyNetworkInfo
 
+- (NSString *)dataServiceIdentifier {
+    if (!is_tweak_active()) return %orig;
+    return @"0000000100000001";
+}
+
 - (CTCarrier *)subscriberCellularProvider {
     if (!is_tweak_active()) return %orig;
-    CTCarrier *c = %orig;
-    return c ?: get_fake_carrier();
+    CTCarrier *c = get_fake_carrier();
+    return c ?: %orig;
 }
 
 - (NSDictionary *)serviceSubscriberCellularProviders {
     if (!is_tweak_active()) return %orig;
-    NSDictionary *origDict = %orig;
-    if (origDict && origDict.count > 0) return origDict;
     CTCarrier *c = get_fake_carrier();
     if (c) {
+        NSDictionary *origDict = %orig;
+        if (origDict && origDict.count > 0) {
+            NSMutableDictionary *mut = [NSMutableDictionary dictionaryWithCapacity:origDict.count + 1];
+            for (id key in origDict.allKeys) {
+                mut[key] = c;
+            }
+            mut[@"0000000100000001"] = c;
+            return mut;
+        }
         return @{@"0000000100000001": c};
     }
-    return origDict;
+    return %orig;
 }
 
 - (NSDictionary *)serviceCurrentRadioAccessTechnology {
     if (!is_tweak_active()) return %orig;
     NSDictionary *origDict = %orig;
-    if (origDict && origDict.count > 0) return origDict;
+    if (origDict && origDict.count > 0) {
+        NSMutableDictionary *mut = [NSMutableDictionary dictionaryWithCapacity:origDict.count + 1];
+        for (id key in origDict.allKeys) {
+            mut[key] = @"CTRadioAccessTechnologyLTE";
+        }
+        mut[@"0000000100000001"] = @"CTRadioAccessTechnologyLTE";
+        return mut;
+    }
     return @{@"0000000100000001": @"CTRadioAccessTechnologyLTE"};
 }
 
 - (NSString *)currentRadioAccessTechnology {
     if (!is_tweak_active()) return %orig;
-    NSString *origTech = %orig;
-    return origTech ?: @"CTRadioAccessTechnologyLTE";
+    return @"CTRadioAccessTechnologyLTE";
 }
 
 %end
@@ -1797,24 +1842,95 @@ static void update_cached_locale_and_tz(void) {
 // Bảo toàn 100% thuộc tính hiển thị vật lý của UIScreen (bounds, nativeBounds, scale) để UIKit & Metal
 // render chuẩn xác, không bị lỗi buffer mismatch. Thông số màn hình fake được cung cấp qua MGCopyAnswer & Headers.
 
-// Đồng bộ Uptime với kern.boottime tuyệt đối
+// Đồng bộ Uptime (kUpTickCPULastAuthen, kUpTickContCPULastAuthen, kLastBootTimeAuthen) với kern.boottime tuyệt đối
+static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime) {
+    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    double now = (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.0);
+    if (bootSec == 0 || now <= (double)bootSec + 60.0) {
+        bootSec = (uint64_t)(now - 43200.0);
+    }
+    double bootSubsec = (double)((bootSec * 2654435761ULL) % 1000000ULL) / 1000000.0;
+    double contUptime = now - ((double)bootSec + bootSubsec);
+    if (contUptime < 60.0) contUptime = 43200.0;
+
+    // Thời gian máy sleep tĩnh cố định theo hồ sơ (để kUpTickCPULastAuthen < kUpTickContCPULastAuthen tự nhiên như iPhone thật,
+    // đồng thời cả 2 cùng tăng 1:1 theo thời gian thực khi app đang mở)
+    double deterministicSleep = (double)(600ULL + ((bootSec * 2246822519ULL) % 5400ULL)) +
+                                ((double)((bootSec * 3266489917ULL) % 1000000ULL) / 1000000.0);
+    if (deterministicSleep >= contUptime * 0.45) {
+        deterministicSleep = contUptime * 0.18;
+    }
+    double awakeUptime = contUptime - deterministicSleep;
+    if (outContUptime) *outContUptime = contUptime;
+    if (outAwakeUptime) *outAwakeUptime = awakeUptime;
+}
+
+static uint64_t seconds_to_mach_ticks(double seconds) {
+    static mach_timebase_info_data_t s_timebase = {0, 0};
+    if (s_timebase.denom == 0) {
+        mach_timebase_info(&s_timebase);
+        if (s_timebase.denom == 0) {
+            s_timebase.numer = 125;
+            s_timebase.denom = 3;
+        }
+    }
+    double ns = seconds * 1000000000.0;
+    return (uint64_t)((ns * (double)s_timebase.denom) / (double)s_timebase.numer);
+}
+
+static int (*orig_clock_gettime)(clockid_t clk_id, struct timespec *tp);
+static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
+    int ret = orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
+    if (ret == 0 && tp && is_tweak_active()) {
+        if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_MONOTONIC_RAW ||
+            clk_id == CLOCK_UPTIME_RAW || clk_id == 8 /* CLOCK_MONOTONIC_RAW_APPROX */ || clk_id == 9 /* CLOCK_UPTIME_RAW_APPROX */) {
+            if (is_zalo_caller(__builtin_return_address(0))) {
+                double contUp = 0, awakeUp = 0;
+                get_consistent_uptimes(&contUp, &awakeUp);
+                double target = (clk_id == CLOCK_UPTIME_RAW || clk_id == 9) ? awakeUp : contUp;
+                time_t sec = (time_t)floor(target);
+                long nsec = (long)((target - (double)sec) * 1000000000.0);
+                if (nsec < 0) nsec = 0;
+                if (nsec >= 1000000000L) nsec = 999999999L;
+                tp->tv_sec = sec;
+                tp->tv_nsec = nsec;
+            }
+        }
+    }
+    return ret;
+}
+
+static uint64_t (*orig_mach_continuous_time)(void);
+static uint64_t my_mach_continuous_time(void) {
+    if (is_tweak_active() && is_zalo_caller(__builtin_return_address(0))) {
+        double contUp = 0;
+        get_consistent_uptimes(&contUp, NULL);
+        return seconds_to_mach_ticks(contUp);
+    }
+    return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
+}
+
+static uint64_t (*orig_mach_absolute_time)(void);
+static uint64_t my_mach_absolute_time(void) {
+    if (is_tweak_active() && is_zalo_caller(__builtin_return_address(0))) {
+        double awakeUp = 0;
+        get_consistent_uptimes(NULL, &awakeUp);
+        return seconds_to_mach_ticks(awakeUp);
+    }
+    return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+}
+
 %hook NSProcessInfo
 
 - (NSTimeInterval)systemUptime {
     if (!is_tweak_active()) {
         return %orig;
     }
-    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
-    if (bootSec > 0) {
-        NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-        if (now > (NSTimeInterval)bootSec) {
-            NSTimeInterval baseUptime = now - (NSTimeInterval)bootSec;
-            NSTimeInterval origVal = %orig;
-            NSTimeInterval subsecond = origVal - floor(origVal);
-            return floor(baseUptime) + subsecond;
-        }
-    }
-    return %orig;
+    double awakeUp = 0;
+    get_consistent_uptimes(NULL, &awakeUp);
+    return awakeUp;
 }
 
 %end
@@ -1961,13 +2077,22 @@ static BOOL is_jailbreak_path(const char *path) {
 
 
 // Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
+static inline BOOL is_zalo_group_or_bundle_cfprefs_id(NSString *appID) {
+    if (!appID) return NO;
+    return ([appID containsString:@"group.vn.com.vng.zingalo"] ||
+            [appID containsString:@"group.noti.vn.com.vng.zingalo"] ||
+            [appID containsString:@"group.zsettings"] ||
+            [appID containsString:@"group.com.vng.zalo"] ||
+            [appID containsString:@"group.com.zing.zalo"] ||
+            [appID isEqualToString:@"vn.com.vng.zingalo"]);
+}
+
 static CFPropertyListRef (*orig_CFPreferencesCopyAppValue)(CFStringRef key, CFStringRef applicationID);
 static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID) {
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
-        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
-            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, currentApp) : NULL;
+        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
+            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, kCFPreferencesCurrentApplication) : NULL;
         }
     }
     return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, applicationID) : NULL;
@@ -1977,9 +2102,8 @@ static void (*orig_CFPreferencesSetAppValue)(CFStringRef key, CFPropertyListRef 
 static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID) {
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
-        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
-            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, currentApp);
+        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
+            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, kCFPreferencesCurrentApplication);
             return;
         }
     }
@@ -1990,9 +2114,8 @@ static Boolean (*orig_CFPreferencesAppSynchronize)(CFStringRef applicationID);
 static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
     if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
         NSString *appID = (__bridge NSString *)applicationID;
-        if ([appID containsString:@"group.vn.com.vng.zingalo"] || [appID containsString:@"group.zsettings"]) {
-            CFStringRef currentApp = (__bridge CFStringRef)([[NSBundle mainBundle] bundleIdentifier] ?: @"com.sonhu.zaloclone");
-            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(currentApp) : true;
+        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
+            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication) : true;
         }
     }
     return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(applicationID) : true;
@@ -2205,6 +2328,19 @@ static inline BOOL should_fake_stat_path(const char *path) {
     return NO;
 }
 
+static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t base_birth) {
+    if (!path || base_birth == 0) return base_birth;
+    uint64_t delta_m = 180ULL + ((base_birth * 104729ULL) % 1800ULL) + (base_birth % 59ULL);
+    uint64_t delta_c = delta_m + 30ULL + ((base_birth * 1299709ULL) % 600ULL) + ((base_birth / 13ULL) % 43ULL);
+    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/tmp") != NULL || strstr(path, "/Preferences") != NULL) {
+        return base_birth + delta_c;
+    }
+    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers/") != NULL || strstr(path, "/Application/") != NULL) {
+        return base_birth + delta_m;
+    }
+    return base_birth;
+}
+
 static inline void get_consistent_stat_times(uint64_t fake_birth, time_t *out_mtime, time_t *out_ctime, long *out_nsec_b, long *out_nsec_m, long *out_nsec_c) {
     uint64_t delta_m = 180ULL + ((fake_birth * 104729ULL) % 1800ULL) + (fake_birth % 59ULL);
     uint64_t delta_c = delta_m + 30ULL + ((fake_birth * 1299709ULL) % 600ULL) + ((fake_birth / 13ULL) % 43ULL);
@@ -2215,10 +2351,11 @@ static inline void get_consistent_stat_times(uint64_t fake_birth, time_t *out_mt
     if (out_nsec_c) *out_nsec_c = (long)((((fake_birth + delta_c) * 3266489917ULL) % 850ULL + 100ULL) * 1000000L);
 }
 
-static inline void fake_stat_timespec(struct stat *buf, uint64_t btime) {
+static inline void fake_stat_timespec_for_path(const char *path, struct stat *buf, uint64_t btime) {
     if (!buf) return;
     ZTSettings *s = [ZTSettings sharedSettings];
-    time_t fake_birth = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
+    uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+    time_t fake_birth = (time_t)get_effective_birth_for_path(path, base_birth);
     time_t fake_mtime = 0, fake_ctime = 0;
     long nsec_birth = 0, nsec_mtime = 0, nsec_ctime = 0;
     get_consistent_stat_times((uint64_t)fake_birth, &fake_mtime, &fake_ctime, &nsec_birth, &nsec_mtime, &nsec_ctime);
@@ -2241,7 +2378,7 @@ static int my_stat(const char *path, struct stat *buf) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
-                fake_stat_timespec(buf, btime);
+                fake_stat_timespec_for_path(path, buf, btime);
             }
         }
     }
@@ -2260,7 +2397,7 @@ static int my_lstat(const char *path, struct stat *buf) {
         if (should_fake_stat_path(path)) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
-                fake_stat_timespec(buf, btime);
+                fake_stat_timespec_for_path(path, buf, btime);
             }
         }
     }
@@ -2276,7 +2413,7 @@ static int my_fstat(int fd, struct stat *buf) {
 
     int ret = orig_fstat ? orig_fstat(fd, buf) : fstat(fd, buf);
     if (ret == 0 && is_tweak_active() && buf) {
-        char filePath[1024];
+        char filePath[1024] = {0};
         BOOL shouldFake = NO;
         if (fcntl(fd, F_GETPATH, filePath) >= 0) {
             shouldFake = should_fake_stat_path(filePath);
@@ -2286,7 +2423,7 @@ static int my_fstat(int fd, struct stat *buf) {
         if (shouldFake) {
             uint64_t btime = [ZTSettings sharedSettings].bootTimeSec;
             if (btime > 0 || [ZTSettings sharedSettings].birthTimeSec > 0) {
-                fake_stat_timespec(buf, btime);
+                fake_stat_timespec_for_path(filePath[0] ? filePath : NULL, buf, btime);
             }
         }
     }
@@ -2300,33 +2437,78 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
     if (ret == 0 && is_tweak_active() && attrList && attrBuf && path) {
         if (should_fake_stat_path(path) && (attrList->commonattr & (ATTR_CMN_CRTIME | ATTR_CMN_MODTIME | ATTR_CMN_CHGTIME | ATTR_CMN_ACCTIME))) {
             ZTSettings *s = [ZTSettings sharedSettings];
-            uint64_t birthSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+            uint64_t baseBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+            uint64_t effBirth = get_effective_birth_for_path(path, baseBirth);
+            time_t fake_mtime = 0, fake_ctime = 0;
+            long nsec_b = 0, nsec_m = 0, nsec_c = 0;
+            get_consistent_stat_times(effBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
             size_t words = attrBufSize / sizeof(uint64_t);
             uint64_t *ptr64 = (uint64_t *)attrBuf;
             int timeIdx = 0;
             for (size_t i = 0; i < words; ++i) {
                 if (ptr64[i] >= 1400000000ULL && ptr64[i] <= 2500000000ULL) {
                     if (timeIdx == 0) {
-                        ptr64[i] = birthSec;
+                        ptr64[i] = effBirth;
                         if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = ((birthSec * 2654435761ULL) % 900ULL + 100ULL) * 1000000ULL;
+                            ptr64[i + 1] = (uint64_t)nsec_b;
                         }
                     } else if (timeIdx == 1) {
-                        uint64_t mSec = birthSec + 1435ULL;
-                        ptr64[i] = mSec;
+                        ptr64[i] = (uint64_t)fake_mtime;
                         if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = ((mSec * 2246822519ULL) % 900ULL + 100ULL) * 1000000ULL;
+                            ptr64[i + 1] = (uint64_t)nsec_m;
                         }
                     } else {
-                        uint64_t cSec = birthSec + 1555ULL;
-                        ptr64[i] = cSec;
+                        ptr64[i] = (uint64_t)fake_ctime;
                         if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = ((cSec * 3266489917ULL) % 900ULL + 100ULL) * 1000000ULL;
+                            ptr64[i + 1] = (uint64_t)nsec_c;
                         }
                     }
                     timeIdx++;
                 }
             }
+        }
+    }
+    return ret;
+}
+
+// ==========================================
+// HOOK DYLD & DLADDR: Ẩn hoàn toàn Zalotweak.dylib, Substrate, ElleKit, RootHide khỏi bộ quét của Zalo
+// ==========================================
+static BOOL is_sensitive_image_path_cstr(const char *name) {
+    if (!name) return NO;
+    return (strstr(name, "Zalotweak") != NULL ||
+            strstr(name, "zalotweak") != NULL ||
+            strstr(name, "Substrate") != NULL ||
+            strstr(name, "substitute") != NULL ||
+            strstr(name, "ellekit") != NULL ||
+            strstr(name, "roothide") != NULL ||
+            strstr(name, "jbroot") != NULL ||
+            strstr(name, "TweakInject") != NULL ||
+            strstr(name, "MobileSafety") != NULL);
+}
+
+static const char *(*orig_dyld_get_image_name)(uint32_t image_index);
+static const char *my_dyld_get_image_name(uint32_t image_index) {
+    const char *name = orig_dyld_get_image_name ? orig_dyld_get_image_name(image_index) : _dyld_get_image_name(image_index);
+    if (name && is_tweak_active() && is_sensitive_image_path_cstr(name)) {
+        if (is_zalo_caller(__builtin_return_address(0))) {
+            return "/System/Library/Frameworks/Foundation.framework/Foundation";
+        }
+    }
+    return name;
+}
+
+static int my_dladdr(const void *addr, Dl_info *info) {
+    int ret = raw_dladdr(addr, info);
+    if (ret != 0 && info && is_tweak_active()) {
+        BOOL sensitiveImg = (info->dli_fname && is_sensitive_image_path_cstr(info->dli_fname));
+        BOOL sensitiveSym = (info->dli_sname && (strncmp(info->dli_sname, "ZT", 2) == 0 ||
+                                                 strncmp(info->dli_sname, "my_", 3) == 0 ||
+                                                 strncmp(info->dli_sname, "_logos_", 7) == 0));
+        if ((sensitiveImg || sensitiveSym) && is_zalo_caller(__builtin_return_address(0))) {
+            info->dli_fname = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+            info->dli_sname = NULL;
+            info->dli_saddr = NULL;
         }
     }
     return ret;
@@ -2583,9 +2765,13 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t btime = s.bootTimeSec;
             if (btime > 0 || s.birthTimeSec > 0) {
-                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
-                NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
-                NSDate *fakeModDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)(fake_ctime + 1435)];
+                uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+                uint64_t fake_birth = get_effective_birth_for_path([path UTF8String], base_birth);
+                time_t fake_mtime = 0, fake_ctime = 0;
+                long nsec_b = 0, nsec_m = 0, nsec_c = 0;
+                get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
+                NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
+                NSDate *fakeModDate = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_mtime + (NSTimeInterval)nsec_m / 1000000000.0)];
                 NSMutableDictionary *m = [attrs mutableCopy];
                 m[NSFileCreationDate] = fakeDate;
                 m[NSFileModificationDate] = fakeModDate;
@@ -2636,7 +2822,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 %end
 
 // ==========================================
-// HOOK NSURL: Trả về ngày tạo file theo thời gian BootTime giả lập
+// HOOK NSURL: Trả về ngày tạo file đồng bộ chính xác tới nano-giây với stat/getattrlist
 // ==========================================
 %hook NSURL
 
@@ -2647,8 +2833,19 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t btime = s.bootTimeSec;
             if (btime > 0 || s.birthTimeSec > 0) {
-                time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
-                *value = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+                uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+                NSString *urlPath = [self isFileURL] ? [self path] : nil;
+                uint64_t fake_birth = get_effective_birth_for_path(urlPath ? [urlPath UTF8String] : NULL, base_birth);
+                time_t fake_mtime = 0, fake_ctime = 0;
+                long nsec_b = 0, nsec_m = 0, nsec_c = 0;
+                get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
+                if ([key isEqualToString:NSURLCreationDateKey]) {
+                    *value = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
+                } else if ([key isEqualToString:NSURLContentModificationDateKey]) {
+                    *value = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_mtime + (NSTimeInterval)nsec_m / 1000000000.0)];
+                } else {
+                    *value = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_ctime + (NSTimeInterval)nsec_c / 1000000000.0)];
+                }
                 return YES;
             }
         }
@@ -2662,20 +2859,24 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
         ZTSettings *s = [ZTSettings sharedSettings];
         uint64_t btime = s.bootTimeSec;
         if (btime > 0 || s.birthTimeSec > 0) {
-            time_t fake_ctime = (time_t)(s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL));
-            NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:(NSTimeInterval)fake_ctime];
+            uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+            NSString *urlPath = [self isFileURL] ? [self path] : nil;
+            uint64_t fake_birth = get_effective_birth_for_path(urlPath ? [urlPath UTF8String] : NULL, base_birth);
+            time_t fake_mtime = 0, fake_ctime = 0;
+            long nsec_b = 0, nsec_m = 0, nsec_c = 0;
+            get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
             NSMutableDictionary *m = [values mutableCopy];
             BOOL changed = NO;
             if ([keys containsObject:NSURLCreationDateKey]) {
-                m[NSURLCreationDateKey] = fakeDate;
+                m[NSURLCreationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
                 changed = YES;
             }
             if ([keys containsObject:NSURLContentModificationDateKey]) {
-                m[NSURLContentModificationDateKey] = fakeDate;
+                m[NSURLContentModificationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_mtime + (NSTimeInterval)nsec_m / 1000000000.0)];
                 changed = YES;
             }
             if ([keys containsObject:NSURLAttributeModificationDateKey]) {
-                m[NSURLAttributeModificationDateKey] = fakeDate;
+                m[NSURLAttributeModificationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_ctime + (NSTimeInterval)nsec_c / 1000000000.0)];
                 changed = YES;
             }
             if (changed) return m;
@@ -2760,6 +2961,38 @@ static BOOL s_in_bundle_hook = NO;
 
 %end
 
+static inline NSData *get_clone_fake_apns_token_data(void) {
+    NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
+    NSString *apnsSeed = [NSString stringWithFormat:@"APNS:%@", seed];
+    const char *cStr = [apnsSeed UTF8String];
+    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
+    return [NSData dataWithBytes:hash length:32];
+}
+
+static inline NSData *get_clone_fake_voip_token_data(void) {
+    NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
+    NSString *voipSeed = [NSString stringWithFormat:@"VOIP:%@", seed];
+    const char *cStr = [voipSeed UTF8String];
+    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
+    return [NSData dataWithBytes:hash length:32];
+}
+
+static inline NSString *hex_string_from_data(NSData *data) {
+    if (!data || data.length == 0) return @"";
+    const unsigned char *bytes = (const unsigned char *)data.bytes;
+    NSMutableString *hex = [NSMutableString stringWithCapacity:data.length * 2];
+    for (NSUInteger i = 0; i < data.length; i++) {
+        [hex appendFormat:@"%02x", bytes[i]];
+    }
+    return hex;
+}
+
+@interface NSObject (ZTPKPushRegistrySupport)
+- (void)pushRegistry:(id)registry didUpdatePushCredentials:(id)credentials forType:(NSString *)type;
+@end
+
 %hook NSUserDefaults
 
 - (instancetype)initWithSuiteName:(NSString *)suitename {
@@ -2812,6 +3045,15 @@ static BOOL s_in_bundle_hook = NO;
         }
     }
     id val = %orig;
+    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+        if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
+            val = hex_string_from_data(get_clone_fake_apns_token_data());
+            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp APNs Token theo Profile cho khoá '%@'", defaultName]);
+        } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
+            val = hex_string_from_data(get_clone_fake_voip_token_data());
+            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp VoIP PushKit Token theo Profile cho khoá '%@'", defaultName]);
+        }
+    }
     if ([ZTSettings sharedSettings].enableAuditLog && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         NSString *lower = [defaultName lowercaseString];
         if ([lower containsString:@"device"] ||
@@ -2830,12 +3072,134 @@ static BOOL s_in_bundle_hook = NO;
     return val;
 }
 
+- (NSString *)stringForKey:(NSString *)defaultName {
+    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+        if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
+            return hex_string_from_data(get_clone_fake_apns_token_data());
+        } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
+            return hex_string_from_data(get_clone_fake_voip_token_data());
+        }
+    }
+    return %orig;
+}
+
+%end
+
+static void deliver_clone_apns_token_to_delegate(UIApplication *app, id<UIApplicationDelegate> delegate) {
+    if (!app || !delegate || !is_tweak_active()) return;
+    SEL sel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
+    if ([delegate respondsToSelector:sel]) {
+        NSData *fakeToken = get_clone_fake_apns_token_data();
+        #pragma clang diagnostic push
+        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+        [delegate application:app didRegisterForRemoteNotificationsWithDeviceToken:fakeToken];
+        #pragma clang diagnostic pop
+        logAudit(@"PUSH-TOKEN", @"[PUSH-SPOOF] Đã nạp thành công APNs Device Token 32-byte chuẩn Profile!");
+    }
+}
+
+%hook UNUserNotificationCenter
+
+- (void)requestAuthorizationWithOptions:(NSUInteger)options completionHandler:(void (^)(BOOL granted, NSError * _Nullable error))completionHandler {
+    if (is_tweak_active() && !is_original_zalo_app()) {
+        if (completionHandler) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                completionHandler(YES, nil);
+                [[UIApplication sharedApplication] registerForRemoteNotifications];
+            });
+        }
+        return;
+    }
+    %orig;
+}
+
+%end
+
+static const void *kZTVoIPTokenAssocKey = &kZTVoIPTokenAssocKey;
+static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
+
+%hook PKPushCredentials
+
+- (NSData *)token {
+    if (is_tweak_active()) {
+        return get_clone_fake_voip_token_data();
+    }
+    NSData *orig = %orig;
+    if (orig) return orig;
+    NSData *assoc = objc_getAssociatedObject(self, kZTVoIPTokenAssocKey);
+    if (assoc) return assoc;
+    return orig;
+}
+
+- (NSString *)type {
+    NSString *orig = %orig;
+    if (orig) return orig;
+    NSString *assoc = objc_getAssociatedObject(self, kZTVoIPTypeAssocKey);
+    if (assoc) return assoc;
+    if (is_tweak_active()) {
+        return @"PKPushTypeVoIP";
+    }
+    return orig;
+}
+
+%end
+
+static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
+    if (!registry || !delegate || !is_tweak_active()) return;
+    SEL sel = @selector(pushRegistry:didUpdatePushCredentials:forType:);
+    if ([delegate respondsToSelector:sel]) {
+        Class credCls = NSClassFromString(@"PKPushCredentials");
+        if (credCls) {
+            id creds = [[credCls alloc] init];
+            if (creds) {
+                NSData *voipToken = get_clone_fake_voip_token_data();
+                objc_setAssociatedObject(creds, kZTVoIPTokenAssocKey, voipToken, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(creds, kZTVoIPTypeAssocKey, @"PKPushTypeVoIP", OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                @try {
+                    [delegate pushRegistry:registry didUpdatePushCredentials:creds forType:@"PKPushTypeVoIP"];
+                    logAudit(@"PUSH-TOKEN", @"[PUSH-SPOOF] Đã nạp thành công VoIP PushKit Token 32-byte chuẩn Profile!");
+                } @catch (NSException *e) {}
+            }
+        }
+    }
+}
+
+%hook PKPushRegistry
+
+- (NSData *)pushTokenForType:(NSString *)type {
+    if (is_tweak_active()) {
+        return get_clone_fake_voip_token_data();
+    }
+    return %orig;
+}
+
+- (void)setDesiredPushTypes:(NSSet *)types {
+    %orig;
+    if (is_tweak_active()) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            @try {
+                id del = [self valueForKey:@"delegate"];
+                deliver_clone_voip_token_to_registry(self, del);
+            } @catch (NSException *e) {}
+        });
+    }
+}
+
+- (void)setDelegate:(id)delegate {
+    %orig;
+    if (delegate && is_tweak_active()) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            deliver_clone_voip_token_to_registry(self, delegate);
+        });
+    }
+}
+
 %end
 
 %hook UIApplication
 
 - (BOOL)isRegisteredForRemoteNotifications {
-    if (is_tweak_active() && !is_original_zalo_app()) {
+    if (is_tweak_active()) {
         return YES;
     }
     return %orig;
@@ -2843,41 +3207,46 @@ static BOOL s_in_bundle_hook = NO;
 
 - (void)registerForRemoteNotifications {
     %orig;
-    if (is_tweak_active() && !is_original_zalo_app()) {
+    if (is_tweak_active()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            id delegate = self.delegate;
-            SEL sel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
-            if (delegate && [delegate respondsToSelector:sel]) {
-                NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
-                const char *cStr = [seed UTF8String];
-                unsigned char hash[CC_SHA256_DIGEST_LENGTH];
-                CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
-                NSData *fakeToken = [NSData dataWithBytes:hash length:32];
-                #pragma clang diagnostic push
-                #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-                [delegate application:self didRegisterForRemoteNotificationsWithDeviceToken:fakeToken];
-                #pragma clang diagnostic pop
-                logAudit(@"PUSH-TOKEN", @"[CLONE-FIX] Đã nạp thành công APNs Device Token 32-byte chuẩn Apple cho Zalo Clone!");
-            }
+            deliver_clone_apns_token_to_delegate(self, self.delegate);
         });
     }
 }
 
 - (void)setDelegate:(id<UIApplicationDelegate>)delegate {
-    if (delegate && is_tweak_active() && !is_original_zalo_app()) {
+    if (delegate && is_tweak_active()) {
         static Class s_swappedDelClass = nil;
         Class delClass = [delegate class];
         if (delClass && delClass != s_swappedDelClass) {
             s_swappedDelClass = delClass;
+            // 1. Chặn iOS trả về APNs Token phần cứng thật trên Zalo Gốc -> ép dùng APNs Token theo Profile
+            SEL regSel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
+            Method regMethod = class_getInstanceMethod(delClass, regSel);
+            if (regMethod) {
+                typedef void (*OrigDidRegIMP)(id, SEL, UIApplication *, NSData *);
+                OrigDidRegIMP origImp = (OrigDidRegIMP)method_getImplementation(regMethod);
+                IMP customRegImp = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSData *realToken) {
+                    NSData *tokenToPass = is_tweak_active() ? get_clone_fake_apns_token_data() : realToken;
+                    if (origImp) {
+                        origImp(self_del, regSel, app, tokenToPass);
+                    }
+                });
+                method_setImplementation(regMethod, customRegImp);
+            }
+            // 2. Chặn thông báo lỗi APNs trên bản Clone/Sideload
             SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
             Method m = class_getInstanceMethod(delClass, failSel);
             if (m) {
                 IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
-                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[CLONE-FIX] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
+                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
                 });
                 method_setImplementation(m, noop);
             }
         }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            deliver_clone_apns_token_to_delegate(self, delegate);
+        });
     }
     %orig;
 }
@@ -3195,6 +3564,21 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
             NSString *devId = [NSString stringWithFormat:@"%@", dict[@"device_id"]];
             ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+            NSArray<NSString *> *parts = [devId componentsSeparatedByString:@"-"];
+            BOOL alreadyClean = NO;
+            if (parts.count == 3) {
+                NSString *p0 = parts[0], *p1 = parts[1], *p2 = parts[2];
+                uint64_t sec0 = [p0 unsignedLongLongValue] / 1000ULL;
+                if (![p0 isEqualToString:p1] && ![p1 isEqualToString:p2] && ![p0 isEqualToString:p2] &&
+                    ![p0 hasSuffix:@"000"] && ![p1 hasSuffix:@"000"] && ![p2 hasSuffix:@"000"] &&
+                    sec0 >= fakeBirth && sec0 <= fakeBirth + 86400ULL) {
+                    alreadyClean = YES;
+                }
+            }
+            if (alreadyClean) {
+                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] device_id từ ZAM3914 đã đồng bộ chuẩn 100%%: %@", devId]);
+                return %orig;
+            }
             time_t fake_mtime = 0, fake_ctime = 0;
             long nsec_b = 0, nsec_m = 0, nsec_c = 0;
             get_consistent_stat_times(fakeBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
@@ -3226,7 +3610,7 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
     NSMutableURLRequest *mutReq = [origReq mutableCopy];
     BOOL modified = NO;
 
-    // 1. Kiểm tra và bẻ lái Header extInfo
+    // 1. Kiểm tra và bẻ lái Header extInfo (chỉ khử tên mã phần cứng thật nếu bị lọt, KHÔNG tự bịa dId hay sửa lệch mno với Body đã ký sig)
     NSString *extInfo = [mutReq valueForHTTPHeaderField:@"extInfo"];
     if (extInfo) {
         NSMutableString *newExt = [extInfo mutableCopy];
@@ -3237,22 +3621,6 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 [newExt replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, newExt.length)];
                 extModified = YES;
             }
-        }
-        if (settings.carrierName.length > 0) {
-            NSString *targetMno = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
-            if ([newExt containsString:@"\"mno\":\"\""]) {
-                [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
-                extModified = YES;
-            } else if ([newExt containsString:@"\"mno\":\"--\""]) {
-                [newExt replaceOccurrencesOfString:@"\"mno\":\"--\"" withString:targetMno options:0 range:NSMakeRange(0, newExt.length)];
-                extModified = YES;
-            }
-        }
-        if ([newExt containsString:@"\"dId\":\"\""] && settings.spoofedIDFV.length > 0) {
-            NSString *cleanId = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
-            NSString *targetDId = [NSString stringWithFormat:@"\"dId\":\"2001.SSZ-%@.1\"", cleanId];
-            [newExt replaceOccurrencesOfString:@"\"dId\":\"\"" withString:targetDId options:0 range:NSMakeRange(0, newExt.length)];
-            extModified = YES;
         }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
@@ -3842,7 +4210,7 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
     });
 }
 
-static void scan_zalo_security_modules_async(void) {
+static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         @autoreleasepool {
             // Đợi 2 giây để Zalo hoàn tất nạp các dynamic frameworks vào bộ nhớ
@@ -3912,10 +4280,6 @@ static void scan_zalo_security_modules_async(void) {
 
         // 2. Kích hoạt toàn bộ hook Objective-C của Logos sau khi cấu hình đã sẵn sàng
         %init;
-
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            scan_zalo_security_modules_async();
-        }
 
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -3997,6 +4361,15 @@ static void scan_zalo_security_modules_async(void) {
         if (cfSrvVer) {
             universal_hook_c_function("_CFCopyServerVersionDictionary", cfSrvVer, (void *)my_CFCopyServerVersionDictionary, (void **)&orig_CFCopyServerVersionDictionary);
         }
+
+        // Hook Hardware Uptime Clocks (Khử rò rỉ kUpTickCPULastAuthen & kUpTickContCPULastAuthen lệch với kLastBootTimeAuthen)
+        universal_hook_c_function("clock_gettime", (void *)clock_gettime, (void *)my_clock_gettime, (void **)&orig_clock_gettime);
+        universal_hook_c_function("mach_continuous_time", (void *)mach_continuous_time, (void *)my_mach_continuous_time, (void **)&orig_mach_continuous_time);
+        universal_hook_c_function("mach_absolute_time", (void *)mach_absolute_time, (void *)my_mach_absolute_time, (void **)&orig_mach_absolute_time);
+
+        // Hook Dyld & dladdr (Ẩn tuyệt đối Zalotweak.dylib, Substrate, ElleKit, RootHide khỏi bộ quét anti-tamper của Zalo)
+        universal_hook_c_function("_dyld_get_image_name", (void *)_dyld_get_image_name, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
+        universal_hook_c_function("dladdr", (void *)dladdr, (void *)my_dladdr, (void **)&orig_dladdr);
 
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
             NSLog(@"[ZaloTweak] ❌ BẢN QUYỀN CHƯA KÍCH HOẠT HOẶC ĐÃ HẾT HẠN! Vui lòng vào Cài đặt để kích hoạt.");
@@ -4095,11 +4468,24 @@ static void scan_zalo_security_modules_async(void) {
                      boot_tm.tm_year + 1900, boot_tm.tm_mon + 1, boot_tm.tm_mday,
                      boot_tm.tm_hour, boot_tm.tm_min, boot_tm.tm_sec);
 
-            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🕒 [THỜI GIAN/Ổ ĐĨA] st_birthtime: %s (%llu) | BootTime: %s | Disk: %llu GB",
+            double contUp = 0, awakeUp = 0;
+            get_consistent_uptimes(&contUp, &awakeUp);
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🕒 [THỜI GIAN/Ổ ĐĨA] st_birthtime: %s (%llu) | BootTime: %s | ContCPU: %.0fs (%.1fh) | AwakeCPU: %.0fs (%.1fh) | Disk: %llu GB",
                       bTimeBuf,
                       (unsigned long long)fake_ctime,
                       bootBuf,
+                      contUp, contUp / 3600.0,
+                      awakeUp, awakeUp / 3600.0,
                       s.diskTotalSize / (1000000000ULL)]);
+
+            NSData *apnsPreviewData = get_fake_apns_token_data();
+            NSData *voipPreviewData = get_fake_voip_token_data();
+            const uint8_t *ab = (const uint8_t *)[apnsPreviewData bytes];
+            const uint8_t *vb = (const uint8_t *)[voipPreviewData bytes];
+            NSString *apnsHex = (apnsPreviewData.length >= 6) ? [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x...", ab[0], ab[1], ab[2], ab[3], ab[4], ab[5]] : @"N/A";
+            NSString *voipHex = (voipPreviewData.length >= 6) ? [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x...", vb[0], vb[1], vb[2], vb[3], vb[4], vb[5]] : @"N/A";
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] APNs(32B): %@ | VoIP(32B): %@ | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001",
+                      apnsHex, voipHex]);
         }
     }
 }

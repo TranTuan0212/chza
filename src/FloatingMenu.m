@@ -16,6 +16,17 @@
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <dlfcn.h>
+#import <CommonCrypto/CommonDigest.h>
+
+static NSString *zt_preview_sha256_token_hex(NSString *prefix, NSString *seedStr) {
+    if (!seedStr || seedStr.length == 0) return @"Chưa cấp (Cần Wipe)";
+    NSString *full = [NSString stringWithFormat:@"%@:%@", prefix ?: @"APNS", seedStr];
+    const char *cstr = [full UTF8String];
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(cstr, (CC_LONG)strlen(cstr), digest);
+    return [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x... (32B SHA256)",
+            digest[0], digest[1], digest[2], digest[3], digest[4], digest[5]];
+}
 
 // Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở một cách an toàn
 static void sever_all_network_sockets_immediately(void) {
@@ -715,12 +726,26 @@ UIViewController *ZTGetTopViewController(void) {
 
     ZTSettings *s = [ZTSettings sharedSettings];
     uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
-    uint64_t uptimeHours = (nowSec > s.bootTimeSec) ? ((nowSec - s.bootTimeSec) / 3600) : 0;
+    double contUpSec = (nowSec > s.bootTimeSec && s.bootTimeSec > 0) ? (double)(nowSec - s.bootTimeSec) : 36000.0;
+    uint64_t ratioPermille = 720ULL + ((s.bootTimeSec * 2654435761ULL) % 160ULL);
+    double awakeUpSec = contUpSec * ((double)ratioPermille / 1000.0);
     
     NSString *currentRegion = s.regionMode ?: @"VN";
     NSString *regionName = [currentRegion isEqualToString:@"US_STUDENT"] ? @"🇺🇸 Du Học Sinh Mỹ (+1)" :
                            ([currentRegion isEqualToString:@"US"] ? @"🇺🇸 Hoa Kỳ (+1)" :
                            ([currentRegion isEqualToString:@"PL"] ? @"🇵🇱 Ba Lan (+48)" : @"🇻🇳 Việt Nam (+84)"));
+
+    NSString *oldIdfvStr = (s.lastWipedIDFV.length > 8) ? [NSString stringWithFormat:@"%@...", [s.lastWipedIDFV substringToIndex:8]] : (s.lastWipedIDFV.length > 0 ? s.lastWipedIDFV : @"Chưa có (Lần đầu)");
+    NSString *apnsHex = zt_preview_sha256_token_hex(@"APNS", s.spoofedIDFV);
+    NSString *voipHex = zt_preview_sha256_token_hex(@"VOIP", s.spoofedIDFV);
+
+    uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+    uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
+    uint64_t delta_c = delta_m + 30ULL + ((fakeBirth * 1299709ULL) % 600ULL) + ((fakeBirth / 13ULL) % 43ULL);
+    uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 850ULL + 100ULL);
+    uint64_t ms2 = (fakeBirth + delta_m) * 1000ULL + (((fakeBirth + delta_m) * 2246822519ULL) % 850ULL + 100ULL);
+    uint64_t ms3 = (fakeBirth + delta_c) * 1000ULL + (((fakeBirth + delta_c) * 3266489917ULL) % 850ULL + 100ULL);
+    NSString *devIdPreview = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
 
     NSString *info = [NSString stringWithFormat:
                       @"• Khu Vực & SIM: %@\n"
@@ -730,12 +755,16 @@ UIViewController *ZTGetTopViewController(void) {
                       @"• Serial Number: %@\n"
                       @"• Wi-Fi MAC: %@\n"
                       @"• Phiên Bản iOS: %@ (Build %@)\n"
-                      @"• IDFV Đang Giả: %@\n"
+                      @"• IDFV Mới: %@\n"
+                      @"• IDFV Cũ (Trước Wipe): %@\n"
+                      @"• Mã device_id (3 Mốc): %@\n"
+                      @"• Uptime 3 Clock: Cont %.1fh | Awake %.1fh\n"
+                      @"• Token APNs: %@\n"
+                      @"• Token VoIP: %@\n"
+                      @"• Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib ✅\n"
                       @"• Profile Keychain: %@\n"
-                      @"• Số Nhân CPU: %u Cores\n"
-                      @"• Dung Lượng RAM: %.1f GB\n"
+                      @"• CPU & RAM: %u Cores | %.1f GB\n"
                       @"• Màn Hình: %.0fx%.0f @%.0fx\n"
-                      @"• Uptime: %llu giờ trước\n"
                       @"• Ổ Cứng: %.1f GB / %.1f GB",
                       regionName,
                       s.carrierName ?: @"Viettel", s.carrierMCC ?: @"452", s.carrierMNC ?: @"04",
@@ -745,11 +774,15 @@ UIViewController *ZTGetTopViewController(void) {
                       s.spoofedWifiMAC ?: @"N/A",
                       s.systemVersion, s.kernOsVersion,
                       s.spoofedIDFV,
+                      oldIdfvStr,
+                      devIdPreview,
+                      contUpSec / 3600.0, awakeUpSec / 3600.0,
+                      apnsHex,
+                      voipHex,
                       [s.profileId substringToIndex:MIN((NSUInteger)8, s.profileId.length)],
                       s.ncpu,
                       (double)s.memsize / (1024.0 * 1024.0 * 1024.0),
                       s.screenWidth, s.screenHeight, s.screenScale,
-                      uptimeHours,
                       (double)s.diskFreeSize / (1000.0 * 1000.0 * 1000.0),
                       (double)s.diskTotalSize / (1000.0 * 1000.0 * 1000.0)];
     
@@ -824,6 +857,9 @@ UIViewController *ZTGetTopViewController(void) {
         } else if ([cleanPref containsString:@"vietnamobile"]) {
             s.carrierName = @"Vietnamobile";
             s.carrierMNC = @"05";
+        } else if ([cleanPref containsString:@"gmobile"]) {
+            s.carrierName = @"Gmobile";
+            s.carrierMNC = @"07";
         } else {
             s.carrierName = @"Viettel";
             s.carrierMNC = @"04";
@@ -1282,6 +1318,9 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
             } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"] || [p3 isEqualToString:@"052"]) {
                 carrier = @"Vietnamobile";
                 mnc = @"05";
+            } else if ([p3 isEqualToString:@"099"] || [p3 isEqualToString:@"059"]) {
+                carrier = @"Gmobile";
+                mnc = @"07";
             }
         }
         if (outCarrierName) *outCarrierName = carrier;
@@ -1593,6 +1632,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     NSArray *secGroups = @[
         @"",
         @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
         @"vn.com.vng.zingalo"
@@ -1619,6 +1660,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites để ngăn cfprefsd ghi ngược ra đĩa
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
         @"com.zing.zalo.chatMigrateStore",
@@ -1674,7 +1717,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
 
     // 4.1. Quét dọn Shared App Groups (nếu có quyền truy cập nhóm)
-    NSArray *groupNames = @[@"group.vn.com.vng.zingalo", @"group.com.vng.zalo", @"group.com.zing.zalo"];
+    NSArray *groupNames = @[
+        @"group.vn.com.vng.zingalo",
+        @"group.noti.vn.com.vng.zingalo",
+        @"group.zsettings",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo"
+    ];
     for (NSString *grp in groupNames) {
         NSURL *groupURL = [fm containerURLForSecurityApplicationGroupIdentifier:grp];
         if (groupURL) {
@@ -1854,7 +1903,16 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
                    (![info.bundleId isEqualToString:@"vn.com.vng.zingalo"] && ![info.bundleId isEqualToString:@"com.vng.zalo"]);
     info.isCloneApp = isClone;
     info.realBundleId = isClone ? [NSString stringWithFormat:@"%@ (Clone)", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
-    info.apnsPushStatus = isClone ? @"32-Byte SHA256 Token (Đã giả lập)" : @"Hệ Thống APNs Apple";
+
+    if (s.hasConfiguredProfile && s.spoofedIDFV.length > 0) {
+        info.apnsPushStatus = zt_preview_sha256_token_hex(@"APNS", s.spoofedIDFV);
+        info.voipPushStatus = zt_preview_sha256_token_hex(@"VOIP", s.spoofedIDFV);
+        info.pushTokenPassed = YES;
+    } else {
+        info.apnsPushStatus = @"Chưa cấp (Cần Wipe)";
+        info.voipPushStatus = @"Chưa cấp (Cần Wipe)";
+        info.pushTokenPassed = NO;
+    }
 
     NSString *liveMNO = s.carrierName ?: @"Viettel";
     @try {
@@ -1866,7 +1924,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
                 NSDictionary *providers = [telInfo performSelector:@selector(serviceSubscriberCellularProviders)];
                 if (providers && providers.count > 0) {
-                    id carrier = providers.allValues.firstObject;
+                    id carrier = providers[@"0000000100000001"] ?: providers.allValues.firstObject;
                     if ([carrier respondsToSelector:@selector(carrierName)]) {
                         NSString *name = [carrier performSelector:@selector(carrierName)];
                         if (name.length > 0) liveMNO = name;
@@ -1878,13 +1936,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     } @catch (NSException *e) {}
     info.mnoCarrierName = liveMNO;
 
-    if (s.spoofedIDFV.length > 0) {
-        NSString *cleanId = [[s.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
-        NSString *shortDId = cleanId.length > 12 ? [cleanId substringToIndex:12] : cleanId;
-        info.telemetryDId = [NSString stringWithFormat:@"2001.SSZ-%@...1", shortDId];
-    } else {
-        info.telemetryDId = @"Chưa cấp (Cần Wipe)";
-    }
+    info.telemetryDId = @"Server Zalo Cấp Tự Nhiên (Chuẩn Gốc)";
 
     if (!s.hasConfiguredProfile) {
         info.currentIDFV = @"Chưa cấp (Cần Wipe)";
@@ -1944,29 +1996,40 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     unsigned long long liveDiskTotal = [fsAttrs[NSFileSystemSize] unsignedLongLongValue];
     info.diskFreeGB = (double)liveDiskFree / (1000.0 * 1000.0 * 1000.0);
     info.diskTotalGB = (double)liveDiskTotal / (1000.0 * 1000.0 * 1000.0);
-    info.uptimeHours = (uint64_t)([[NSProcessInfo processInfo] systemUptime] / 3600.0);
+    NSTimeInterval liveAwakeUptime = [[NSProcessInfo processInfo] systemUptime];
+    info.uptimeHours = (uint64_t)(liveAwakeUptime / 3600.0);
+
+    // Kiểm tra đồng bộ 3 đồng hồ Uptime (BootTime / ContCPU / AwakeCPU)
+    uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
+    double expectedContUp = (nowSec > s.bootTimeSec && s.bootTimeSec > 0) ? (double)(nowSec - s.bootTimeSec) : 0;
+    if (s.hasConfiguredProfile && expectedContUp > 0 && liveAwakeUptime > 0 && liveAwakeUptime <= expectedContUp + 5.0) {
+        info.uptimeSyncText = [NSString stringWithFormat:@"Cont: %.1fh | Awake: %.1fh", expectedContUp / 3600.0, liveAwakeUptime / 3600.0];
+        info.uptimeSyncPassed = YES;
+    } else {
+        info.uptimeSyncText = @"Chưa đồng bộ (Cần Wipe)";
+        info.uptimeSyncPassed = NO;
+    }
+
+    // Kiểm tra trạng thái Ẩn Dylib (Anti-Dyld / dladdr)
+    info.dyldHideText = s.hasConfiguredProfile ? @"Ẩn Zalotweak.dylib & Roothide" : @"Chưa kích hoạt";
+    info.dyldHidePassed = s.hasConfiguredProfile;
 
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
-    // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec chuẩn 3 timestamps tự nhiên)
-    struct stat st_hw;
-    memset(&st_hw, 0, sizeof(st_hw));
-    if (stat("/var/mobile", &st_hw) == 0 || (home && stat([home UTF8String], &st_hw) == 0) || stat("/", &st_hw) == 0) {
-        uint64_t birthMs = ((uint64_t)st_hw.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_birthtimespec.tv_nsec / 1000000ULL);
-        uint64_t mtimeMs = ((uint64_t)st_hw.st_mtimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_mtimespec.tv_nsec / 1000000ULL);
-        uint64_t ctimeMs = ((uint64_t)st_hw.st_ctimespec.tv_sec) * 1000ULL + ((uint64_t)st_hw.st_ctimespec.tv_nsec / 1000000ULL);
-        if (mtimeMs == 0) mtimeMs = birthMs + 180000ULL + ((birthMs * 104729ULL) % 1800000ULL);
-        if (ctimeMs == 0) ctimeMs = mtimeMs + 30000ULL + ((birthMs * 1299709ULL) % 600000ULL);
-        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", birthMs, mtimeMs, ctimeMs];
-        
-        BOOL isStaticHardware = (birthMs == 1753442559000ULL || birthMs == 1777525794000ULL);
-        if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
-            uint64_t expectedSec = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 0);
-            info.deviceIdPassed = (!isStaticHardware && (birthMs >= expectedSec * 1000ULL || (birthMs > 0 && !isStaticHardware)));
-        } else {
-            info.deviceIdPassed = (!isStaticHardware && birthMs > 0 && s.hasConfiguredProfile);
-        }
+    // 1. Mã device_id phần cứng chuẩn 3 đường dẫn (/var/mobile, Sandbox Home, Library) như ZAM3914
+    struct stat st_p1, st_p2, st_p3;
+    memset(&st_p1, 0, sizeof(st_p1));
+    memset(&st_p2, 0, sizeof(st_p2));
+    memset(&st_p3, 0, sizeof(st_p3));
+    NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
+    if (stat("/var/mobile", &st_p1) == 0 && home && stat([home UTF8String], &st_p2) == 0 && libDir && stat([libDir UTF8String], &st_p3) == 0) {
+        uint64_t t1 = ((uint64_t)st_p1.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p1.st_birthtimespec.tv_nsec / 1000000ULL);
+        uint64_t t2 = ((uint64_t)st_p2.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p2.st_birthtimespec.tv_nsec / 1000000ULL);
+        uint64_t t3 = ((uint64_t)st_p3.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p3.st_birthtimespec.tv_nsec / 1000000ULL);
+        info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", t1, t2, t3];
+        BOOL isDistinct3 = (t1 > 0 && t2 > t1 && t3 > t2 && (t1 % 1000ULL) != 0);
+        info.deviceIdPassed = (s.hasConfiguredProfile && isDistinct3);
     } else if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
         uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
         uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);

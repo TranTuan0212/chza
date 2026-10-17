@@ -462,21 +462,30 @@ static NSString *detect_real_system_machine(void) {
         ];
         profile.deviceName = names[arc4random_uniform((uint32_t)names.count)];
 
-        NSArray *carriers = @[
+        NSArray *defaultCarriers = @[
             @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
             @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
             @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"}
         ];
+        NSArray *allCarriers = @[
+            @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
+            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
+            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
+            @{@"name": @"Vietnamobile",  @"mcc": @"452", @"mnc": @"05"},
+            @{@"name": @"Gmobile",       @"mcc": @"452", @"mnc": @"07"}
+        ];
         NSDictionary *c = nil;
         if (preferredCarrier.length > 0) {
             NSString *cleanPref = [preferredCarrier lowercaseString];
-            for (NSDictionary *item in carriers) {
+            for (NSDictionary *item in allCarriers) {
                 NSString *cName = [item[@"name"] lowercaseString];
                 NSString *cMnc = item[@"mnc"];
-                if ([cleanPref containsString:cName] || [cName containsString:cleanPref] ||
-                    ([cleanPref containsString:@"viettel"] && [cName containsString:@"viettel"]) ||
-                    ([cleanPref containsString:@"vina"] && [cName containsString:@"vina"]) ||
-                    ([cleanPref containsString:@"mobi"] && [cName containsString:@"mobi"]) ||
+                if ([cleanPref isEqualToString:cName] ||
+                    ([cleanPref containsString:@"viettel"] && [cName isEqualToString:@"viettel"]) ||
+                    ([cleanPref containsString:@"vina"] && [cName isEqualToString:@"vinaphone"]) ||
+                    ([cleanPref containsString:@"mobifone"] && [cName isEqualToString:@"vn mobifone"]) ||
+                    ([cleanPref containsString:@"vietnamobile"] && [cName isEqualToString:@"vietnamobile"]) ||
+                    ([cleanPref containsString:@"gmobile"] && [cName isEqualToString:@"gmobile"]) ||
                     [cleanPref isEqualToString:cMnc]) {
                     c = item;
                     break;
@@ -484,7 +493,7 @@ static NSString *detect_real_system_machine(void) {
             }
         }
         if (!c) {
-            c = carriers[arc4random_uniform((uint32_t)carriers.count)];
+            c = defaultCarriers[arc4random_uniform((uint32_t)defaultCarriers.count)];
         }
         profile.carrierName = c[@"name"];
         profile.carrierMCC = c[@"mcc"];

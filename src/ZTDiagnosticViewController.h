@@ -69,9 +69,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) int procTranslated;
 @property (nonatomic, assign) BOOL sysctlPassed;
 
-// Ngày giờ cụ thể cho Ổ đĩa & Boot Time
+// Ngày giờ cụ thể cho Ổ đĩa, Boot Time & Đồng bộ 3 Đồng Hồ Uptime
 @property (nonatomic, copy) NSString *birthTimeText;
 @property (nonatomic, copy) NSString *bootTimeText;
+@property (nonatomic, copy, nullable) NSString *uptimeSyncText;
+@property (nonatomic, assign) BOOL uptimeSyncPassed;
+
+// Ẩn Dylib (dyld / dladdr) & Push Token (APNs / VoIP)
+@property (nonatomic, copy, nullable) NSString *dyldHideText;
+@property (nonatomic, assign) BOOL dyldHidePassed;
+@property (nonatomic, copy, nullable) NSString *voipPushStatus;
+@property (nonatomic, assign) BOOL pushTokenPassed;
 
 // Thông tin Kiểm Tra Mạng & IP Nâng Cao
 @property (nonatomic, copy, nullable) NSString *testedIP;

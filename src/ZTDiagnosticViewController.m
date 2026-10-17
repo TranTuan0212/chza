@@ -638,6 +638,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
                            !isSameIP &&
                            !isDuplicateIDFV &&
                            self.info.deviceIdPassed &&
+                           self.info.uptimeSyncPassed &&
+                           self.info.dyldHidePassed &&
+                           self.info.pushTokenPassed &&
                            self.info.armCpuPassed &&
                            self.info.installTimePassed &&
                            self.info.screenResolutionPassed &&
@@ -1268,7 +1271,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         if (!self.info.hasConfiguredProfile) [reasons appendString:@"• Chưa bấm 'Deep Wipe & Cấp Máy Mới'!\n"];
         if (isSameIP) [reasons appendString:@"• Trùng IP cũ! Hãy bật/tắt Chế độ máy bay để đổi IP 4G hoặc xoay Proxy.\n"];
         if (isDuplicateIDFV) [reasons appendString:@"• Trùng mã định danh IDFV của phiên trước! Cần Deep Wipe.\n"];
-        if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id trùng timestamp máy thật (Chưa fake birthtime)!\n"];
+        if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id chưa chuẩn 3 mốc đường dẫn (Cần Deep Wipe)!\n"];
+        if (!self.info.uptimeSyncPassed) [reasons appendString:@"• Lệch 3 đồng hồ Uptime (BootTime / ContCPU / AwakeCPU)!\n"];
+        if (!self.info.dyldHidePassed) [reasons appendString:@"• Chưa ẩn Zalotweak.dylib khỏi trình quét dyld/dladdr!\n"];
+        if (!self.info.pushTokenPassed) [reasons appendString:@"• Chưa cấp Token APNs / VoIP 32-byte mới!\n"];
         if (!self.info.armCpuPassed) [reasons appendString:@"• Lệch tập lệnh ARM CPU phần cứng Apple!\n"];
         if (self.info.ipCheckCompleted && !self.info.ipCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• IP KHÔNG SẠCH: %@\n", self.info.ipTypeDesc ?: @""]];
         if (!self.info.keychainCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• Còn %ld Token Zalo trong Keychain! Cần Deep Wipe để làm sạch.\n", (long)self.info.keychainRemainingCount]];
@@ -1728,13 +1734,32 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     NSString *idfvShort = (self.info.currentIDFV.length > 8) ? [self.info.currentIDFV substringToIndex:8] : self.info.currentIDFV;
     NSString *idfvBadge = (!configured) ? @"Chưa cấp ⚠️" : (isDuplicateIDFV ? @"TRÙNG IDFV ❌" : @"Mới tinh ✅");
     NSString *idfvDisplay = configured ? [NSString stringWithFormat:@"%@...", idfvShort ?: @""] : @"Chưa cấp (Cần Wipe)";
-    [inner addArrangedSubview:[self createRowWithKey:@"IDFV Mới" value:idfvDisplay badge:idfvBadge isWarning:isDuplicateIDFV || !configured]];
+    [inner addArrangedSubview:[self createRowWithKey:@"IDFV Mới Hiện Tại" value:idfvDisplay badge:idfvBadge isWarning:isDuplicateIDFV || !configured]];
 
-    NSString *devIdBadge = self.info.deviceIdPassed ? @"Chuẩn 3 Mốc ✅" : @"Trùng máy thật ❌";
-    [inner addArrangedSubview:[self createRowWithKey:@"Mã device_id (Hardware)"
+    NSString *oldIdfvShort = (self.info.lastWipedIDFV.length > 8) ? [NSString stringWithFormat:@"%@...", [self.info.lastWipedIDFV substringToIndex:8]] : (self.info.lastWipedIDFV.length > 0 ? self.info.lastWipedIDFV : @"Chưa có lịch sử");
+    NSString *oldIdfvBadge = (self.info.lastWipedIDFV.length > 0) ? (isDuplicateIDFV ? @"TRÙNG MÁY CŨ ❌" : @"Đã Đổi Mới 100% ✅") : @"Lần đầu ✅";
+    [inner addArrangedSubview:[self createRowWithKey:@"IDFV Lần Wipe Trước"
+                                              value:oldIdfvShort
+                                              badge:oldIdfvBadge
+                                          isWarning:isDuplicateIDFV]];
+
+    NSString *devIdBadge = self.info.deviceIdPassed ? @"Chuẩn 3 Đường Dẫn ✅" : @"Trùng máy thật ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Mã device_id (3 Mốc)"
                                               value:self.info.hardwareDeviceId ?: @"Chưa cấp"
                                               badge:devIdBadge
                                           isWarning:!self.info.deviceIdPassed]];
+
+    NSString *upBadge = self.info.uptimeSyncPassed ? @"Khớp 3 Clock ✅" : @"Lệch Uptime ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Đồng Bộ 3 Uptime CPU"
+                                              value:self.info.uptimeSyncText ?: @"Boot / Cont / Awake"
+                                              badge:upBadge
+                                          isWarning:!self.info.uptimeSyncPassed]];
+
+    NSString *dyldBadge = self.info.dyldHidePassed ? @"Đã Ẩn Dylib ✅" : @"Lộ Dylib ❌";
+    [inner addArrangedSubview:[self createRowWithKey:@"Chống Quét (dyld/dladdr)"
+                                              value:self.info.dyldHideText ?: @"Ẩn Zalotweak.dylib"
+                                              badge:dyldBadge
+                                          isWarning:!self.info.dyldHidePassed]];
 
     NSString *armBadge = self.info.armCpuPassed ? @"Chuẩn A-Series ✅" : @"Lệch vi kiến trúc ❌";
     [inner addArrangedSubview:[self createRowWithKey:@"ARM Features Radar"
@@ -1794,7 +1819,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     NSString *mnoLive = self.info.mnoCarrierName ?: (self.info.carrierName ?: @"Viettel");
     [inner addArrangedSubview:[self createRowWithKey:@"Tên Mạng MNO (CoreTelephony)"
                                               value:mnoLive
-                                              badge:@"Đã Cấp (Không Rỗng) ✅"
+                                              badge:@"Khớp Slot 0001 ✅"
                                           isWarning:NO]];
 
     return card;
@@ -1876,7 +1901,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     }
 
     BOOL isOrig = [self.info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
-    NSString *kcIsoVal = isOrig ? @"Zalo Gốc (Tự động xóa sạch)" : (self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định");
+    NSString *kcIsoVal = isOrig ? @"Zalo Gốc (Cô lập zt_profile_*)" : (self.info.keychainIsolated ? @"zt_profile_*" : @"Mặc định");
     NSString *kcIsoBadge = (isOrig || self.info.keychainIsolated) ? @"Bảo vệ an toàn ✅" : @"Chưa cô lập ⚠️";
     [inner addArrangedSubview:[self createRowWithKey:@"Phân Vùng Keychain"
                                               value:kcIsoVal
@@ -1890,17 +1915,23 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:cBidBadge
                                           isWarning:NO]];
 
-    NSString *pushVal = self.info.apnsPushStatus ?: (self.info.isCloneApp ? @"32-Byte SHA256 Token" : @"Hệ Thống APNs Apple");
-    NSString *pushBadge = self.info.isCloneApp ? @"Đã Giả Lập ✅" : @"Chuẩn Apple ✅";
-    [inner addArrangedSubview:[self createRowWithKey:@"Dịch Vụ Đẩy (APNs Push)"
+    NSString *pushVal = self.info.apnsPushStatus ?: @"32-Byte SHA256 Token";
+    NSString *pushBadge = self.info.pushTokenPassed ? @"Đã Thay Mới ✅" : @"Chưa cấp ⚠️";
+    [inner addArrangedSubview:[self createRowWithKey:@"Token Đẩy APNs (32-Byte)"
                                               value:pushVal
                                               badge:pushBadge
-                                          isWarning:NO]];
+                                          isWarning:!self.info.pushTokenPassed]];
 
-    NSString *didVal = self.info.telemetryDId ?: @"2001.SSZ-...";
+    NSString *voipVal = self.info.voipPushStatus ?: @"32-Byte SHA256 Token";
+    [inner addArrangedSubview:[self createRowWithKey:@"Token Gọi VoIP (PushKit)"
+                                              value:voipVal
+                                              badge:pushBadge
+                                          isWarning:!self.info.pushTokenPassed]];
+
+    NSString *didVal = self.info.telemetryDId ?: @"Server Zalo Cấp Tự Nhiên";
     [inner addArrangedSubview:[self createRowWithKey:@"Định Danh dId (Telemetry)"
                                               value:didVal
-                                              badge:@"Đã Bù Đủ ✅"
+                                              badge:@"Chuẩn Gốc ✅"
                                           isWarning:NO]];
 
     return card;
@@ -2002,6 +2033,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         } else if ([cleanCarrier containsString:@"vietnamobile"]) {
             carrierName = @"Vietnamobile";
             mnc = @"05";
+        } else if ([cleanCarrier containsString:@"gmobile"]) {
+            carrierName = @"Gmobile";
+            mnc = @"07";
         } else {
             carrierName = @"Viettel";
             mnc = @"04";
@@ -2061,6 +2095,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         NSArray *secGroups = @[
             @"",
             @"group.vn.com.vng.zingalo",
+            @"group.noti.vn.com.vng.zingalo",
+            @"group.zsettings",
             @"group.com.vng.zalo",
             @"group.com.zing.zalo",
             @"vn.com.vng.zingalo"
