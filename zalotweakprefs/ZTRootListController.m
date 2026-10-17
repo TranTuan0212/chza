@@ -1142,16 +1142,16 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     NSString *machine = dict[@"deviceMachine"] ?: get_prefs_real_machine();
     NSString *model = dict[@"deviceModel"] ?: get_prefs_real_model();
     if (model.length > 0) {
-        return [NSString stringWithFormat:@"%@ (%@)", machine, model];
+        return [NSString stringWithFormat:@"%@ (%@) 🟢", machine, model];
     }
-    return machine;
+    return [NSString stringWithFormat:@"%@ 🟢", machine];
 }
 
 - (id)getHardwareOSValue:(PSSpecifier *)specifier {
     NSDictionary *dict = load_current_prefs_dict();
     NSString *sysVer = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
     NSString *kernVer = dict[@"kernOsVersion"] ?: get_prefs_real_os_version();
-    return [NSString stringWithFormat:@"iOS %@ (%@)", sysVer, kernVer];
+    return [NSString stringWithFormat:@"iOS %@ (%@) 🟢", sysVer, kernVer];
 }
 
 - (id)getHardwareSpecsValue:(PSSpecifier *)specifier {
@@ -1159,7 +1159,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     uint32_t ncpu = [dict[@"ncpu"] unsignedIntValue] ?: (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
     uint64_t ram = [dict[@"memsize"] unsignedLongLongValue] ?: [[NSProcessInfo processInfo] physicalMemory];
     double ramGB = (double)ram / (1024.0 * 1024.0 * 1024.0);
-    return [NSString stringWithFormat:@"%u Cores | %.1f GB RAM", ncpu, ramGB];
+    return [NSString stringWithFormat:@"%u Cores | %.1f GB RAM 🟢", ncpu, ramGB];
 }
 
 - (id)getHardwareScreenValue:(PSSpecifier *)specifier {
@@ -1167,35 +1167,76 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     double w = [dict[@"screenWidth"] doubleValue] ?: [UIScreen mainScreen].bounds.size.width;
     double h = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
     double s = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
-    return [NSString stringWithFormat:@"%.0f × %.0f (@%.0fx)", w, h, s];
+    return [NSString stringWithFormat:@"%.0f × %.0f (@%.0fx) 🟢", w, h, s];
+}
+
+- (id)getProfileStatusValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = load_current_prefs_dict();
+    BOOL configured = [dict[@"hasConfiguredProfile"] boolValue];
+    NSString *curr = dict[@"spoofedIDFV"];
+    NSString *last = dict[@"lastWipedIDFV"];
+    if (!configured || !curr || curr.length == 0) {
+        return @"Chưa cấp profile ⚠️ (Bấm Wipe)";
+    }
+    if (last && last.length > 0 && [curr isEqualToString:last]) {
+        return @"TRÙNG MÁY CŨ 🔴 (Cần Wipe lại)";
+    }
+    return @"MÁY MỚI HOÀN TOÀN 🟢";
 }
 
 - (id)getSpoofedSerialValue:(PSSpecifier *)specifier {
     NSDictionary *dict = load_current_prefs_dict();
-    return dict[@"spoofedSerial"] ?: @"Chưa cấp (Bấm Wipe)";
+    NSString *s = dict[@"spoofedSerial"];
+    return (s && s.length > 0) ? [NSString stringWithFormat:@"%@ 🟢", s] : @"Chưa cấp ⚠️";
 }
 
 - (id)getSpoofedWifiMACValue:(PSSpecifier *)specifier {
     NSDictionary *dict = load_current_prefs_dict();
-    return dict[@"spoofedWifiMAC"] ?: @"Chưa cấp (Bấm Wipe)";
+    NSString *m = dict[@"spoofedWifiMAC"];
+    return (m && m.length > 0) ? [NSString stringWithFormat:@"%@ 🟢", m] : @"Chưa cấp ⚠️";
 }
 
 - (id)getSpoofedIDFVValue:(PSSpecifier *)specifier {
     NSDictionary *dict = load_current_prefs_dict();
+    BOOL configured = [dict[@"hasConfiguredProfile"] boolValue];
     NSString *idfv = dict[@"spoofedIDFV"];
-    if (idfv.length > 18) {
-        return [NSString stringWithFormat:@"%@...%@", [idfv substringToIndex:8], [idfv substringFromIndex:idfv.length - 6]];
+    NSString *last = dict[@"lastWipedIDFV"];
+    if (!configured || !idfv || idfv.length == 0) {
+        return @"Chưa cấp (Cần Wipe) ⚠️";
     }
-    return idfv ?: @"Chưa cấp";
+    BOOL isDup = (last.length > 0 && [idfv isEqualToString:last]);
+    NSString *shortIdfv = (idfv.length > 18) ? [NSString stringWithFormat:@"%@...%@", [idfv substringToIndex:8], [idfv substringFromIndex:idfv.length - 6]] : idfv;
+    return isDup ? [NSString stringWithFormat:@"%@ (TRÙNG 🔴)", shortIdfv] : [NSString stringWithFormat:@"%@ (Mới Tinh 🟢)", shortIdfv];
+}
+
+- (id)getLastWipedIDFVValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = load_current_prefs_dict();
+    NSString *last = dict[@"lastWipedIDFV"];
+    NSString *curr = dict[@"spoofedIDFV"];
+    if (!last || last.length == 0) {
+        return @"Lần đầu 🟢";
+    }
+    BOOL isDup = (curr.length > 0 && [curr isEqualToString:last]);
+    NSString *shortLast = (last.length > 18) ? [NSString stringWithFormat:@"%@...%@", [last substringToIndex:8], [last substringFromIndex:last.length - 6]] : last;
+    return isDup ? [NSString stringWithFormat:@"%@ (Trùng Cũ 🔴)", shortLast] : [NSString stringWithFormat:@"%@ (Đã Đổi Mới 🟢)", shortLast];
+}
+
+- (id)getLastWipedIPValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = load_current_prefs_dict();
+    NSString *lastIP = dict[@"lastWipedIP"];
+    if (!lastIP || lastIP.length == 0) {
+        return @"Chưa có lịch sử 🟢";
+    }
+    return [NSString stringWithFormat:@"%@ (Lần trước)", lastIP];
 }
 
 - (id)getSpoofedProfileIdValue:(PSSpecifier *)specifier {
     NSDictionary *dict = load_current_prefs_dict();
     NSString *pid = dict[@"profileId"];
     if (pid.length > 18) {
-        return [NSString stringWithFormat:@"%@...%@", [pid substringToIndex:8], [pid substringFromIndex:pid.length - 6]];
+        return [NSString stringWithFormat:@"%@...%@ 🟢", [pid substringToIndex:8], [pid substringFromIndex:pid.length - 6]];
     }
-    return pid ?: @"Chưa cấp";
+    return pid ? [NSString stringWithFormat:@"%@ 🟢", pid] : @"Chưa cấp";
 }
 
 - (void)killZalo:(PSSpecifier *)specifier {

@@ -189,9 +189,33 @@
             <key>cell</key>
             <string>PSTitleValueCell</string>
             <key>label</key>
+            <string>Trạng Thái Profile</string>
+            <key>get</key>
+            <string>getProfileStatusValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
             <string>IDFV Hiện Tại</string>
             <key>get</key>
             <string>getSpoofedIDFVValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>IDFV Lần Trước (Cũ)</string>
+            <key>get</key>
+            <string>getLastWipedIDFVValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
+            <string>IP Lần Trước (Cũ)</string>
+            <key>get</key>
+            <string>getLastWipedIPValue:</string>
         </dict>
         <dict>
             <key>cell</key>
