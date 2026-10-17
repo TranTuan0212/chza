@@ -3178,8 +3178,9 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
     if (is_tweak_active()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             @try {
-                id del = [self valueForKey:@"delegate"];
-                deliver_clone_voip_token_to_registry(self, del);
+                id regObj = (id)self;
+                id del = [regObj valueForKey:@"delegate"];
+                deliver_clone_voip_token_to_registry(regObj, del);
             } @catch (NSException *e) {}
         });
     }
@@ -3568,7 +3569,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
             BOOL alreadyClean = NO;
             if (parts.count == 3) {
                 NSString *p0 = parts[0], *p1 = parts[1], *p2 = parts[2];
-                uint64_t sec0 = [p0 unsignedLongLongValue] / 1000ULL;
+                uint64_t sec0 = (uint64_t)strtoull([p0 UTF8String], NULL, 10) / 1000ULL;
                 if (![p0 isEqualToString:p1] && ![p1 isEqualToString:p2] && ![p0 isEqualToString:p2] &&
                     ![p0 hasSuffix:@"000"] && ![p1 hasSuffix:@"000"] && ![p2 hasSuffix:@"000"] &&
                     sec0 >= fakeBirth && sec0 <= fakeBirth + 86400ULL) {
@@ -4478,8 +4479,8 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
                       awakeUp, awakeUp / 3600.0,
                       s.diskTotalSize / (1000000000ULL)]);
 
-            NSData *apnsPreviewData = get_fake_apns_token_data();
-            NSData *voipPreviewData = get_fake_voip_token_data();
+            NSData *apnsPreviewData = get_clone_fake_apns_token_data();
+            NSData *voipPreviewData = get_clone_fake_voip_token_data();
             const uint8_t *ab = (const uint8_t *)[apnsPreviewData bytes];
             const uint8_t *vb = (const uint8_t *)[voipPreviewData bytes];
             NSString *apnsHex = (apnsPreviewData.length >= 6) ? [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x...", ab[0], ab[1], ab[2], ab[3], ab[4], ab[5]] : @"N/A";
