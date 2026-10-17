@@ -1,5 +1,4 @@
 #import "ZTDiagnosticViewController.h"
-#import "Config.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
@@ -14,6 +13,31 @@ static NSString *get_zt_prefs_filepath(void) {
         if (p) return [NSString stringWithUTF8String:p];
     }
     return [NSString stringWithUTF8String:base];
+}
+
+static NSString *get_stored_centralized_did(void) {
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+            if (shared) {
+                id val = [shared valueForKey:@"centralizedDid"];
+                if ([val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
+                    return (NSString *)val;
+                }
+            }
+#pragma clang diagnostic pop
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (dict && [dict[@"centralizedDid"] isKindOfClass:[NSString class]]) {
+        return dict[@"centralizedDid"];
+    }
+    return nil;
 }
 
 static BOOL is_zt_auto_sync_timezone_enabled(void) {
@@ -614,7 +638,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
     NSString *lastDid = fn_did ? fn_did() : nil;
     if (!lastDid || lastDid.length == 0) {
-        lastDid = [ZTSettings sharedSettings].centralizedDid;
+        lastDid = get_stored_centralized_did();
     }
     if (lastDid && lastDid.length > 0) {
         self.info.dIdReceivedPassed = YES;
@@ -1380,7 +1404,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
                 NSString *lastDid = fn_did ? fn_did() : nil;
                 if (!lastDid || lastDid.length == 0) {
-                    lastDid = [ZTSettings sharedSettings].centralizedDid;
+                    lastDid = get_stored_centralized_did();
                 }
                 if (lastDid && lastDid.length > 0) {
                     strongSelf.info.dIdReceivedPassed = YES;
