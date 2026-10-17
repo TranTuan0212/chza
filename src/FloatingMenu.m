@@ -2229,12 +2229,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // ==========================================
     // KHỞI TẠO BỘ CHỈ SỐ PRE-FLIGHT AUDIT 8/8 NHÓM
     // ==========================================
-    extern NSInteger zt_get_last_centralized_status(void);
-    extern NSString *zt_get_last_centralized_did(void);
-    extern NSInteger zt_get_qos_error_count(void);
+    typedef NSInteger (*zt_get_status_fn_t)(void);
+    typedef NSString* (*zt_get_did_fn_t)(void);
+    typedef NSInteger (*zt_get_qos_fn_t)(void);
 
     // 1. Tầng Mạng & Socket
-    NSInteger lastCStatus = zt_get_last_centralized_status();
+    zt_get_status_fn_t fn_status = (zt_get_status_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_status");
+    NSInteger lastCStatus = fn_status ? fn_status() : 0;
     if (lastCStatus == 200) {
         info.socketCellularPassed = YES;
         info.socketCellularText = @"HTTP 200 OK (Socket 4G/Wifi thông suốt) ✅";
@@ -2269,7 +2270,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.networkBundleIdText = isClone ? [NSString stringWithFormat:@"Kernel: %@ | Zalo: vn.com.vng.zingalo ✅", info.bundleId] : @"vn.com.vng.zingalo (Gốc) ✅";
 
     // 2. Định Danh Centralized & Telemetry
-    NSString *lastDid = zt_get_last_centralized_did();
+    zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
+    NSString *lastDid = fn_did ? fn_did() : nil;
     if (lastDid && lastDid.length > 0) {
         info.dIdReceivedPassed = YES;
         info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... ✅", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
@@ -2280,7 +2282,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.zagidReceivedPassed = YES;
     info.zagidStatusText = @"Khớp phiên định danh Zalo Global ID ✅";
 
-    NSInteger qosErrors = zt_get_qos_error_count();
+    zt_get_qos_fn_t fn_qos = (zt_get_qos_fn_t)dlsym(RTLD_DEFAULT, "zt_get_qos_error_count");
+    NSInteger qosErrors = fn_qos ? fn_qos() : 0;
     info.qosPassed = (qosErrors == 0);
     info.qosStatusText = (qosErrors == 0) ? @"0 lỗi gửi về qos-talk.123c.vn (Ổn định 100%) ✅" : [NSString stringWithFormat:@"Phát hiện %ld lỗi qos-talk ⚠️", (long)qosErrors];
 

@@ -34,10 +34,10 @@
 #import "FloatingMenu.h"
 #import "DeviceProfilePool.h"
 
-void zt_reset_runtime_counters(void);
-NSInteger zt_get_last_centralized_status(void);
-NSString *zt_get_last_centralized_did(void);
-NSInteger zt_get_qos_error_count(void);
+__attribute__((visibility("default"))) void zt_reset_runtime_counters(void);
+__attribute__((visibility("default"))) NSInteger zt_get_last_centralized_status(void);
+__attribute__((visibility("default"))) NSString *zt_get_last_centralized_did(void);
+__attribute__((visibility("default"))) NSInteger zt_get_qos_error_count(void);
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
 #if __has_feature(ptrauth_calls)
@@ -536,7 +536,7 @@ static void purge_all_zalo_keychain_safely(void) {
     NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain của Zalo!");
 }
 
-static void purge_webkit_data_safely(void) {
+static void __attribute__((unused)) purge_webkit_data_safely(void) {
     Class wkClass = NSClassFromString(@"WKWebsiteDataStore");
     if (wkClass && [wkClass respondsToSelector:@selector(allWebsiteDataTypes)] && [wkClass respondsToSelector:@selector(defaultDataStore)]) {
 #pragma clang diagnostic push
@@ -3488,19 +3488,19 @@ static NSInteger s_runtime_last_centralized_status = 0;
 static NSString *s_runtime_last_centralized_did = nil;
 static NSInteger s_runtime_qos_error_count = 0;
 
-NSInteger zt_get_last_centralized_status(void) {
+__attribute__((visibility("default"))) NSInteger zt_get_last_centralized_status(void) {
     return s_runtime_last_centralized_status;
 }
 
-NSString *zt_get_last_centralized_did(void) {
+__attribute__((visibility("default"))) NSString *zt_get_last_centralized_did(void) {
     return s_runtime_last_centralized_did;
 }
 
-NSInteger zt_get_qos_error_count(void) {
+__attribute__((visibility("default"))) NSInteger zt_get_qos_error_count(void) {
     return s_runtime_qos_error_count;
 }
 
-void zt_reset_runtime_counters(void) {
+__attribute__((visibility("default"))) void zt_reset_runtime_counters(void) {
     s_runtime_last_centralized_status = 0;
     s_runtime_last_centralized_did = nil;
     s_runtime_qos_error_count = 0;

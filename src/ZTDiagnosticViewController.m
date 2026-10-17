@@ -1362,17 +1362,18 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 // Cập nhật lại các chỉ số phần cứng & bộ nhớ runtime
                 [strongSelf refreshLiveCleanlinessStatus];
 
-                extern NSInteger zt_get_last_centralized_status(void);
-                extern NSString *zt_get_last_centralized_did(void);
-                extern NSInteger zt_get_qos_error_count(void);
+                typedef NSString* (*zt_get_did_fn_t)(void);
+                typedef NSInteger (*zt_get_qos_fn_t)(void);
 
-                NSString *lastDid = zt_get_last_centralized_did();
+                zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
+                NSString *lastDid = fn_did ? fn_did() : nil;
                 if (lastDid && lastDid.length > 0) {
                     strongSelf.info.dIdReceivedPassed = YES;
                     strongSelf.info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... ✅", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
                 }
 
-                NSInteger qosErrors = zt_get_qos_error_count();
+                zt_get_qos_fn_t fn_qos = (zt_get_qos_fn_t)dlsym(RTLD_DEFAULT, "zt_get_qos_error_count");
+                NSInteger qosErrors = fn_qos ? fn_qos() : 0;
                 strongSelf.info.qosPassed = (qosErrors == 0);
                 strongSelf.info.qosStatusText = (qosErrors == 0) ? @"0 lỗi gửi về qos-talk.123c.vn (Ổn định 100%) ✅" : [NSString stringWithFormat:@"Phát hiện %ld lỗi qos-talk ⚠️", (long)qosErrors];
 
