@@ -2023,20 +2023,24 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     memset(&st_p2, 0, sizeof(st_p2));
     memset(&st_p3, 0, sizeof(st_p3));
     NSString *libDir = [home stringByAppendingPathComponent:@"Library"];
-    if (stat("/var/mobile", &st_p1) == 0 && home && stat([home UTF8String], &st_p2) == 0 && libDir && stat([libDir UTF8String], &st_p3) == 0) {
+    uint64_t expectedBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 0ULL);
+    int r1 = stat("/var/mobile", &st_p1);
+    int r2 = home ? stat([home UTF8String], &st_p2) : -1;
+    int r3 = libDir ? stat([libDir UTF8String], &st_p3) : -1;
+    if (r1 == 0 && r2 == 0 && r3 == 0 && (!s.hasConfiguredProfile || expectedBirth == 0 || (uint64_t)st_p1.st_birthtimespec.tv_sec == expectedBirth)) {
         uint64_t t1 = ((uint64_t)st_p1.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p1.st_birthtimespec.tv_nsec / 1000000ULL);
         uint64_t t2 = ((uint64_t)st_p2.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p2.st_birthtimespec.tv_nsec / 1000000ULL);
         uint64_t t3 = ((uint64_t)st_p3.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p3.st_birthtimespec.tv_nsec / 1000000ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", t1, t2, t3];
         BOOL isDistinct3 = (t1 > 0 && t2 > t1 && t3 > t2 && (t1 % 1000ULL) != 0);
-        info.deviceIdPassed = (s.hasConfiguredProfile && isDistinct3);
-    } else if (s.hasConfiguredProfile && (s.birthTimeSec > 0 || s.bootTimeSec > 0)) {
-        uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
+        info.deviceIdPassed = (s.hasConfiguredProfile && isDistinct3 && (expectedBirth == 0 || (uint64_t)st_p1.st_birthtimespec.tv_sec == expectedBirth));
+    } else if (s.hasConfiguredProfile && expectedBirth > 0) {
+        uint64_t fakeBirth = expectedBirth;
         uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
         uint64_t delta_c = delta_m + 30ULL + ((fakeBirth * 1299709ULL) % 600ULL) + ((fakeBirth / 13ULL) % 43ULL);
         uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 850ULL + 100ULL);
-        uint64_t ms2 = (fakeBirth + delta_m) * 1000ULL + (((fakeBirth + delta_m) * 2246822519ULL) % 850ULL + 100ULL);
-        uint64_t ms3 = (fakeBirth + delta_c) * 1000ULL + (((fakeBirth + delta_c) * 3266489917ULL) % 850ULL + 100ULL);
+        uint64_t ms2 = (fakeBirth + delta_m) * 1000ULL + (((fakeBirth + delta_m) * 2654435761ULL) % 850ULL + 100ULL);
+        uint64_t ms3 = (fakeBirth + delta_c) * 1000ULL + (((fakeBirth + delta_c) * 2654435761ULL) % 850ULL + 100ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {

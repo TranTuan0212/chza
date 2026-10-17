@@ -42,11 +42,33 @@ static inline int raw_dladdr(const void *addr, Dl_info *info) {
 }
 
 static inline void universal_hook_c_function(const char *name, void *symbol, void *replace, void **result) {
+    void *ms_orig = NULL;
     if (dynamic_MSHookFunction && symbol) {
-        dynamic_MSHookFunction(symbol, replace, result);
-    } else if (name) {
-        struct rebinding r = { name, replace, result };
-        rebind_symbols(&r, 1);
+        dynamic_MSHookFunction(symbol, replace, &ms_orig);
+    }
+    if (ms_orig != NULL) {
+        if (result) *result = ms_orig;
+        // MSHookFunction đã patch trực tiếp prologue của symbol.
+        // Khi chạy bổ sung rebind_symbols cho các bảng GOT/LAZY, truyền NULL cho replaced
+        // để fishhook KHÔNG ghi đè *result bằng địa chỉ symbol đã bị patch (tránh đệ quy vô tận)!
+        if (name) {
+            struct rebinding r = { name, replace, NULL };
+            rebind_symbols(&r, 1);
+        }
+    } else {
+        // MSHookFunction không có sẵn (Sideload/Clone) hoặc từ chối patch syscall stub 12-byte (stat/lstat/fstat/getattrlist trên arm64 & arm64e):
+        // Giữ nguyên *result = symbol gốc trong libsystem_kernel.dylib và dùng fishhook rebind toàn bộ GOT/PLT!
+        if (result && symbol) {
+            *result = symbol;
+        }
+        if (name) {
+            void *fh_orig = NULL;
+            struct rebinding r = { name, replace, &fh_orig };
+            rebind_symbols(&r, 1);
+            if (result && *result == NULL && fh_orig != NULL && fh_orig != replace) {
+                *result = fh_orig;
+            }
+        }
     }
 }
 
@@ -2347,8 +2369,8 @@ static inline void get_consistent_stat_times(uint64_t fake_birth, time_t *out_mt
     if (out_mtime) *out_mtime = (time_t)(fake_birth + delta_m);
     if (out_ctime) *out_ctime = (time_t)(fake_birth + delta_c);
     if (out_nsec_b) *out_nsec_b = (long)(((fake_birth * 2654435761ULL) % 850ULL + 100ULL) * 1000000L);
-    if (out_nsec_m) *out_nsec_m = (long)((((fake_birth + delta_m) * 2246822519ULL) % 850ULL + 100ULL) * 1000000L);
-    if (out_nsec_c) *out_nsec_c = (long)((((fake_birth + delta_c) * 3266489917ULL) % 850ULL + 100ULL) * 1000000L);
+    if (out_nsec_m) *out_nsec_m = (long)((((fake_birth + delta_m) * 2654435761ULL) % 850ULL + 100ULL) * 1000000L);
+    if (out_nsec_c) *out_nsec_c = (long)((((fake_birth + delta_c) * 2654435761ULL) % 850ULL + 100ULL) * 1000000L);
 }
 
 static inline void fake_stat_timespec_for_path(const char *path, struct stat *buf, uint64_t btime) {
@@ -4306,7 +4328,7 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
         universal_hook_c_function("getattrlist", (void *)getattrlist, (void *)my_getattrlist, (void **)&orig_getattrlist);
-        if (!dynamic_MSHookFunction) {
+        {
             struct rebinding inode64_rebs[] = {
                 { "stat$INODE64", (void *)my_stat, NULL },
                 { "lstat$INODE64", (void *)my_lstat, NULL },

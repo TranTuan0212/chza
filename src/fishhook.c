@@ -32,6 +32,14 @@ typedef struct nlist nlist_t;
 #define SEG_DATA_CONST "__DATA_CONST"
 #endif
 
+#ifndef SEG_AUTH_CONST
+#define SEG_AUTH_CONST "__AUTH_CONST"
+#endif
+
+#ifndef SEG_AUTH
+#define SEG_AUTH "__AUTH"
+#endif
+
 struct rebindings_entry {
     struct rebinding *rebindings;
     size_t rebindings_nel;
@@ -39,6 +47,7 @@ struct rebindings_entry {
 };
 
 static struct rebindings_entry *_rebindings_head;
+static int (*s_fishhook_dladdr)(const void *, Dl_info *) = NULL;
 
 static int prepend_rebindings(struct rebindings_entry **head,
                               struct rebinding rebindings[],
@@ -65,7 +74,8 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                            nlist_t *symtab,
                                            char *strtab,
                                            uint32_t *indirect_symtab) {
-    const bool isDataConst = strcmp(section->segname, SEG_DATA_CONST) == 0;
+    const bool isDataConst = (strcmp(section->segname, SEG_DATA_CONST) == 0 ||
+                              strcmp(section->segname, SEG_AUTH_CONST) == 0);
     uint32_t *indirect_symbol_indices = indirect_symtab + section->reserved1;
     void **indirect_symbol_bindings = (void **)((uintptr_t)slide + section->addr);
 
@@ -95,7 +105,8 @@ static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                 if (symbol_name_longer_than_one && strcmp(&symbol_name[1], cur->rebindings[j].name) == 0) {
                     if (cur->rebindings[j].replacement != NULL &&
                         indirect_symbol_bindings[i] != cur->rebindings[j].replacement) {
-                        if (cur->rebindings[j].replaced != NULL) {
+                        if (cur->rebindings[j].replaced != NULL &&
+                            *(cur->rebindings[j].replaced) == NULL) {
                             *(cur->rebindings[j].replaced) = indirect_symbol_bindings[i];
                         }
                         indirect_symbol_bindings[i] = cur->rebindings[j].replacement;
@@ -113,16 +124,21 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
                                      const struct mach_header *header,
                                      intptr_t slide) {
     Dl_info info;
-    if (dladdr(header, &info) == 0 || !info.dli_fname) {
+    int (*dladdr_fn)(const void *, Dl_info *) = s_fishhook_dladdr ? s_fishhook_dladdr : dladdr;
+    if (dladdr_fn(header, &info) == 0 || !info.dli_fname) {
         return;
     }
 
     // Bảo vệ tối thượng chống SIGBUS(10):
-    // BỎ QUA toàn bộ các thư viện hệ thống trong dyld shared cache (/System/Library/ và /usr/lib/).
-    // CHỈ hook vào Zalo App và các Framework nằm trong Sandbox Bundle của App!
+    // BỎ QUA các thư viện hệ thống trong dyld shared cache (/System/Library/ và /usr/lib/),
+    // NHƯNG CHO PHÉP hook vào Zalo App, các Framework của Zalo, và chính Zalotweak.dylib (kể cả khi nằm trong /usr/lib/TweakInject trên Rootless/Roothide)!
     const char *path = info.dli_fname;
-    if (strstr(path, "/System/Library/") != NULL ||
-        strstr(path, "/usr/lib/") != NULL) {
+    bool isTweakImage = (strstr(path, "Zalotweak") != NULL ||
+                         strstr(path, "zalotweak") != NULL ||
+                         strstr(path, "TweakInject") != NULL);
+    if (!isTweakImage &&
+        (strstr(path, "/System/Library/") != NULL ||
+         strstr(path, "/usr/lib/") != NULL)) {
         return;
     }
 
@@ -160,7 +176,9 @@ static void rebind_symbols_for_image(struct rebindings_entry *rebindings,
         cur_seg_cmd = (segment_command_t *)cur;
         if (cur_seg_cmd->cmd == LC_SEGMENT_ARCH_DEPENDENT) {
             if (strcmp(cur_seg_cmd->segname, SEG_DATA) != 0 &&
-                strcmp(cur_seg_cmd->segname, SEG_DATA_CONST) != 0) {
+                strcmp(cur_seg_cmd->segname, SEG_DATA_CONST) != 0 &&
+                strcmp(cur_seg_cmd->segname, SEG_AUTH_CONST) != 0 &&
+                strcmp(cur_seg_cmd->segname, SEG_AUTH) != 0) {
                 continue;
             }
             for (uint j = 0; j < cur_seg_cmd->nsects; j++) {
@@ -186,6 +204,10 @@ int rebind_symbols_image(void *header,
                          intptr_t slide,
                          struct rebinding rebindings[],
                          size_t rebindings_nel) {
+    if (!s_fishhook_dladdr) {
+        s_fishhook_dladdr = (int (*)(const void *, Dl_info *))dlsym(RTLD_DEFAULT, "dladdr");
+        if (!s_fishhook_dladdr) s_fishhook_dladdr = dladdr;
+    }
     struct rebindings_entry *entry = (struct rebindings_entry *) malloc(sizeof(struct rebindings_entry));
     if (!entry) {
         return -1;
@@ -199,6 +221,10 @@ int rebind_symbols_image(void *header,
 }
 
 int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel) {
+    if (!s_fishhook_dladdr) {
+        s_fishhook_dladdr = (int (*)(const void *, Dl_info *))dlsym(RTLD_DEFAULT, "dladdr");
+        if (!s_fishhook_dladdr) s_fishhook_dladdr = dladdr;
+    }
     int retval = prepend_rebindings(&_rebindings_head, rebindings, rebindings_nel);
     if (retval < 0) {
         return retval;
