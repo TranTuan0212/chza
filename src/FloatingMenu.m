@@ -2233,10 +2233,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.countryApiPassed = YES;
     info.countryApiText = @"register.zaloapp.com/api/helper/getDefaultCountry (Sẵn sàng) ✅";
 
-    // Kiểm tra interface thực tế từ getifaddrs
+    // Kiểm tra interface thực tế qua bộ lọc ngụy trang zt_get_masked_ifaddrs của Tweak
     struct ifaddrs *interfaces = NULL;
     BOOL utunFound = NO;
-    if (getifaddrs(&interfaces) == 0) {
+    typedef int (*zt_masked_ifaddrs_fn_t)(struct ifaddrs **);
+    zt_masked_ifaddrs_fn_t fn_ifaddrs = (zt_masked_ifaddrs_fn_t)dlsym(RTLD_DEFAULT, "zt_get_masked_ifaddrs");
+    int ret = fn_ifaddrs ? fn_ifaddrs(&interfaces) : getifaddrs(&interfaces);
+    if (ret == 0 && interfaces) {
         struct ifaddrs *temp = interfaces;
         while (temp) {
             if (temp->ifa_name) {
@@ -2249,8 +2252,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         freeifaddrs(interfaces);
     }
     info.ifaddrsCleanPassed = !utunFound;
-    info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip/en0 bảo toàn ✅";
-    info.networkBundleIdText = isClone ? [NSString stringWithFormat:@"Kernel: %@ | Zalo: vn.com.vng.zingalo ✅", info.bundleId] : @"vn.com.vng.zingalo (Gốc) ✅";
+    info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
+    info.networkBundleIdText = isClone ? [NSString stringWithFormat:@"Kernel: %@ | Zalo: vn.com.vng.zingalo", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
 
     // 2. Định Danh Centralized & Telemetry
     zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");

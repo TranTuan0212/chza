@@ -39,6 +39,7 @@ __attribute__((visibility("default"))) void zt_reset_runtime_counters(void);
 __attribute__((visibility("default"))) NSInteger zt_get_last_centralized_status(void);
 __attribute__((visibility("default"))) NSString *zt_get_last_centralized_did(void);
 __attribute__((visibility("default"))) NSInteger zt_get_qos_error_count(void);
+__attribute__((visibility("default"))) int zt_get_masked_ifaddrs(struct ifaddrs **ifap);
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
 #if __has_feature(ptrauth_calls)
@@ -2418,6 +2419,10 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
         logAudit(@"VPN-CHECK", @"Quét danh sách getifaddrs -> [ĐÃ ẨN SẠCH TUN/UTUN -> pdp_ip9]");
     }
     return 0;
+}
+
+__attribute__((visibility("default"))) int zt_get_masked_ifaddrs(struct ifaddrs **ifap) {
+    return my_getifaddrs(ifap);
 }
 
 

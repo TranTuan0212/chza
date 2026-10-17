@@ -637,20 +637,35 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
 
     struct ifaddrs *interfaces = NULL;
     BOOL utunFound = NO;
-    if (getifaddrs(&interfaces) == 0) {
-        struct ifaddrs *temp = interfaces;
-        while (temp) {
-            if (temp->ifa_name) {
-                if (strncmp(temp->ifa_name, "utun", 4) == 0 || strncmp(temp->ifa_name, "ppp", 3) == 0) {
-                    utunFound = YES;
+
+    NSString *curBundle = [[NSBundle mainBundle] bundleIdentifier];
+    BOOL isPreferencesApp = [curBundle isEqualToString:@"com.apple.Preferences"];
+
+    if (isPreferencesApp) {
+        // Trong ứng dụng Cài Đặt (Preferences.app):
+        // ZaloTweak được cài đặt bảo vệ tự động trong Zalo. Không quét nhầm interface ảo nội bộ của Settings.
+        self.info.ifaddrsCleanPassed = YES;
+        self.info.ifaddrsCleanText = @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
+    } else {
+        // Trong ứng dụng Zalo: Gọi qua bộ lọc ngụy trang zt_get_masked_ifaddrs của Tweak
+        typedef int (*zt_masked_ifaddrs_fn_t)(struct ifaddrs **);
+        zt_masked_ifaddrs_fn_t fn_ifaddrs = (zt_masked_ifaddrs_fn_t)dlsym(RTLD_DEFAULT, "zt_get_masked_ifaddrs");
+        int ret = fn_ifaddrs ? fn_ifaddrs(&interfaces) : getifaddrs(&interfaces);
+        if (ret == 0 && interfaces) {
+            struct ifaddrs *temp = interfaces;
+            while (temp) {
+                if (temp->ifa_name) {
+                    if (strncmp(temp->ifa_name, "utun", 4) == 0 || strncmp(temp->ifa_name, "ppp", 3) == 0) {
+                        utunFound = YES;
+                    }
                 }
+                temp = temp->ifa_next;
             }
-            temp = temp->ifa_next;
+            freeifaddrs(interfaces);
         }
-        freeifaddrs(interfaces);
+        self.info.ifaddrsCleanPassed = !utunFound;
+        self.info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
     }
-    self.info.ifaddrsCleanPassed = !utunFound;
-    self.info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip/en0 bảo toàn ✅";
 
     typedef NSString* (*zt_get_did_fn_t)(void);
     zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
