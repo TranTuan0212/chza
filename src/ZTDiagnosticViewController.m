@@ -1,4 +1,5 @@
 #import "ZTDiagnosticViewController.h"
+#import "Config.h"
 #import <CFNetwork/CFNetwork.h>
 #import <sys/sysctl.h>
 #import <sys/stat.h>
