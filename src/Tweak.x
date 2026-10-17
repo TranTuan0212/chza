@@ -35,10 +35,29 @@
 #import "DeviceProfilePool.h"
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
+#if __has_feature(ptrauth_calls)
+#import <ptrauth.h>
+#endif
+
+static inline void *strip_pac_ptr(const void *ptr) {
+    if (!ptr) return NULL;
+#if __has_feature(ptrauth_calls)
+    return ptrauth_strip((void *)ptr, ptrauth_key_asia);
+#elif defined(__arm64e__)
+    void *ret = (void *)ptr;
+    asm volatile("xpaci %0" : "+r"(ret));
+    return ret;
+#else
+    return (void *)((uintptr_t)ptr & 0x00007FFFFFFFFFFFULL);
+#endif
+}
+
 static int (*orig_dladdr)(const void *addr, Dl_info *info) = NULL;
 
 static inline int raw_dladdr(const void *addr, Dl_info *info) {
-    return orig_dladdr ? orig_dladdr(addr, info) : dladdr(addr, info);
+    if (!addr) return 0;
+    const void *clean_addr = strip_pac_ptr(addr);
+    return orig_dladdr ? orig_dladdr(clean_addr, info) : dladdr(clean_addr, info);
 }
 
 static inline void universal_hook_c_function(const char *name, void *symbol, void *replace, void **result) {
@@ -148,7 +167,7 @@ static inline BOOL is_device_jailbroken(void) {
     return NO;
 }
 
-static inline BOOL is_zalo_caller(void *addr0) {
+static inline BOOL is_zalo_caller(const void *addr0) {
     if (!addr0) return NO;
     Dl_info info0;
     if (raw_dladdr(addr0, &info0) && info0.dli_fname) {
@@ -164,27 +183,24 @@ static inline BOOL is_zalo_caller(void *addr0) {
     return NO;
 }
 
-static inline BOOL is_zalo_or_tweak_caller(void *addr0) {
-    if (!addr0) return NO;
-    if (is_zalo_caller(addr0)) return YES;
-    Dl_info info0;
-    if (raw_dladdr(addr0, &info0) && info0.dli_fname) {
-        const char *f0 = info0.dli_fname;
-        if (strstr(f0, "Zalotweak") != NULL) {
-            return YES;
+static inline BOOL is_zalo_or_tweak_caller(const void *addr0, const void *addr1) {
+    if (is_zalo_caller(addr0) || is_zalo_caller(addr1)) return YES;
+    const void *addrs[2] = {addr0, addr1};
+    for (int i = 0; i < 2; i++) {
+        if (!addrs[i]) continue;
+        Dl_info info0;
+        if (raw_dladdr(addrs[i], &info0) && info0.dli_fname) {
+            const char *f0 = info0.dli_fname;
+            if (strstr(f0, "Zalotweak") != NULL) {
+                return YES;
+            }
         }
     }
     return NO;
 }
 
-static inline BOOL is_system_caller(void *addr0, void *addr1) {
-    // 1. Nếu trực tiếp người gọi (addr0) là code nằm trong Zalo.app (chính app Zalo gọi):
-    if (is_zalo_caller(addr0)) {
-        return NO; // Chắc chắn là code thực thi của Zalo, không phải hệ thống
-    }
-
-    // 2. Kiểm tra nếu là các framework/daemon hệ thống của Apple
-    void *addrs[2] = {addr0, addr1};
+static inline BOOL is_system_caller(const void *addr0, const void *addr1) {
+    const void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
         if (!addrs[i]) continue;
         Dl_info info;
@@ -198,6 +214,7 @@ static inline BOOL is_system_caller(void *addr0, void *addr1) {
                 strstr(fname, "CoreTelephony") != NULL ||
                 strstr(fname, "UserNotifications") != NULL ||
                 strstr(fname, "CoreFoundation") != NULL ||
+                strstr(fname, "Foundation") != NULL ||
                 strstr(fname, "Security") != NULL ||
                 strstr(fname, "SystemConfiguration") != NULL ||
                 strstr(fname, "Substrate") != NULL ||
@@ -448,6 +465,7 @@ static BOOL s_logged_c_info_bid = NO;
 static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
     s_logged_c_bid = NO;
     s_logged_c_info_bid = NO;
+    zt_reset_runtime_counters();
 
     NSString *home = NSHomeDirectory();
     if (!home) return;
@@ -1650,13 +1668,59 @@ static int my_uname(struct utsname *buf) {
 
 %end
 
+@interface ZTFakeCarrier : NSObject
+@property (nonatomic, copy) NSString *carrierName;
+@property (nonatomic, copy) NSString *mobileCountryCode;
+@property (nonatomic, copy) NSString *mobileNetworkCode;
+@property (nonatomic, copy) NSString *isoCountryCode;
+@property (nonatomic, assign) BOOL allowsVOIP;
+@end
+
+@implementation ZTFakeCarrier
+- (NSString *)carrierName {
+    return [ZTSettings sharedSettings].carrierName ?: @"Viettel";
+}
+- (NSString *)mobileCountryCode {
+    return [ZTSettings sharedSettings].carrierMCC ?: @"452";
+}
+- (NSString *)mobileNetworkCode {
+    return [ZTSettings sharedSettings].carrierMNC ?: @"04";
+}
+- (NSString *)isoCountryCode {
+    return [ZTSettings sharedSettings].carrierCountryCode ?: @"vn";
+}
+- (BOOL)allowsVOIP {
+    return YES;
+}
+- (BOOL)isKindOfClass:(Class)aClass {
+    if (aClass == NSClassFromString(@"CTCarrier")) return YES;
+    return [super isKindOfClass:aClass];
+}
+- (BOOL)respondsToSelector:(SEL)aSelector {
+    if (aSelector == @selector(carrierName) ||
+        aSelector == @selector(mobileCountryCode) ||
+        aSelector == @selector(mobileNetworkCode) ||
+        aSelector == @selector(isoCountryCode) ||
+        aSelector == @selector(allowsVOIP)) {
+        return YES;
+    }
+    return [super respondsToSelector:aSelector];
+}
+@end
+
 static CTCarrier *get_fake_carrier(void) {
     static CTCarrier *s_fake = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        @try {
-            s_fake = [[NSClassFromString(@"CTCarrier") alloc] init];
-        } @catch (NSException *e) {}
+        Class ctCls = NSClassFromString(@"CTCarrier");
+        if (ctCls) {
+            @try {
+                s_fake = (CTCarrier *)class_createInstance(ctCls, 0);
+            } @catch (NSException *e) {}
+        }
+        if (!s_fake) {
+            s_fake = (CTCarrier *)[[ZTFakeCarrier alloc] init];
+        }
     });
     return s_fake;
 }
@@ -1900,7 +1964,9 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
     if (ret == 0 && tp && is_tweak_active()) {
         if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_MONOTONIC_RAW ||
             clk_id == CLOCK_UPTIME_RAW || clk_id == 8 /* CLOCK_MONOTONIC_RAW_APPROX */ || clk_id == 9 /* CLOCK_UPTIME_RAW_APPROX */) {
-            if (is_zalo_or_tweak_caller(__builtin_return_address(0))) {
+            void *c0 = __builtin_return_address(0);
+            void *c1 = __builtin_return_address(1);
+            if (is_zalo_or_tweak_caller(c0, c1)) {
                 double contUp = 0, awakeUp = 0;
                 get_consistent_uptimes(&contUp, &awakeUp);
                 double target = (clk_id == CLOCK_UPTIME_RAW || clk_id == 9) ? awakeUp : contUp;
@@ -1918,20 +1984,28 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
 
 static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
-    if (is_tweak_active() && is_zalo_or_tweak_caller(__builtin_return_address(0))) {
-        double contUp = 0;
-        get_consistent_uptimes(&contUp, NULL);
-        return seconds_to_mach_ticks(contUp);
+    if (is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        void *c1 = __builtin_return_address(1);
+        if (is_zalo_or_tweak_caller(c0, c1)) {
+            double contUp = 0;
+            get_consistent_uptimes(&contUp, NULL);
+            return seconds_to_mach_ticks(contUp);
+        }
     }
     return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
 }
 
 static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
-    if (is_tweak_active() && is_zalo_or_tweak_caller(__builtin_return_address(0))) {
-        double awakeUp = 0;
-        get_consistent_uptimes(NULL, &awakeUp);
-        return seconds_to_mach_ticks(awakeUp);
+    if (is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        void *c1 = __builtin_return_address(1);
+        if (is_zalo_or_tweak_caller(c0, c1)) {
+            double awakeUp = 0;
+            get_consistent_uptimes(NULL, &awakeUp);
+            return seconds_to_mach_ticks(awakeUp);
+        }
     }
     return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
 }
@@ -2171,7 +2245,7 @@ static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
         if (bundle == mb || !bundle) {
             void *caller0 = __builtin_return_address(0);
             void *caller1 = __builtin_return_address(1);
-            if (!is_system_caller(caller0, caller1)) {
+            if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
                 if (!s_logged_c_bid) {
                     s_logged_c_bid = YES;
                     logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetIdentifier() -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
@@ -2198,7 +2272,7 @@ static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFS
             if (bundle == mb || !bundle) {
                 void *caller0 = __builtin_return_address(0);
                 void *caller1 = __builtin_return_address(1);
-                if (!is_system_caller(caller0, caller1)) {
+                if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
                     if (!s_logged_c_info_bid) {
                         s_logged_c_info_bid = YES;
                         logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetValueForInfoDictionaryKey(CFBundleIdentifier) -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
@@ -2234,9 +2308,12 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
         return ret;
     }
 
-    // TUYỆT ĐỐI BẢO VỆ TẦNG MẠNG HỆ THỐNG: Nếu caller là Network.framework, CFNetwork, libsystem:
-    // giữ nguyên toàn bộ interface (kể cả utun) để socket không bị lỗi EINVAL 22 / Status -1000!
-    if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
+    void *c0 = __builtin_return_address(0);
+    void *c1 = __builtin_return_address(1);
+    if (!is_zalo_caller(c0) && !is_zalo_caller(c1)) {
+        return 0;
+    }
+    if (is_system_caller(c0, c1)) {
         return 0;
     }
 
@@ -2951,14 +3028,15 @@ static BOOL s_in_bundle_hook = NO;
         }
 
         // BẢO VỆ TẦNG MẠNG & KERNEL IOS:
-        // Nếu caller là các daemon/framework hệ thống (CFNetwork, Network, Security...), trả về Bundle ID gốc của bản clone
-        // để Kernel NECP cấp quyền mở socket 4G/Wifi bình thường, tránh lỗi EINVAL 22 / Status -1000
-        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
-            return %orig;
+        // CHỈ BẺ HƯỚNG KHI VÀ CHỈ KHI CALLER THỰC SỰ LÀ CODE CỦA ZALO APP
+        void *caller0 = __builtin_return_address(0);
+        void *caller1 = __builtin_return_address(1);
+        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
+            logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+            return @"vn.com.vng.zingalo";
         }
 
-        logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-        return @"vn.com.vng.zingalo";
+        return %orig;
     }
     return %orig;
 }
@@ -2973,11 +3051,13 @@ static BOOL s_in_bundle_hook = NO;
         if (isOrig) {
             return %orig;
         }
-        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
-            return %orig;
+        void *caller0 = __builtin_return_address(0);
+        void *caller1 = __builtin_return_address(1);
+        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
+            logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+            return @"vn.com.vng.zingalo";
         }
-        logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-        return @"vn.com.vng.zingalo";
+        return %orig;
     }
     return %orig;
 }
@@ -2993,12 +3073,14 @@ static BOOL s_in_bundle_hook = NO;
         if (isOrig) {
             return dict;
         }
-        if (is_system_caller(__builtin_return_address(0), __builtin_return_address(1))) {
-            return dict;
+        void *caller0 = __builtin_return_address(0);
+        void *caller1 = __builtin_return_address(1);
+        if ((is_zalo_caller(caller0) || is_zalo_caller(caller1)) && !is_system_caller(caller0, caller1)) {
+            NSMutableDictionary *mDict = [dict mutableCopy];
+            mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
+            return mDict;
         }
-        NSMutableDictionary *mDict = [dict mutableCopy];
-        mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
-        return mDict;
+        return dict;
     }
     return dict;
 }
@@ -3395,12 +3477,63 @@ static void append_to_har_file(NSDictionary *entryDict) {
     });
 }
 
+static NSInteger s_runtime_last_centralized_status = 0;
+static NSString *s_runtime_last_centralized_did = nil;
+static NSInteger s_runtime_qos_error_count = 0;
+
+NSInteger zt_get_last_centralized_status(void) {
+    return s_runtime_last_centralized_status;
+}
+
+NSString *zt_get_last_centralized_did(void) {
+    return s_runtime_last_centralized_did;
+}
+
+NSInteger zt_get_qos_error_count(void) {
+    return s_runtime_qos_error_count;
+}
+
+void zt_reset_runtime_counters(void) {
+    s_runtime_last_centralized_status = 0;
+    s_runtime_last_centralized_did = nil;
+    s_runtime_qos_error_count = 0;
+}
+
 static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {
-    if (![ZTSettings sharedSettings].enableAuditLog) return;
     if (!request || !request.URL) return;
 
     NSURL *url = request.URL;
     NSString *urlStr = url.absoluteString ?: @"";
+
+    NSInteger statusCode = 0;
+    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+        statusCode = ((NSHTTPURLResponse *)response).statusCode;
+    } else if (error) {
+        statusCode = error.code;
+    }
+
+    if ([urlStr containsString:@"centralized.zaloapp.com"]) {
+        s_runtime_last_centralized_status = statusCode;
+        if (respData && respData.length > 0) {
+            @try {
+                id jObj = [NSJSONSerialization JSONObjectWithData:respData options:0 error:nil];
+                if ([jObj isKindOfClass:[NSDictionary class]]) {
+                    id dataObj = jObj[@"data"];
+                    if ([dataObj isKindOfClass:[NSDictionary class]]) {
+                        NSString *did = dataObj[@"dId"] ?: dataObj[@"did"];
+                        if (did && did.length > 0) {
+                            s_runtime_last_centralized_did = [did copy];
+                        }
+                    }
+                }
+            } @catch (NSException *e) {}
+        }
+    }
+    if ([urlStr containsString:@"qos-talk.123c.vn"]) {
+        s_runtime_qos_error_count++;
+    }
+
+    if (![ZTSettings sharedSettings].enableAuditLog) return;
     NSString *method = request.HTTPMethod ?: @"GET";
 
     NSTimeInterval duration = finishDate ? [finishDate timeIntervalSinceDate:startDate] : 0;
@@ -3667,6 +3800,12 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 extModified = YES;
             }
         }
+        if (settings.carrierName.length > 0 && [newExt containsString:@"\"mno\":\"\""]) {
+            NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+            [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, newExt.length)];
+            extModified = YES;
+            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền carrierName vào Header extInfo: %@", settings.carrierName]);
+        }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
             modified = YES;
@@ -3741,11 +3880,13 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                         bodyModified = YES;
                         logAudit(@"OUTBOUND-SANITIZE", @"Đã khử rò rỉ ngôn ngữ vi-VN trong centralized telemetry -> [ĐÃ FAKE] en-US");
                     }
-                    if (settings.carrierName.length > 0 && [mutBody containsString:@"\"mno\":\"\""]) {
-                        NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
-                        [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                    }
+                }
+
+                if (settings.carrierName.length > 0 && [mutBody containsString:@"\"mno\":\"\""]) {
+                    NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+                    [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, mutBody.length)];
+                    bodyModified = YES;
+                    logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền carrierName vào centralized telemetry body: %@", settings.carrierName]);
                 }
 
                 if (bodyModified) {

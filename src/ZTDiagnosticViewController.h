@@ -119,12 +119,62 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *matchCarrierReason;
 @property (nonatomic, copy, nullable) NSString *suggestedCarrier;
 
+// ==========================================
+// PRE-FLIGHT AUDIT 8/8 NHÓM CHỈ SỐ CỐT LÕI
+// ==========================================
+// Nhóm 1: Kết Nối Mạng & Socket (Cellular / Wifi)
+@property (nonatomic, assign) BOOL socketCellularPassed;
+@property (nonatomic, copy, nullable) NSString *socketCellularText;
+@property (nonatomic, assign) BOOL countryApiPassed;
+@property (nonatomic, copy, nullable) NSString *countryApiText;
+@property (nonatomic, assign) BOOL ifaddrsCleanPassed;
+@property (nonatomic, copy, nullable) NSString *ifaddrsCleanText;
+@property (nonatomic, copy, nullable) NSString *networkBundleIdText;
+
+// Nhóm 2: Định Danh Máy Chủ Zalo (Centralized ID & Telemetry)
+@property (nonatomic, assign) BOOL dIdReceivedPassed;
+@property (nonatomic, copy, nullable) NSString *dIdStatusText;
+@property (nonatomic, assign) BOOL zagidReceivedPassed;
+@property (nonatomic, copy, nullable) NSString *zagidStatusText;
+@property (nonatomic, assign) BOOL qosPassed;
+@property (nonatomic, copy, nullable) NSString *qosStatusText;
+
+// Nhóm 3: Thông Tin SIM & Nhà Mạng (MNO)
+@property (nonatomic, assign) BOOL mnoCleanPassed;
+@property (nonatomic, copy, nullable) NSString *mnoStatusText;
+
+// Nhóm 4: Đồng Bộ 3 Tầng Đồng Hồ Uptime
+@property (nonatomic, copy, nullable) NSString *uptime3ClockDetails;
+
+// Nhóm 5: Bộ 3 Timestamp device_id (/var/mobile)
+@property (nonatomic, copy, nullable) NSString *deviceIdDetails;
+
+// Nhóm 6: Phần Cứng & Hệ Điều Hành
+@property (nonatomic, copy, nullable) NSString *hardwareSummaryText;
+
+// Nhóm 7: Ẩn Dấu Vết Jailbreak & PAC Stripping
+@property (nonatomic, assign) BOOL pacStripPassed;
+@property (nonatomic, copy, nullable) NSString *pacStripText;
+@property (nonatomic, assign) BOOL jbHidePassed;
+@property (nonatomic, copy, nullable) NSString *jbHideText;
+
+// Nhóm 8: Push Notification Tokens (APNs & VoIP)
+@property (nonatomic, copy, nullable) NSString *pushTokensSummary;
+
+// Tổng kết Pre-flight
+@property (nonatomic, assign) BOOL preflightCompleted;
+@property (nonatomic, assign) BOOL preflightAllPassed;
+@property (nonatomic, copy, nullable) NSString *preflightScoreText;
+@property (nonatomic, copy, nullable) NSString *preflightVerdictTitle;
+@property (nonatomic, copy, nullable) NSString *preflightVerdictDesc;
+
 @end
 
 @interface ZTDiagnosticViewController : UIViewController
 
 - (instancetype)initWithInfo:(ZTDiagnosticInfo *)info;
 + (void)presentFrom:(UIViewController *)presenter info:(ZTDiagnosticInfo *)info;
+- (void)runPreflightLiveAuditWithCompletion:(nullable void (^)(void))completion;
 
 @end
 
