@@ -34,6 +34,11 @@
 #import "FloatingMenu.h"
 #import "DeviceProfilePool.h"
 
+void zt_reset_runtime_counters(void);
+NSInteger zt_get_last_centralized_status(void);
+NSString *zt_get_last_centralized_did(void);
+NSInteger zt_get_qos_error_count(void);
+
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
 #if __has_feature(ptrauth_calls)
 #import <ptrauth.h>
@@ -1677,6 +1682,8 @@ static int my_uname(struct utsname *buf) {
 @end
 
 @implementation ZTFakeCarrier
+@dynamic carrierName, mobileCountryCode, mobileNetworkCode, isoCountryCode, allowsVOIP;
+
 - (NSString *)carrierName {
     return [ZTSettings sharedSettings].carrierName ?: @"Viettel";
 }
@@ -3540,7 +3547,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
     uint64_t durationMs = (uint64_t)(duration * 1000.0);
 
     NSHTTPURLResponse *httpResp = [response isKindOfClass:[NSHTTPURLResponse class]] ? (NSHTTPURLResponse *)response : nil;
-    NSInteger statusCode = httpResp ? httpResp.statusCode : (error ? error.code : 0);
+    statusCode = httpResp ? httpResp.statusCode : (error ? error.code : 0);
     NSString *statusText = httpResp ? [NSHTTPURLResponse localizedStringForStatusCode:statusCode] : (error ? [error localizedDescription] : @"Pending/Unknown");
 
     // Diễn giải mục đích nghiệp vụ của request Zalo
