@@ -724,6 +724,7 @@ static void purge_entire_sandbox_safely(void) {
         self.proxyPort = [dict[@"proxyPort"] unsignedShortValue];
         self.proxyUser = dict[@"proxyUser"] ?: @"";
         self.proxyPass = dict[@"proxyPass"] ?: @"";
+        self.centralizedDid = dict[@"centralizedDid"] ?: @"";
 
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
         self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
@@ -863,6 +864,7 @@ static void purge_entire_sandbox_safely(void) {
         self.proxyPort = 0;
         self.proxyUser = @"";
         self.proxyPass = @"";
+        self.centralizedDid = @"";
         self.spoofedSerial = @"";
         self.spoofedWifiMAC = @"";
         self.spoofedBluetoothMAC = @"";
@@ -909,6 +911,7 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"proxyPort"] = @(self.proxyPort);
     dict[@"proxyUser"] = self.proxyUser ?: @"";
     dict[@"proxyPass"] = self.proxyPass ?: @"";
+    if (self.centralizedDid) dict[@"centralizedDid"] = self.centralizedDid;
     dict[@"deviceMachine"] = self.deviceMachine;
     dict[@"deviceModel"] = self.deviceModel;
     dict[@"deviceName"] = self.deviceName;
@@ -2388,7 +2391,7 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
 
     void *c0 = __builtin_return_address(0);
     void *c1 = __builtin_return_address(1);
-    if (!is_zalo_caller(c0) && !is_zalo_caller(c1)) {
+    if (!is_zalo_or_tweak_caller(c0, c1)) {
         return 0;
     }
     if (is_system_caller(c0, c1)) {
@@ -3599,7 +3602,10 @@ __attribute__((visibility("default"))) NSInteger zt_get_last_centralized_status(
 }
 
 __attribute__((visibility("default"))) NSString *zt_get_last_centralized_did(void) {
-    return s_runtime_last_centralized_did;
+    if (s_runtime_last_centralized_did && s_runtime_last_centralized_did.length > 0) {
+        return s_runtime_last_centralized_did;
+    }
+    return [ZTSettings sharedSettings].centralizedDid;
 }
 
 __attribute__((visibility("default"))) NSInteger zt_get_qos_error_count(void) {
@@ -3634,9 +3640,13 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
                 if ([jObj isKindOfClass:[NSDictionary class]]) {
                     id dataObj = jObj[@"data"];
                     if ([dataObj isKindOfClass:[NSDictionary class]]) {
-                        NSString *did = dataObj[@"dId"] ?: dataObj[@"did"];
+                        NSString *did = dataObj[@"deviceId"] ?: (dataObj[@"dId"] ?: dataObj[@"did"]);
                         if (did && did.length > 0) {
                             s_runtime_last_centralized_did = [did copy];
+                            if (![[ZTSettings sharedSettings].centralizedDid isEqualToString:did]) {
+                                [ZTSettings sharedSettings].centralizedDid = [did copy];
+                                [[ZTSettings sharedSettings] saveSettings];
+                            }
                         }
                     }
                 }

@@ -715,7 +715,6 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     }
 
     BOOL isPL = NO;
-    BOOL isVN = NO;
     BOOL isUS = NO;
     NSString *cleanDigits = [digits copy];
 
@@ -727,12 +726,11 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     } else if (cleanDigits.length == 9 && ([cleanDigits hasPrefix:@"4"] || [cleanDigits hasPrefix:@"5"] || [cleanDigits hasPrefix:@"6"] || [cleanDigits hasPrefix:@"7"] || [cleanDigits hasPrefix:@"8"])) {
         isPL = YES;
     } else if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
-        isVN = YES;
         if ([cleanDigits hasPrefix:@"84"]) {
             cleanDigits = [@"0" stringByAppendingString:[cleanDigits substringFromIndex:2]];
         }
     } else if ([cleanDigits hasPrefix:@"0"] && cleanDigits.length == 10) {
-        isVN = YES;
+        // VN mobile number
     } else if ([rawPhone hasPrefix:@"+1"] || ([cleanDigits hasPrefix:@"1"] && cleanDigits.length == 11)) {
         isUS = YES;
         if ([cleanDigits hasPrefix:@"1"]) {

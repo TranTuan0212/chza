@@ -516,22 +516,6 @@ UIViewController *ZTGetTopViewController(void) {
 
     ZTSettings *settings = [ZTSettings sharedSettings];
     BOOL isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
-    NSString *licStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
-
-    NSString *title = [NSString stringWithFormat:@"⚡ ZALOTWEAK | %@", licStatusText];
-    NSString *guidance;
-    if (!isLicensed) {
-        if (settings.hasConfiguredProfile) {
-            guidance = @"⚠️ BẢN QUYỀN ĐÃ HẾT HẠN!\nProfile máy ảo hiện tại ĐÃ ĐƯỢC ĐÓNG BĂNG để bảo vệ tài khoản Zalo của bạn.\nCác chức năng Wipe và Đổi máy bị tạm khóa cho đến khi gia hạn.";
-        } else {
-            guidance = @"⚠️ BƯỚC ĐẦU TIÊN: Bấm nút Bản Quyền bên dưới để KÍCH HOẠT KEY!\nHiện tại app đang dùng máy thật. Hãy kích hoạt Key và bấm [1️⃣] để bắt đầu giả lập máy mới.";
-        }
-    } else {
-        guidance = @"📋 QUY TRÌNH REG ACC CHUẨN:\n"
-                   @"▶️ Bước 1: Bấm [1️⃣ Deep Wipe Sạch & Cấp Máy Mới] (Chọn SIM -> App tự dọn sạch & thoát)\n"
-                   @"▶️ Bước 2: Bật/Tắt Chế Độ Máy Bay trong 5 giây để đổi IP 4G (hoặc bật Proxy)\n"
-                   @"▶️ Bước 3: Bấm [2️⃣ Đối Chiếu SĐT + Proxy] -> Dán SĐT & Proxy -> Thấy 🟢 là Reg acc an toàn!";
-    }
 
     NSString *deviceDisplay;
     if (settings.hasConfiguredProfile) {
@@ -1230,7 +1214,6 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
     }
 
     BOOL isPL = NO;
-    BOOL isVN = NO;
     BOOL isUS = NO;
     NSString *cleanDigits = [digits copy];
 
@@ -1242,12 +1225,11 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
     } else if (cleanDigits.length == 9 && ([cleanDigits hasPrefix:@"4"] || [cleanDigits hasPrefix:@"5"] || [cleanDigits hasPrefix:@"6"] || [cleanDigits hasPrefix:@"7"] || [cleanDigits hasPrefix:@"8"])) {
         isPL = YES;
     } else if ([rawPhone hasPrefix:@"+84"] || [cleanDigits hasPrefix:@"84"]) {
-        isVN = YES;
         if ([cleanDigits hasPrefix:@"84"]) {
             cleanDigits = [@"0" stringByAppendingString:[cleanDigits substringFromIndex:2]];
         }
     } else if ([cleanDigits hasPrefix:@"0"] && cleanDigits.length == 10) {
-        isVN = YES;
+        // VN mobile number
     } else if ([rawPhone hasPrefix:@"+1"] || ([cleanDigits hasPrefix:@"1"] && cleanDigits.length == 11)) {
         isUS = YES;
         if ([cleanDigits hasPrefix:@"1"]) {
@@ -2272,9 +2254,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // 2. Định Danh Centralized & Telemetry
     zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
     NSString *lastDid = fn_did ? fn_did() : nil;
+    if (!lastDid || lastDid.length == 0) {
+        lastDid = s.centralizedDid;
+    }
     if (lastDid && lastDid.length > 0) {
         info.dIdReceivedPassed = YES;
-        info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... ✅", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
+        info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... 🟢", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
     } else {
         info.dIdReceivedPassed = YES;
         info.dIdStatusText = @"Sẵn sàng cấp tự nhiên từ máy chủ Zalo ⚡";

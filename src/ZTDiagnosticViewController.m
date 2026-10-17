@@ -608,6 +608,17 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     self.info.keychainCleanPassed = (kcCount == 0);
     self.info.webkitCleanPassed = check_webkit_is_clean();
     self.info.clipboardCleanPassed = check_clipboard_is_clean();
+
+    typedef NSString* (*zt_get_did_fn_t)(void);
+    zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
+    NSString *lastDid = fn_did ? fn_did() : nil;
+    if (!lastDid || lastDid.length == 0) {
+        lastDid = [ZTSettings sharedSettings].centralizedDid;
+    }
+    if (lastDid && lastDid.length > 0) {
+        self.info.dIdReceivedPassed = YES;
+        self.info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... 🟢", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
+    }
 }
 
 - (void)reloadCardViews {
@@ -1367,9 +1378,12 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
                 zt_get_did_fn_t fn_did = (zt_get_did_fn_t)dlsym(RTLD_DEFAULT, "zt_get_last_centralized_did");
                 NSString *lastDid = fn_did ? fn_did() : nil;
+                if (!lastDid || lastDid.length == 0) {
+                    lastDid = [ZTSettings sharedSettings].centralizedDid;
+                }
                 if (lastDid && lastDid.length > 0) {
                     strongSelf.info.dIdReceivedPassed = YES;
-                    strongSelf.info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... ✅", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
+                    strongSelf.info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... 🟢", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
                 }
 
                 zt_get_qos_fn_t fn_qos = (zt_get_qos_fn_t)dlsym(RTLD_DEFAULT, "zt_get_qos_error_count");
@@ -1536,9 +1550,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     // 2. Định Danh Centralized & Telemetry
     [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"2. ĐỊNH DANH MÁY CHỦ ZALO (CENTRALIZED & TELEMETRY)"]];
+    BOOL hasDid = (self.info.dIdStatusText && [self.info.dIdStatusText containsString:@"Đã cấp"]);
     [inner addArrangedSubview:[self createRowWithKey:@"Central Device ID (dId)"
                                               value:self.info.dIdStatusText ?: @"Sẵn sàng cấp tự nhiên ⚡"
-                                              badge:self.info.dIdReceivedPassed ? @"Hợp lệ ✅" : @"Chưa có ⚠️"
+                                              badge:hasDid ? @"Đã Cấp 🟢" : (self.info.dIdReceivedPassed ? @"Sẵn Sàng ⚡" : @"Chưa có ⚠️")
                                           isWarning:!self.info.dIdReceivedPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Zalo Global ID (zagid)"
                                               value:self.info.zagidStatusText ?: @"Khớp phiên định danh ✅"

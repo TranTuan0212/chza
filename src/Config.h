@@ -55,6 +55,7 @@
 @property (nonatomic, assign) uint16_t proxyPort;          // Cổng Port của Proxy
 @property (nonatomic, strong) NSString *proxyUser;         // Tài khoản Proxy (tuỳ chọn)
 @property (nonatomic, strong) NSString *proxyPass;         // Mật khẩu Proxy (tuỳ chọn)
+@property (nonatomic, strong) NSString *centralizedDid;       // Central Device ID từ centralized.zaloapp.com
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;
