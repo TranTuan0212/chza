@@ -234,6 +234,45 @@ static inline BOOL is_system_caller(const void *addr0, const void *addr1) {
     return NO;
 }
 
+#define MAX_RADAR_CALLERS 256
+static void *s_radar_logged_addrs[MAX_RADAR_CALLERS];
+static int s_radar_logged_count = 0;
+static pthread_mutex_t s_radar_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static BOOL should_log_radar_caller(void *addr) {
+    if (!addr) return NO;
+    pthread_mutex_lock(&s_radar_lock);
+    for (int i = 0; i < s_radar_logged_count; i++) {
+        if (s_radar_logged_addrs[i] == addr) {
+            pthread_mutex_unlock(&s_radar_lock);
+            return NO;
+        }
+    }
+    if (s_radar_logged_count < MAX_RADAR_CALLERS) {
+        s_radar_logged_addrs[s_radar_logged_count++] = addr;
+    }
+    pthread_mutex_unlock(&s_radar_lock);
+    return YES;
+}
+
+static NSString *format_caller_info(void *addr) {
+    if (!addr) return @"(unknown)";
+    Dl_info info;
+    if (raw_dladdr(addr, &info)) {
+        const char *fname = info.dli_fname ? (strrchr(info.dli_fname, '/') ? strrchr(info.dli_fname, '/') + 1 : info.dli_fname) : "unknown";
+        const char *sname = info.dli_sname ?: "unknown_sym";
+        ptrdiff_t offset = (const char *)addr - (const char *)(info.dli_saddr ?: info.dli_fbase);
+        return [NSString stringWithFormat:@"%s`%s + 0x%lx (%p)", fname, sname, (long)offset, addr];
+    }
+    return [NSString stringWithFormat:@"%p", addr];
+}
+
+static void zt_reset_radar_cache(void) {
+    pthread_mutex_lock(&s_radar_lock);
+    s_radar_logged_count = 0;
+    pthread_mutex_unlock(&s_radar_lock);
+}
+
 #define GLOBAL_PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 #define GLOBAL_AUDIT_LOG_PATH @"/var/mobile/Library/Preferences/ZaloAudit.log"
 
@@ -471,6 +510,7 @@ static void reset_audit_log_on_wipe(NSString *machine, NSString *idfv) {
     s_logged_c_bid = NO;
     s_logged_c_info_bid = NO;
     zt_reset_runtime_counters();
+    zt_reset_radar_cache();
 
     NSString *home = NSHomeDirectory();
     if (!home) return;
@@ -1488,11 +1528,19 @@ static int my_uname(struct utsname *buf) {
 
 - (float)batteryLevel {
     if (!is_tweak_active()) return %orig;
+    void *c0 = __builtin_return_address(0);
+    if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+        logAudit(@"RADAR-SENSOR", [NSString stringWithFormat:@"🔋 Zalo đọc UIDevice.batteryLevel (%.2f) từ %@", [ZTSettings sharedSettings].batteryLevel, format_caller_info(c0)]);
+    }
     return [ZTSettings sharedSettings].batteryLevel;
 }
 
 - (UIDeviceBatteryState)batteryState {
     if (!is_tweak_active()) return %orig;
+    void *c0 = __builtin_return_address(0);
+    if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+        logAudit(@"RADAR-SENSOR", [NSString stringWithFormat:@"🔋 Zalo đọc UIDevice.batteryState (%ld) từ %@", (long)[ZTSettings sharedSettings].batteryState, format_caller_info(c0)]);
+    }
     return (UIDeviceBatteryState)[ZTSettings sharedSettings].batteryState;
 }
 
@@ -1969,21 +2017,9 @@ static int (*orig_clock_gettime)(clockid_t clk_id, struct timespec *tp);
 static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
     int ret = orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
     if (ret == 0 && tp && is_tweak_active()) {
-        if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_MONOTONIC_RAW ||
-            clk_id == CLOCK_UPTIME_RAW || clk_id == 8 /* CLOCK_MONOTONIC_RAW_APPROX */ || clk_id == 9 /* CLOCK_UPTIME_RAW_APPROX */) {
-            void *c0 = __builtin_return_address(0);
-            void *c1 = __builtin_return_address(1);
-            if (is_zalo_or_tweak_caller(c0, c1)) {
-                double contUp = 0, awakeUp = 0;
-                get_consistent_uptimes(&contUp, &awakeUp);
-                double target = (clk_id == CLOCK_UPTIME_RAW || clk_id == 9) ? awakeUp : contUp;
-                time_t sec = (time_t)floor(target);
-                long nsec = (long)((target - (double)sec) * 1000000000.0);
-                if (nsec < 0) nsec = 0;
-                if (nsec >= 1000000000L) nsec = 999999999L;
-                tp->tv_sec = sec;
-                tp->tv_nsec = nsec;
-            }
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi clock_gettime(clk_id=%d) từ %@", (int)clk_id, format_caller_info(c0)]);
         }
     }
     return ret;
@@ -1991,30 +2027,64 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
 
 static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
+    uint64_t real_time = orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
     if (is_tweak_active()) {
         void *c0 = __builtin_return_address(0);
-        void *c1 = __builtin_return_address(1);
-        if (is_zalo_or_tweak_caller(c0, c1)) {
-            double contUp = 0;
-            get_consistent_uptimes(&contUp, NULL);
-            return seconds_to_mach_ticks(contUp);
+        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_continuous_time() từ %@", format_caller_info(c0)]);
         }
     }
-    return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
+    return real_time;
 }
 
 static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
+    uint64_t real_time = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
     if (is_tweak_active()) {
         void *c0 = __builtin_return_address(0);
-        void *c1 = __builtin_return_address(1);
-        if (is_zalo_or_tweak_caller(c0, c1)) {
-            double awakeUp = 0;
-            get_consistent_uptimes(NULL, &awakeUp);
-            return seconds_to_mach_ticks(awakeUp);
+        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_absolute_time() từ %@", format_caller_info(c0)]);
         }
     }
-    return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+    return real_time;
+}
+
+#ifndef PT_DENY_ATTACH
+#define PT_DENY_ATTACH 31
+#endif
+static int (*orig_ptrace)(int request, pid_t pid, caddr_t addr, int data);
+static int my_ptrace(int request, pid_t pid, caddr_t addr, int data) {
+    if (request == PT_DENY_ATTACH && is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        logAudit(@"RADAR-SECURITY", [NSString stringWithFormat:@"🛡️ Zalo gọi ptrace(PT_DENY_ATTACH) từ %@ -> [ĐÃ CHẶN AN TOÀN]", format_caller_info(c0)]);
+        return 0;
+    }
+    return orig_ptrace ? orig_ptrace(request, pid, addr, data) : 0;
+}
+
+static pid_t (*orig_getppid)(void);
+static pid_t my_getppid(void) {
+    pid_t ret = orig_getppid ? orig_getppid() : getppid();
+    if (is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+            logAudit(@"RADAR-SECURITY", [NSString stringWithFormat:@"🛡️ Zalo kiểm tra PID tiến trình cha (getppid=%d) từ %@ -> [CHUẨN HOÁ 1 (launchd)]", (int)ret, format_caller_info(c0)]);
+            return 1;
+        }
+    }
+    return ret;
+}
+
+static int (*orig_gethostname)(char *name, size_t len);
+static int my_gethostname(char *name, size_t len) {
+    int ret = orig_gethostname ? orig_gethostname(name, len) : gethostname(name, len);
+    if (ret == 0 && name && is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
+            logAudit(@"RADAR-SYS", [NSString stringWithFormat:@"🏷️ Zalo đọc gethostname ('%s') từ %@", name, format_caller_info(c0)]);
+        }
+    }
+    return ret;
 }
 
 %hook NSProcessInfo
@@ -3160,6 +3230,12 @@ static inline NSString *hex_string_from_data(NSData *data) {
                 return;
             }
         }
+        if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog) {
+            void *c0 = __builtin_return_address(0);
+            if ([defaultName containsString:@"Authen"] || [defaultName containsString:@"UpTick"] || [defaultName containsString:@"BootTime"]) {
+                logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"💾 Zalo ghi UserDefaults: '%@' = %@ từ %@", defaultName, value, format_caller_info(c0)]);
+            }
+        }
     }
     %orig;
 }
@@ -3174,6 +3250,35 @@ static inline NSString *hex_string_from_data(NSData *data) {
                     logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> (nil) [ĐÃ CHẶN DẤU VẾT ĐỔI MÁY CŨ]", defaultName]);
                 }
                 return nil;
+            }
+        }
+        if (is_tweak_active()) {
+            void *c0 = __builtin_return_address(0);
+            if ([defaultName isEqualToString:@"kLastBootTimeAuthen"]) {
+                ZTSettings *s = [ZTSettings sharedSettings];
+                if (s.bootTimeSec > 0) {
+                    NSString *fakeBt = [NSString stringWithFormat:@"%llu", (unsigned long long)s.bootTimeSec];
+                    if ([ZTSettings sharedSettings].enableAuditLog) {
+                        logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kLastBootTimeAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeBt]);
+                    }
+                    return fakeBt;
+                }
+            } else if ([defaultName isEqualToString:@"kUpTickCPULastAuthen"]) {
+                double awakeUp = 0;
+                get_consistent_uptimes(NULL, &awakeUp);
+                NSString *fakeAwake = [NSString stringWithFormat:@"%.2f", awakeUp];
+                if ([ZTSettings sharedSettings].enableAuditLog) {
+                    logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kUpTickCPULastAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeAwake]);
+                }
+                return fakeAwake;
+            } else if ([defaultName isEqualToString:@"kUpTickContCPULastAuthen"]) {
+                double contUp = 0;
+                get_consistent_uptimes(&contUp, NULL);
+                NSString *fakeCont = [NSString stringWithFormat:@"%.2f", contUp];
+                if ([ZTSettings sharedSettings].enableAuditLog) {
+                    logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kUpTickContCPULastAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeCont]);
+                }
+                return fakeCont;
             }
         }
     }
@@ -3508,6 +3613,7 @@ __attribute__((visibility("default"))) void zt_reset_runtime_counters(void) {
 
 static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {
     if (!request || !request.URL) return;
+    if ([request valueForHTTPHeaderField:@"X-ZT-Diagnostic"]) return;
 
     NSURL *url = request.URL;
     NSString *urlStr = url.absoluteString ?: @"";
@@ -4555,10 +4661,18 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
             universal_hook_c_function("_CFCopyServerVersionDictionary", cfSrvVer, (void *)my_CFCopyServerVersionDictionary, (void **)&orig_CFCopyServerVersionDictionary);
         }
 
-        // Hook Hardware Uptime Clocks (Khử rò rỉ kUpTickCPULastAuthen & kUpTickContCPULastAuthen lệch với kLastBootTimeAuthen)
+        // Hook Hardware Uptime Clocks Radar (Chế độ Radar Giám Sát, bảo vệ 100% socket mạng khỏi lỗi EINVAL 22)
         universal_hook_c_function("clock_gettime", (void *)clock_gettime, (void *)my_clock_gettime, (void **)&orig_clock_gettime);
         universal_hook_c_function("mach_continuous_time", (void *)mach_continuous_time, (void *)my_mach_continuous_time, (void **)&orig_mach_continuous_time);
         universal_hook_c_function("mach_absolute_time", (void *)mach_absolute_time, (void *)my_mach_absolute_time, (void **)&orig_mach_absolute_time);
+
+        // Hook Anti-Debug & Process Security Radar
+        void *ptrace_ptr = dlsym(RTLD_DEFAULT, "ptrace");
+        if (ptrace_ptr) {
+            universal_hook_c_function("ptrace", ptrace_ptr, (void *)my_ptrace, (void **)&orig_ptrace);
+        }
+        universal_hook_c_function("getppid", (void *)getppid, (void *)my_getppid, (void **)&orig_getppid);
+        universal_hook_c_function("gethostname", (void *)gethostname, (void *)my_gethostname, (void **)&orig_gethostname);
 
         // Hook Dyld & dladdr (Ẩn tuyệt đối Zalotweak.dylib, Substrate, ElleKit, RootHide khỏi bộ quét anti-tamper của Zalo)
         universal_hook_c_function("_dyld_get_image_name", (void *)_dyld_get_image_name, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);

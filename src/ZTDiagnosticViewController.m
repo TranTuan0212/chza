@@ -1403,10 +1403,11 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         }
     };
 
-    // 1. Ping centralized.zaloapp.com/sdk/mobile/ios
-    NSMutableURLRequest *req1 = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://centralized.zaloapp.com/sdk/mobile/ios"]];
+    // 1. Ping centralized.zaloapp.com/apps/mobile/ios?pl=ios (Endpoint GET chính thức của Zalo)
+    NSMutableURLRequest *req1 = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://centralized.zaloapp.com/apps/mobile/ios?pl=ios"]];
     req1.HTTPMethod = @"GET";
     [req1 setValue:@"iPhone" forHTTPHeaderField:@"User-Agent"];
+    [req1 setValue:@"1" forHTTPHeaderField:@"X-ZT-Diagnostic"];
     [[session dataTaskWithRequest:req1 completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSInteger code = 0;
         if ([resp isKindOfClass:[NSHTTPURLResponse class]]) {
@@ -1428,9 +1429,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         checkFinish();
     }] resume];
 
-    // 2. Ping getDefaultCountry
+    // 2. Ping getDefaultCountry / Gateway
     NSMutableURLRequest *req2 = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"https://register.zaloapp.com/api/helper/getDefaultCountry"]];
     req2.HTTPMethod = @"GET";
+    [req2 setValue:@"1" forHTTPHeaderField:@"X-ZT-Diagnostic"];
     [[session dataTaskWithRequest:req2 completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
         NSInteger code = 0;
         if ([resp isKindOfClass:[NSHTTPURLResponse class]]) {
@@ -1440,7 +1442,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         }
         if (code == 200) {
             weakSelf.info.countryApiPassed = YES;
-            weakSelf.info.countryApiText = @"HTTP 200 OK (Máy chủ trả về MCC/MNC) ✅";
+            weakSelf.info.countryApiText = @"HTTP 200 OK (Máy chủ Gateway kết nối tốt) ✅";
         } else {
             weakSelf.info.countryApiPassed = (code > 0);
             weakSelf.info.countryApiText = [NSString stringWithFormat:@"Status: %ld", (long)code];
