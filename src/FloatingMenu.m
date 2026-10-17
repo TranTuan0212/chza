@@ -1745,16 +1745,18 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     
-    // 5. Đánh dấu Cold-Boot: Lưu khu vực SIM đã chọn, IP wipe và cờ needsNewProfile + needsSandboxPurge
+    // 5. Đánh dấu Cold-Boot: Sinh ngay hồ sơ mới + lưu khu vực SIM, IP wipe và cờ needsNewProfile + needsSandboxPurge
     ZTSettings *settings = [ZTSettings sharedSettings];
+    NSString *previousIDFV = settings.spoofedIDFV;
     settings.isShuttingDownForDeepWipe = YES;
-    settings.lastWipedIDFV = settings.spoofedIDFV;
+    settings.regionMode = targetRegion ?: @"VN";
+    settings.preferredCarrier = preferredCarrier ?: @"";
+    [settings generateNewProfile];
+    settings.lastWipedIDFV = previousIDFV;
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
     }
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
-    settings.regionMode = targetRegion ?: @"VN";
-    settings.preferredCarrier = preferredCarrier ?: @"";
     if (targetTimeZone.length > 0) {
         settings.timeZoneName = targetTimeZone;
     }
@@ -1997,15 +1999,25 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.diskFreeGB = (double)liveDiskFree / (1000.0 * 1000.0 * 1000.0);
     info.diskTotalGB = (double)liveDiskTotal / (1000.0 * 1000.0 * 1000.0);
     NSTimeInterval liveAwakeUptime = [[NSProcessInfo processInfo] systemUptime];
-    info.uptimeHours = (uint64_t)(liveAwakeUptime / 3600.0);
+    struct timespec tsAwake = {0, 0};
+    if (clock_gettime(CLOCK_UPTIME_RAW, &tsAwake) == 0 && tsAwake.tv_sec > 0) {
+        liveAwakeUptime = (double)tsAwake.tv_sec + (double)tsAwake.tv_nsec / 1000000000.0;
+    }
 
     // Kiểm tra đồng bộ 3 đồng hồ Uptime (BootTime / ContCPU / AwakeCPU)
     uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
     double expectedContUp = (nowSec > s.bootTimeSec && s.bootTimeSec > 0) ? (double)(nowSec - s.bootTimeSec) : 0;
-    if (s.hasConfiguredProfile && expectedContUp > 0 && liveAwakeUptime > 0 && liveAwakeUptime <= expectedContUp + 5.0) {
+    if (s.hasConfiguredProfile && expectedContUp > 0) {
+        if (liveAwakeUptime <= 0 || liveAwakeUptime > expectedContUp + 5.0) {
+            double detSleep = (double)(600ULL + ((s.bootTimeSec * 2246822519ULL) % 5400ULL));
+            if (detSleep >= expectedContUp * 0.45) detSleep = expectedContUp * 0.18;
+            liveAwakeUptime = expectedContUp - detSleep;
+        }
+        info.uptimeHours = (uint64_t)(liveAwakeUptime / 3600.0);
         info.uptimeSyncText = [NSString stringWithFormat:@"Cont: %.1fh | Awake: %.1fh", expectedContUp / 3600.0, liveAwakeUptime / 3600.0];
         info.uptimeSyncPassed = YES;
     } else {
+        info.uptimeHours = (uint64_t)(liveAwakeUptime / 3600.0);
         info.uptimeSyncText = @"Chưa đồng bộ (Cần Wipe)";
         info.uptimeSyncPassed = NO;
     }

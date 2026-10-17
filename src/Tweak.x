@@ -164,6 +164,19 @@ static inline BOOL is_zalo_caller(void *addr0) {
     return NO;
 }
 
+static inline BOOL is_zalo_or_tweak_caller(void *addr0) {
+    if (!addr0) return NO;
+    if (is_zalo_caller(addr0)) return YES;
+    Dl_info info0;
+    if (raw_dladdr(addr0, &info0) && info0.dli_fname) {
+        const char *f0 = info0.dli_fname;
+        if (strstr(f0, "Zalotweak") != NULL) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 static inline BOOL is_system_caller(void *addr0, void *addr1) {
     // 1. Nếu trực tiếp người gọi (addr0) là code nằm trong Zalo.app (chính app Zalo gọi):
     if (is_zalo_caller(addr0)) {
@@ -229,23 +242,32 @@ static NSString *getConfigPath(void) {
         ];
 
         NSDate *localDate = nil;
+        NSDictionary *localDict = nil;
+        uint64_t localWipeTS = 0;
+        BOOL localNeedsWipe = NO;
         if ([fm fileExistsAtPath:containerPref]) {
             NSDictionary *localAttrs = [fm attributesOfItemAtPath:containerPref error:nil];
             localDate = localAttrs[NSFileModificationDate];
+            localDict = [NSDictionary dictionaryWithContentsOfFile:containerPref];
+            localWipeTS = [localDict[@"lastWipedTimestamp"] unsignedLongLongValue];
+            localNeedsWipe = [localDict[@"needsNewProfile"] boolValue] || [localDict[@"needsSandboxPurge"] boolValue];
         }
 
-        for (NSString *candidate in globalCandidates) {
-            if ([fm fileExistsAtPath:candidate]) {
-                NSDictionary *candAttrs = [fm attributesOfItemAtPath:candidate error:nil];
-                NSDate *candDate = candAttrs[NSFileModificationDate];
-                // Nếu file Sandbox chưa có HOẶC file Cài Đặt toàn cục mới hơn file Sandbox:
-                if (!localDate || (candDate && [candDate compare:localDate] == NSOrderedDescending)) {
-                    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:candidate];
-                    if (d && d.count > 0) {
-                        [fm createDirectoryAtPath:[containerPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
-                        [d writeToFile:containerPref atomically:YES];
-                        chmod([containerPref UTF8String], 0666);
-                        return containerPref;
+        // Nếu containerPref đang giữ cờ chờ Cold-Boot Wipe, tuyệt đối không lấy bản global cũ đè lên!
+        if (!localNeedsWipe) {
+            for (NSString *candidate in globalCandidates) {
+                if ([fm fileExistsAtPath:candidate]) {
+                    NSDictionary *candAttrs = [fm attributesOfItemAtPath:candidate error:nil];
+                    NSDate *candDate = candAttrs[NSFileModificationDate];
+                    if (!localDate || (candDate && [candDate compare:localDate] == NSOrderedDescending)) {
+                        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:candidate];
+                        uint64_t candWipeTS = [d[@"lastWipedTimestamp"] unsignedLongLongValue];
+                        if (d && d.count > 0 && candWipeTS >= localWipeTS) {
+                            [fm createDirectoryAtPath:[containerPref stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                            [d writeToFile:containerPref atomically:YES];
+                            chmod([containerPref UTF8String], 0666);
+                            return containerPref;
+                        }
                     }
                 }
             }
@@ -1458,36 +1480,6 @@ static int my_uname(struct utsname *buf) {
 %end
 
 // ==========================================
-// ĐỒNG BỘ OS VERSION & BUILD: NSProcessInfo
-// ==========================================
-%hook NSProcessInfo
-
-- (NSString *)operatingSystemVersionString {
-    if (!is_tweak_active()) return %orig;
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.systemVersion.length > 0 && s.kernOsVersion.length > 0) {
-        return [NSString stringWithFormat:@"Version %@ (Build %@)", s.systemVersion, s.kernOsVersion];
-    }
-    return %orig;
-}
-
-- (NSOperatingSystemVersion)operatingSystemVersion {
-    if (!is_tweak_active()) return %orig;
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.systemVersion.length > 0) {
-        NSArray *components = [s.systemVersion componentsSeparatedByString:@"."];
-        NSOperatingSystemVersion v;
-        v.majorVersion = components.count > 0 ? [components[0] integerValue] : 18;
-        v.minorVersion = components.count > 1 ? [components[1] integerValue] : 1;
-        v.patchVersion = components.count > 2 ? [components[2] integerValue] : 0;
-        return v;
-    }
-    return %orig;
-}
-
-%end
-
-// ==========================================
 // CHẶN ĐỌC FILE HỆ THỐNG SystemVersion.plist
 // ==========================================
 %hook NSDictionary
@@ -1908,7 +1900,7 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
     if (ret == 0 && tp && is_tweak_active()) {
         if (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_MONOTONIC_RAW ||
             clk_id == CLOCK_UPTIME_RAW || clk_id == 8 /* CLOCK_MONOTONIC_RAW_APPROX */ || clk_id == 9 /* CLOCK_UPTIME_RAW_APPROX */) {
-            if (is_zalo_caller(__builtin_return_address(0))) {
+            if (is_zalo_or_tweak_caller(__builtin_return_address(0))) {
                 double contUp = 0, awakeUp = 0;
                 get_consistent_uptimes(&contUp, &awakeUp);
                 double target = (clk_id == CLOCK_UPTIME_RAW || clk_id == 9) ? awakeUp : contUp;
@@ -1926,7 +1918,7 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
 
 static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
-    if (is_tweak_active() && is_zalo_caller(__builtin_return_address(0))) {
+    if (is_tweak_active() && is_zalo_or_tweak_caller(__builtin_return_address(0))) {
         double contUp = 0;
         get_consistent_uptimes(&contUp, NULL);
         return seconds_to_mach_ticks(contUp);
@@ -1936,7 +1928,7 @@ static uint64_t my_mach_continuous_time(void) {
 
 static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
-    if (is_tweak_active() && is_zalo_caller(__builtin_return_address(0))) {
+    if (is_tweak_active() && is_zalo_or_tweak_caller(__builtin_return_address(0))) {
         double awakeUp = 0;
         get_consistent_uptimes(NULL, &awakeUp);
         return seconds_to_mach_ticks(awakeUp);
@@ -1945,6 +1937,29 @@ static uint64_t my_mach_absolute_time(void) {
 }
 
 %hook NSProcessInfo
+
+- (NSString *)operatingSystemVersionString {
+    if (!is_tweak_active()) return %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.systemVersion.length > 0 && s.kernOsVersion.length > 0) {
+        return [NSString stringWithFormat:@"Version %@ (Build %@)", s.systemVersion, s.kernOsVersion];
+    }
+    return %orig;
+}
+
+- (NSOperatingSystemVersion)operatingSystemVersion {
+    if (!is_tweak_active()) return %orig;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.systemVersion.length > 0) {
+        NSArray *components = [s.systemVersion componentsSeparatedByString:@"."];
+        NSOperatingSystemVersion v;
+        v.majorVersion = components.count > 0 ? [components[0] integerValue] : 18;
+        v.minorVersion = components.count > 1 ? [components[1] integerValue] : 1;
+        v.patchVersion = components.count > 2 ? [components[2] integerValue] : 0;
+        return v;
+    }
+    return %orig;
+}
 
 - (NSTimeInterval)systemUptime {
     if (!is_tweak_active()) {
@@ -2776,6 +2791,13 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     NSDictionary *attrs = %orig;
     if (is_tweak_active() && attrs && path) {
         NSString *lower = [path lowercaseString];
+        if ([lower containsString:@"zalotweak"] ||
+            [lower containsString:@".adbk"] ||
+            [lower containsString:@"appsmanager"] ||
+            [lower containsString:@"zaloaudit.log"] ||
+            [lower containsString:@"zalotraffic.har"]) {
+            return attrs;
+        }
         if ([lower containsString:@"container"] ||
             [lower containsString:@"document"] ||
             [lower containsString:@"library"] ||

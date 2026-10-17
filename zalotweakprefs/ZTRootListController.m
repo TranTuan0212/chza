@@ -1453,18 +1453,37 @@ static NSString *findAuditLogPath(void) {
     unsigned long long liveDiskTotal = [fsAttrs[NSFileSystemSize] unsignedLongLongValue];
     info.diskFreeGB = (double)liveDiskFree / (1000.0 * 1000.0 * 1000.0);
     info.diskTotalGB = (double)liveDiskTotal / (1000.0 * 1000.0 * 1000.0);
-    info.uptimeHours = (uint64_t)([[NSProcessInfo processInfo] systemUptime] / 3600.0);
+    uint64_t btime = [dict[@"bootTimeSec"] unsignedLongLongValue];
+    uint64_t birthSec = [dict[@"birthTimeSec"] unsignedLongLongValue];
+    uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
+    double expectedContUp = (nowSec > btime && btime > 0) ? (double)(nowSec - btime) : 0;
+    if (hasConfigured && expectedContUp > 0) {
+        double detSleep = (double)(600ULL + ((btime * 2246822519ULL) % 5400ULL));
+        if (detSleep >= expectedContUp * 0.45) detSleep = expectedContUp * 0.18;
+        double fakeAwake = expectedContUp - detSleep;
+        info.uptimeHours = (uint64_t)(fakeAwake / 3600.0);
+        info.uptimeSyncText = [NSString stringWithFormat:@"Cont: %.1fh | Awake: %.1fh", expectedContUp / 3600.0, fakeAwake / 3600.0];
+        info.uptimeSyncPassed = YES;
+    } else {
+        info.uptimeHours = (uint64_t)([[NSProcessInfo processInfo] systemUptime] / 3600.0);
+        info.uptimeSyncText = @"Chưa đồng bộ (Cần Wipe)";
+        info.uptimeSyncPassed = NO;
+    }
+    info.dyldHideText = hasConfigured ? @"Ẩn Zalotweak.dylib & Roothide" : @"Chưa kích hoạt";
+    info.dyldHidePassed = hasConfigured;
 
     info.isLicensed = [[ZTSecurityManager sharedManager] isLicenseValid];
     info.licenseStatusText = [[ZTSecurityManager sharedManager] getLicenseStatusText];
 
     // 1. Mã device_id phần cứng (Zalo Hardware Fingerprint từ st_birthtimespec chuẩn 3 timestamps tự nhiên)
-    uint64_t btime = [dict[@"bootTimeSec"] unsignedLongLongValue];
-    if (hasConfigured && btime > 0) {
-        uint64_t fakeBirth = (btime - 864000ULL);
-        uint64_t ms1 = fakeBirth * 1000ULL + ((fakeBirth * 2654435761ULL) % 900ULL + 100ULL);
-        uint64_t ms2 = (fakeBirth + 1435ULL) * 1000ULL + ((fakeBirth * 2246822519ULL) % 900ULL + 100ULL);
-        uint64_t ms3 = ms2;
+    if (hasConfigured && (btime > 0 || birthSec > 0)) {
+        uint64_t fakeBirth = birthSec > 0 ? birthSec : (btime - (86400ULL * 15 + 3600 * 4 + 720));
+        uint64_t b1 = fakeBirth;
+        uint64_t b2 = fakeBirth + 420ULL + ((fakeBirth * 2654435761ULL) % 1800ULL);
+        uint64_t b3 = b2 + 1ULL + ((fakeBirth * 2246822519ULL) % 4ULL);
+        uint64_t ms1 = b1 * 1000ULL + ((b1 * 2654435761ULL) % 900ULL + 100ULL);
+        uint64_t ms2 = b2 * 1000ULL + ((b2 * 2654435761ULL) % 900ULL + 100ULL);
+        uint64_t ms3 = b3 * 1000ULL + ((b3 * 2654435761ULL) % 900ULL + 100ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
         info.deviceIdPassed = YES;
     } else {

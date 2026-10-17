@@ -23,7 +23,11 @@
             "com.vng.zalo.NotificationService",
             "com.vng.zalo.NotificationContent",
             "vn.com.vng.zingalo.clone",
-            "com.vng.zalo.clone"
+            "com.vng.zalo.clone",
+            "com.sonhu.zaloclone",
+            "com.sonhu.zaloclone.NotificationService",
+            "com.sonhu.zaloclone.NotificationContent",
+            "com.sonhu.zaloclone.ShareExtension"
         );
     };
 }
