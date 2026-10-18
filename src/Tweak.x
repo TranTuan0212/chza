@@ -1092,12 +1092,26 @@ NSString *generate_random_mac(void) {
 // ==========================================
 
 static NSString *getAuditLogPath(void) {
-    NSString *home = NSHomeDirectory();
-    if (home) {
-        NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
-        return doc;
-    }
-    return GLOBAL_AUDIT_LOG_PATH;
+    return @"/var/mobile/Documents/ZaloAudit.log";
+}
+
+static void append_data_to_file_safely(NSString *path, NSData *data) {
+    if (!path || !data || data.length == 0) return;
+    @try {
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+        if (!handle) {
+            NSString *parentDir = [path stringByDeletingLastPathComponent];
+            [[NSFileManager defaultManager] createDirectoryAtPath:parentDir withIntermediateDirectories:YES attributes:nil error:nil];
+            [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+            chmod([path UTF8String], 0666);
+            handle = [NSFileHandle fileHandleForWritingAtPath:path];
+        }
+        if (handle) {
+            [handle seekToEndOfFile];
+            [handle writeData:data];
+            [handle closeFile];
+        }
+    } @catch (NSException *e) {}
 }
 
 static NSMutableSet *loggedAuditKeys = nil;
@@ -1172,17 +1186,18 @@ static void logAudit(NSString *category, NSString *detail) {
         NSString *timeStr = [df stringFromDate:[NSDate date]];
 
         NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, safeDetail];
-        NSString *path = getAuditLogPath();
+        NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
 
-        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
-        if (!handle) {
-            [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
-            handle = [NSFileHandle fileHandleForWritingAtPath:path];
-        }
-        if (handle) {
-            [handle seekToEndOfFile];
-            [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-            [handle closeFile];
+        // 1. Luôn ghi vào /var/mobile/Documents/ZaloAudit.log (vị trí toàn cục dễ kéo từ 3uTools/Filza)
+        append_data_to_file_safely(@"/var/mobile/Documents/ZaloAudit.log", lineData);
+
+        // 2. Ghi song song vào Documents của Sandbox hiện tại (đảm bảo không bao giờ mất log dù Sandbox chặn)
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *containerDoc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+            if (![containerDoc isEqualToString:@"/var/mobile/Documents/ZaloAudit.log"]) {
+                append_data_to_file_safely(containerDoc, lineData);
+            }
         }
     });
 }
@@ -4040,6 +4055,13 @@ static void append_to_har_file(NSDictionary *entryDict) {
         NSData *jsonData = [NSJSONSerialization dataWithJSONObject:harRoot options:NSJSONWritingPrettyPrinted error:nil];
         if (jsonData) {
             [jsonData writeToFile:harPath atomically:YES];
+            chmod([harPath UTF8String], 0666);
+            if (![harPath isEqualToString:@"/var/mobile/Documents/ZaloTraffic.har"]) {
+                @try {
+                    [jsonData writeToFile:@"/var/mobile/Documents/ZaloTraffic.har" atomically:YES];
+                    chmod("/var/mobile/Documents/ZaloTraffic.har", 0666);
+                } @catch (NSException *e) {}
+            }
         }
     });
 }

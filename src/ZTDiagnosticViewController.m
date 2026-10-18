@@ -19,22 +19,36 @@ static void write_audit_log(NSString *category, NSString *detail) {
         fn_audit(category, detail);
     } else {
         NSLog(@"[ZaloAudit] [%@] %@", category, detail);
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setDateFormat:@"HH:mm:ss"];
+        NSString *timeStr = [df stringFromDate:[NSDate date]];
+        NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, detail];
+        NSData *lineData = [line dataUsingEncoding:NSUTF8StringEncoding];
+
+        void (^appendToFile)(NSString *) = ^(NSString *p) {
+            if (!p) return;
+            @try {
+                NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:p];
+                if (!h) {
+                    [[NSFileManager defaultManager] createDirectoryAtPath:[p stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                    [[NSFileManager defaultManager] createFileAtPath:p contents:nil attributes:nil];
+                    chmod([p UTF8String], 0666);
+                    h = [NSFileHandle fileHandleForWritingAtPath:p];
+                }
+                if (h) {
+                    [h seekToEndOfFile];
+                    [h writeData:lineData];
+                    [h closeFile];
+                }
+            } @catch (NSException *e) {}
+        };
+
+        appendToFile(@"/var/mobile/Documents/ZaloAudit.log");
         NSString *home = NSHomeDirectory();
         if (home) {
-            NSString *path = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
-            NSDateFormatter *df = [[NSDateFormatter alloc] init];
-            [df setDateFormat:@"HH:mm:ss"];
-            NSString *timeStr = [df stringFromDate:[NSDate date]];
-            NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, detail];
-            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
-            if (!handle) {
-                [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
-                handle = [NSFileHandle fileHandleForWritingAtPath:path];
-            }
-            if (handle) {
-                [handle seekToEndOfFile];
-                [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
-                [handle closeFile];
+            NSString *containerPath = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+            if (![containerPath isEqualToString:@"/var/mobile/Documents/ZaloAudit.log"]) {
+                appendToFile(containerPath);
             }
         }
     }

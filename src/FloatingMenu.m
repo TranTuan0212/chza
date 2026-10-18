@@ -50,8 +50,12 @@ static void sever_all_network_sockets_immediately(void) {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-// Đường dẫn file Audit Log trong Documents của Sandbox Zalo
+// Đường dẫn file Audit Log (Ưu tiên file toàn cục /var/mobile/Documents/ZaloAudit.log)
 static inline NSString *get_inapp_audit_log_path(void) {
+    NSString *globalPath = @"/var/mobile/Documents/ZaloAudit.log";
+    if ([[NSFileManager defaultManager] fileExistsAtPath:globalPath]) {
+        return globalPath;
+    }
     NSString *home = NSHomeDirectory();
     return [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
 }
@@ -995,9 +999,11 @@ UIViewController *ZTGetTopViewController(void) {
     }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"🌐 Xuất File Gói Tin Mạng (HAR)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        NSString *globalHar = @"/var/mobile/Documents/ZaloTraffic.har";
         NSString *home = NSHomeDirectory();
-        NSString *harPath = home ? [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"] : @"/var/mobile/Library/Preferences/ZaloTraffic.har";
-        if (![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
+        NSString *containerHar = home ? [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"] : nil;
+        NSString *harPath = [[NSFileManager defaultManager] fileExistsAtPath:globalHar] ? globalHar : containerHar;
+        if (!harPath || ![[NSFileManager defaultManager] fileExistsAtPath:harPath]) {
             UIAlertController *noHar = [UIAlertController alertControllerWithTitle:@"Chưa Có Dữ Liệu HAR"
                                                                            message:@"Chưa có request mạng nào được ghi nhận.\nHãy chắc chắn bạn đã Bật Kiểm Toán (Audit) và dùng Zalo vài giây."
                                                                     preferredStyle:UIAlertControllerStyleAlert];
@@ -1012,10 +1018,14 @@ UIViewController *ZTGetTopViewController(void) {
 
     [alert addAction:[UIAlertAction actionWithTitle:@"🗑️ Xóa Sạch File Log" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Documents/ZaloAudit.log" error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Documents/ZaloTraffic.har" error:nil];
         NSString *home = NSHomeDirectory();
         if (home) {
             NSString *hPath = [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
             [[NSFileManager defaultManager] removeItemAtPath:hPath error:nil];
+            NSString *aPath = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+            [[NSFileManager defaultManager] removeItemAtPath:aPath error:nil];
         }
         UIAlertController *delAlert = [UIAlertController alertControllerWithTitle:@"Đã Xóa" message:@"Đã xóa sạch nội dung file ZaloAudit.log và ZaloTraffic.har." preferredStyle:UIAlertControllerStyleAlert];
         [delAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
