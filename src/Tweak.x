@@ -208,7 +208,7 @@ static inline BOOL is_zalo_caller(const void *addr0) {
     return NO;
 }
 
-static inline BOOL is_zalo_or_tweak_caller(const void *addr0, const void *addr1) {
+static inline BOOL __attribute__((unused)) is_zalo_or_tweak_caller(const void *addr0, const void *addr1) {
     if (is_zalo_caller(addr0) || is_zalo_caller(addr1)) return YES;
     const void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
@@ -240,7 +240,7 @@ static inline BOOL is_network_system_caller(const void *addr) {
     return NO;
 }
 
-static inline BOOL is_system_caller(const void *addr0, const void *addr1) {
+static inline BOOL __attribute__((unused)) is_system_caller(const void *addr0, const void *addr1) {
     const void *addrs[2] = {addr0, addr1};
     for (int i = 0; i < 2; i++) {
         if (!addrs[i]) continue;

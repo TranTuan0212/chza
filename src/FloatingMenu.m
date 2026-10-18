@@ -2232,7 +2232,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         }
     }
     if (mgDiskGB == 0) {
-        mgDiskGB = s.totalDiskGB > 0 ? s.totalDiskGB : (uint64_t)info.diskTotalGB;
+        mgDiskGB = s.diskTotalSize > 0 ? (s.diskTotalSize / (1000ULL * 1000ULL * 1000ULL)) : (uint64_t)info.diskTotalGB;
     }
     info.mgDiskCapacityText = [NSString stringWithFormat:@"MG: %llu GB | statfs: %.0f GB", (unsigned long long)mgDiskGB, info.diskTotalGB];
 
