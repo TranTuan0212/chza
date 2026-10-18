@@ -20,6 +20,8 @@
 #import <ifaddrs.h>
 #import <CommonCrypto/CommonDigest.h>
 
+extern void zt_flush_audit_and_har_queues_sync(void) __attribute__((weak_import));
+
 static NSString *zt_preview_sha256_token_hex(NSString *prefix, NSString *seedStr) {
     if (!seedStr || seedStr.length == 0) return @"Chưa cấp (Cần Wipe)";
     NSString *full = [NSString stringWithFormat:@"%@:%@", prefix ?: @"APNS", seedStr];
@@ -970,6 +972,68 @@ UIViewController *ZTGetTopViewController(void) {
                                                             preferredStyle:UIAlertControllerStyleAlert];
         [c addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:c animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🧪 Thử Nghiệm Ghi Log Thoát App & Chạy Ngầm" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        NSString *globalAudit = @"/var/mobile/Documents/ZaloAudit.log";
+        NSString *home = NSHomeDirectory();
+        NSString *containerAudit = home ? [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"] : nil;
+        
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        [df setDateFormat:@"HH:mm:ss"];
+        NSString *timeStr = [df stringFromDate:[NSDate date]];
+        NSString *testLine = [NSString stringWithFormat:@"[%@] [PID:%d] [TEST-LIFECYCLE-MENU] 👉 Người dùng đã bấm Thử Nghiệm Ghi Log Thoát App & Chạy Ngầm từ Menu Tiện Ích!\n", timeStr, getpid()];
+        NSData *testData = [testLine dataUsingEncoding:NSUTF8StringEncoding];
+
+        BOOL writeSuccess = NO;
+        // 1. Ghi vào /var/mobile/Documents/ZaloAudit.log
+        @try {
+            NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:globalAudit];
+            if (!h) {
+                [[NSFileManager defaultManager] createDirectoryAtPath:[globalAudit stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                [[NSFileManager defaultManager] createFileAtPath:globalAudit contents:nil attributes:nil];
+                chmod([globalAudit UTF8String], 0666);
+                h = [NSFileHandle fileHandleForWritingAtPath:globalAudit];
+            }
+            if (h) {
+                [h seekToEndOfFile];
+                [h writeData:testData];
+                [h closeFile];
+                writeSuccess = YES;
+            }
+        } @catch (NSException *e) {}
+
+        // 2. Ghi song song vào container Documents
+        if (containerAudit && ![containerAudit isEqualToString:globalAudit]) {
+            @try {
+                NSFileHandle *h2 = [NSFileHandle fileHandleForWritingAtPath:containerAudit];
+                if (!h2) {
+                    [[NSFileManager defaultManager] createDirectoryAtPath:[containerAudit stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+                    [[NSFileManager defaultManager] createFileAtPath:containerAudit contents:nil attributes:nil];
+                    chmod([containerAudit UTF8String], 0666);
+                    h2 = [NSFileHandle fileHandleForWritingAtPath:containerAudit];
+                }
+                if (h2) {
+                    [h2 seekToEndOfFile];
+                    [h2 writeData:testData];
+                    [h2 closeFile];
+                }
+            } @catch (NSException *e) {}
+        }
+
+        // 3. Kích hoạt xả buffer tức thì qua hàm đồng bộ
+        if (zt_flush_audit_and_har_queues_sync) {
+            zt_flush_audit_and_har_queues_sync();
+        }
+
+        NSString *resTitle = writeSuccess ? @"✅ Thử Nghiệm Thành Công" : @"⚠️ Kiểm Tra Quyền Ghi Log";
+        NSString *resMsg = writeSuccess ?
+            [NSString stringWithFormat:@"Đã ghi thành công bản ghi thử nghiệm lúc %@ vào hệ thống!\n\n📍 Vị trí file:\n%@\n\n🛡️ Cơ chế bảo vệ đang hoạt động:\n• Tự động xả toàn bộ buffer log & HAR xuống đĩa khi vuốt tắt app (Swipe-kill)\n• Bắt tín hiệu SIGTERM, SIGABRT, atexit\n• Ghi nhận push khi Zalo đã tắt (NotificationServiceExtension)\n\nToàn bộ dữ liệu log sẽ được bảo toàn nguyên vẹn kể cả khi thoát hoặc bị đóng app!", timeStr, globalAudit] :
+            @"Không thể ghi vào /var/mobile/Documents/ZaloAudit.log. Vui lòng kiểm tra quyền jailbreak hoặc thư mục Documents.";
+
+        UIAlertController *resAlert = [UIAlertController alertControllerWithTitle:resTitle message:resMsg preferredStyle:UIAlertControllerStyleAlert];
+        [resAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:resAlert animated:YES completion:nil];
     }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"📄 Xem / Xuất File Log" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {

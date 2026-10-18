@@ -184,6 +184,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *mnoFormatText;
 @property (nonatomic, assign) BOOL apnsGenuinePassed;
 @property (nonatomic, copy, nullable) NSString *apnsGenuineText;
+@property (nonatomic, assign) BOOL lifecycleLogPassed;
+@property (nonatomic, copy, nullable) NSString *lifecycleLogText;
 
 // Tổng kết Pre-flight
 @property (nonatomic, assign) BOOL preflightCompleted;

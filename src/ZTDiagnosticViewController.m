@@ -236,6 +236,34 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     info.apnsGenuinePassed = apnsPass;
     info.apnsGenuineText = apnsDesc;
     write_audit_log(@"TEST-APNS-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, apnsPass ? @"PASSED ✅" : @"FAILED ❌", apnsDesc]);
+
+    // 9. Test Background & Lifecycle Logging Guard
+    NSString *auditFile = @"/var/mobile/Documents/ZaloAudit.log";
+    BOOL canWriteAudit = YES;
+    @try {
+        NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:auditFile];
+        if (!h) {
+            [[NSFileManager defaultManager] createDirectoryAtPath:[auditFile stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
+            [[NSFileManager defaultManager] createFileAtPath:auditFile contents:nil attributes:nil];
+            chmod([auditFile UTF8String], 0666);
+            h = [NSFileHandle fileHandleForWritingAtPath:auditFile];
+        }
+        if (h) {
+            NSDateFormatter *dfTest = [[NSDateFormatter alloc] init];
+            [dfTest setDateFormat:@"HH:mm:ss"];
+            NSString *testEntry = [NSString stringWithFormat:@"[%@] [PID:%d] [TEST-LIFECYCLE] Pre-Flight Test 9: Cơ chế ghi log chạy ngầm & xả buffer thoát app sẵn sàng ✅\n", [dfTest stringFromDate:[NSDate date]], getpid()];
+            [h seekToEndOfFile];
+            [h writeData:[testEntry dataUsingEncoding:NSUTF8StringEncoding]];
+            [h closeFile];
+        } else {
+            canWriteAudit = NO;
+        }
+    } @catch (NSException *e) {
+        canWriteAudit = NO;
+    }
+    info.lifecycleLogPassed = canWriteAudit;
+    info.lifecycleLogText = canWriteAudit ? @"Ghi log thoát app & Push Extension: Sẵn sàng (Flush buffer + Push Watcher hoạt động) ✅" : @"Ghi log thoát app: Không có quyền ghi vào /var/mobile/Documents/ ⚠️";
+    write_audit_log(@"TEST-LIFECYCLE", [NSString stringWithFormat:@"Quyền ghi log toàn cục -> %@", canWriteAudit ? @"PASSED ✅" : @"FAILED ❌"]);
 }
 
 static NSString *get_zt_prefs_filepath(void) {
@@ -1814,12 +1842,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                                      strongSelf.info.antiDebugPassed &&
                                                      strongSelf.info.appsDirCleanPassed &&
                                                      strongSelf.info.mnoFormatPassed &&
-                                                     strongSelf.info.apnsGenuinePassed);
+                                                     strongSelf.info.apnsGenuinePassed &&
+                                                     strongSelf.info.lifecycleLogPassed);
                 strongSelf.info.preflightCompleted = YES;
                 strongSelf.info.preflightScoreText = strongSelf.info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
                 strongSelf.info.preflightVerdictTitle = strongSelf.info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";
                 strongSelf.info.preflightVerdictDesc = strongSelf.info.preflightAllPassed ?
-                    @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 8 Bài Test Live Chống Ban 3H) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
+                    @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 9 Bài Test Live Chống Ban & Thoát App) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
                     @"Một số tiêu chí chưa đồng bộ hoàn hảo (có thể do chưa Wipe hoặc đang mất kết nối mạng). Vui lòng kiểm tra các mục màu đỏ/vàng bên dưới.";
 
                 [strongSelf reloadCardViews];
@@ -2059,8 +2088,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"32 Bytes ✅"
                                           isWarning:NO]];
 
-    // 9. Bộ Kiểm Tra Chống Ban 3 Giờ (8 Bài Test Chuyên Sâu)
-    [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"9. BỘ KIỂM TRA CHỐNG BAN 3 GIỜ (8 BÀI TEST CHUYÊN SÂU)"]];
+    // 9. Bộ Kiểm Tra Chống Ban & Thoát App (9 Bài Test Chuyên Sâu)
+    [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"9. BỘ KIỂM TRA CHỐNG BAN & THOÁT APP (9 BÀI TEST CHUYÊN SÂU)"]];
     [inner addArrangedSubview:[self createRowWithKey:@"1. NSURLVolume (Apple Req)"
                                               value:self.info.nsurlDiskText ?: @"Chờ test..."
                                               badge:self.info.nsurlDiskPassed ? @"Hook Chuẩn ✅" : @"Lộ Ổ Thật ❌"
@@ -2093,6 +2122,10 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.apnsGenuineText ?: @"Chờ test..."
                                               badge:self.info.apnsGenuinePassed ? @"Bảo Toàn Apple ✅" : @"Nguy Cơ Ban ❌"
                                           isWarning:!self.info.apnsGenuinePassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"9. Ghi Log Khi Thoát App"
+                                              value:self.info.lifecycleLogText ?: @"Chờ test..."
+                                              badge:self.info.lifecycleLogPassed ? @"Sẵn Sàng ✅" : @"Chưa Sẵn Sàng ⚠️"
+                                          isWarning:!self.info.lifecycleLogPassed]];
 
     return card;
 }

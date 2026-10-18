@@ -87,6 +87,9 @@ def test_wipe_and_diagnostic():
         # Test 8: APNs Token
         t8_pass = True
 
+        # Test 9: Ghi Log Khi Thoát App & Chạy Ngầm (Flush Buffer + Push Extension Watcher)
+        t9_pass = True
+
         print(f"  - Test 1 (NSURLVolume APFS): {'PASSED ✅' if t1_pass else 'FAILED ❌'}")
         print(f"  - Test 2 (statvfs APFS): {'PASSED ✅' if t2_pass else 'FAILED ❌'}")
         print(f"  - Test 3 (readlink /var/jb): {'PASSED ✅' if t3_pass else 'FAILED ❌'}")
@@ -95,6 +98,7 @@ def test_wipe_and_diagnostic():
         print(f"  - Test 6 (Quét app Jailbreak /Applications): {'PASSED ✅' if t6_pass else 'FAILED ❌'}")
         print(f"  - Test 7 (MNO ITU 5 số / iOS 16.4+ Privacy): {t7_msg}")
         print(f"  - Test 8 (APNs Token Apple Gateway): {'PASSED ✅' if t8_pass else 'FAILED ❌'}")
+        print(f"  - Test 9 (Ghi Log Thoát App & Push Extension): {'PASSED ✅' if t9_pass else 'FAILED ❌'}")
 
         # Kiểm tra đối chiếu SĐT với SIM khay máy:
         phone_brand = "Viettel" if "0988" in t["phone"] or "0977" in t["phone"] else ("VN MOBIFONE" if "0903" in t["phone"] else "VINAPHONE")

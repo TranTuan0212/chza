@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <UserNotifications/UserNotifications.h>
 #import <objc/runtime.h>
 #import <Security/Security.h>
 #import <CommonCrypto/CommonDigest.h>
@@ -1116,6 +1117,57 @@ static void append_data_to_file_safely(NSString *path, NSData *data) {
 
 static NSMutableSet *loggedAuditKeys = nil;
 static dispatch_queue_t auditQueue = nil;
+static dispatch_queue_t harQueue = nil;
+
+static void flush_audit_and_har_queues_sync(void) {
+    if (auditQueue) {
+        dispatch_sync(auditQueue, ^{});
+    }
+    if (harQueue) {
+        dispatch_sync(harQueue, ^{});
+    }
+}
+
+__attribute__((visibility("default"))) void zt_flush_audit_and_har_queues_sync(void) {
+    flush_audit_and_har_queues_sync();
+}
+
+static void handle_app_termination_event(const char *reason) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSString *msg = [NSString stringWithFormat:@"⚠️ [LIFECYCLE-GUARD] Tiến trình đang đóng / thoát (%s) -> Đang xả toàn bộ dữ liệu log & HAR xuống ổ đĩa an toàn ✅", reason];
+        logAudit(@"APP-LIFECYCLE", msg);
+        flush_audit_and_har_queues_sync();
+    });
+}
+
+static void zt_sig_handler(int sig) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Signal %d", sig);
+    handle_app_termination_event(buf);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void zt_atexit_handler(void) {
+    handle_app_termination_event("atexit");
+}
+
+static UIBackgroundTaskIdentifier s_bg_task_id = UIBackgroundTaskInvalid;
+static void renew_background_task_assertion(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIApplication *app = [UIApplication sharedApplication];
+        if (!app) return;
+        if (s_bg_task_id != UIBackgroundTaskInvalid) {
+            [app endBackgroundTask:s_bg_task_id];
+            s_bg_task_id = UIBackgroundTaskInvalid;
+        }
+        s_bg_task_id = [app beginBackgroundTaskWithName:@"ZTBackgroundKeepAlive" expirationHandler:^{
+            logAudit(@"BACKGROUND-GUARD", @"⏱️ Hết hạn Background Task -> Tự động gia hạn giữ tiến trình sống...");
+            renew_background_task_assertion();
+        }];
+    });
+}
 
 static NSString *mask_sensitive_data(NSString *input) {
     if (!input || input.length == 0) return input;
@@ -3950,6 +4002,32 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                 });
                 method_setImplementation(regMethod, customRegImp);
             }
+
+            SEL bgSel = @selector(applicationDidEnterBackground:);
+            Method bgMethod = class_getInstanceMethod(delClass, bgSel);
+            if (bgMethod) {
+                typedef void (*OrigBgIMP)(id, SEL, UIApplication *);
+                OrigBgIMP origBg = (OrigBgIMP)method_getImplementation(bgMethod);
+                IMP customBg = imp_implementationWithBlock(^(id self_del, UIApplication *app) {
+                    logAudit(@"APP-LIFECYCLE", @"⏸️ [BACKGROUND] Zalo chuyển vào chạy ngầm (DidEnterBackground) -> Đang gia hạn Task & xả buffer log...");
+                    renew_background_task_assertion();
+                    flush_audit_and_har_queues_sync();
+                    if (origBg) origBg(self_del, bgSel, app);
+                });
+                method_setImplementation(bgMethod, customBg);
+            }
+
+            SEL termSel = @selector(applicationWillTerminate:);
+            Method termMethod = class_getInstanceMethod(delClass, termSel);
+            if (termMethod) {
+                typedef void (*OrigTermIMP)(id, SEL, UIApplication *);
+                OrigTermIMP origTerm = (OrigTermIMP)method_getImplementation(termMethod);
+                IMP customTerm = imp_implementationWithBlock(^(id self_del, UIApplication *app) {
+                    handle_app_termination_event("applicationWillTerminate");
+                    if (origTerm) origTerm(self_del, termSel, app);
+                });
+                method_setImplementation(termMethod, customTerm);
+            }
         }
         if (!is_original_zalo_app()) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
@@ -3957,6 +4035,12 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
             });
         }
     }
+    %orig;
+}
+
+- (void)_handleApplicationSuspend:(id)arg1 eventType:(int)arg2 {
+    logAudit(@"APP-LIFECYCLE", @"⏸️ [SUSPEND] Zalo nhận sự kiện tạm dừng hệ thống -> Đã xả buffer log an toàn ✅");
+    flush_audit_and_har_queues_sync();
     %orig;
 }
 
@@ -3987,6 +4071,28 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
 %end
 
+%hook UNNotificationServiceExtension
+
+- (void)didReceiveNotificationRequest:(UNNotificationRequest *)request withContentHandler:(void (^)(UNNotificationContent *contentToDeliver))contentHandler {
+    if (request && request.content) {
+        NSDictionary *userInfo = request.content.userInfo;
+        NSString *title = request.content.title ?: @"";
+        NSString *body = request.content.body ?: @"";
+        NSString *jsonStr = @"";
+        if (userInfo) {
+            @try {
+                NSData *jd = [NSJSONSerialization dataWithJSONObject:userInfo options:0 error:nil];
+                if (jd) jsonStr = [[NSString alloc] initWithData:jd encoding:NSUTF8StringEncoding];
+            } @catch (NSException *e) {}
+        }
+        logAudit(@"PUSH-EXTENSION", [NSString stringWithFormat:@"📬 [PUSH-ON-TERMINATED] Nhận Push Notification khi app đóng: Title='%@' Body='%@' Payload=%@", title, body, jsonStr]);
+        flush_audit_and_har_queues_sync();
+    }
+    %orig;
+}
+
+%end
+
 %hook UIPasteboard
 
 + (UIPasteboard *)pasteboardWithName:(UIPasteboardName)pasteboardName create:(BOOL)create {
@@ -4013,8 +4119,6 @@ static NSString *getHarPath(void) {
     }
     return @"/var/mobile/Library/Preferences/ZaloTraffic.har";
 }
-
-static dispatch_queue_t harQueue = nil;
 
 static void append_to_har_file(NSDictionary *entryDict) {
     if (!harQueue) {
@@ -5344,5 +5448,11 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
                 logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Gốc: Bảo toàn Token Apple Gateway | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
             }
         }
+
+        // Đăng ký bộ bảo vệ dữ liệu khi tiến trình bị tắt / kết thúc đột ngột
+        atexit(zt_atexit_handler);
+        signal(SIGTERM, zt_sig_handler);
+        signal(SIGINT, zt_sig_handler);
+        signal(SIGABRT, zt_sig_handler);
     }
 }
