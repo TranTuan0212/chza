@@ -5152,58 +5152,78 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
     });
 }
 
-static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
+static NSArray<NSString *> *s_discovered_security_modules = nil;
+
+static NSArray<NSString *> *perform_zalo_security_modules_scan_now(void) {
+    int numClasses = objc_getClassList(NULL, 0);
+    if (numClasses <= 0) return @[];
+    Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
+    if (!classes) return @[];
+    numClasses = objc_getClassList(classes, numClasses);
+
+    NSMutableArray *foundModules = [NSMutableArray array];
+
+    for (int i = 0; i < numClasses; i++) {
+        Class cls = classes[i];
+        const char *clsName = class_getName(cls);
+        if (!clsName) continue;
+
+        const char *imgName = class_getImageName(cls);
+        if (!imgName) continue;
+        // Chỉ quét các class thuộc Zalo hoặc Frameworks nhúng của Zalo
+        if (!strcasestr(imgName, "Zalo") && !strcasestr(imgName, "ZDK") && !strcasestr(imgName, "zingalo")) {
+            continue;
+        }
+
+        if (strcasestr(clsName, "Security") ||
+            strcasestr(clsName, "Fingerprint") ||
+            strcasestr(clsName, "Integrity") ||
+            strcasestr(clsName, "Jailbreak") ||
+            strcasestr(clsName, "Detector") ||
+            strcasestr(clsName, "Anti") ||
+            strcasestr(clsName, "Risk") ||
+            strcasestr(clsName, "ZShield") ||
+            strcasestr(clsName, "DeviceID") ||
+            strcasestr(clsName, "DeviceInfo") ||
+            strcasestr(clsName, "Hardware") ||
+            strcasestr(clsName, "Biometric") ||
+            strcasestr(clsName, "Telemetry") ||
+            strcasestr(clsName, "Fraud") ||
+            strcasestr(clsName, "Tamper") ||
+            strcasestr(clsName, "Hook")) {
+            [foundModules addObject:[NSString stringWithUTF8String:clsName]];
+        }
+    }
+    free(classes);
+
+    [foundModules sortUsingSelector:@selector(compare:)];
+    return [foundModules copy];
+}
+
+static void scan_zalo_security_modules_async(void) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
         @autoreleasepool {
             // Đợi 2 giây để Zalo hoàn tất nạp các dynamic frameworks vào bộ nhớ
             [NSThread sleepForTimeInterval:2.0];
 
-            int numClasses = objc_getClassList(NULL, 0);
-            if (numClasses <= 0) return;
-            Class *classes = (Class *)malloc(sizeof(Class) * numClasses);
-            if (!classes) return;
-            numClasses = objc_getClassList(classes, numClasses);
+            NSArray<NSString *> *modules = perform_zalo_security_modules_scan_now();
+            s_discovered_security_modules = modules;
 
-            NSMutableArray *foundModules = [NSMutableArray array];
-
-            for (int i = 0; i < numClasses; i++) {
-                Class cls = classes[i];
-                const char *clsName = class_getName(cls);
-                if (!clsName) continue;
-
-                const char *imgName = class_getImageName(cls);
-                if (!imgName) continue;
-                // Chỉ quét các class thuộc Zalo hoặc Frameworks nhúng của Zalo
-                if (!strstr(imgName, "Zalo") && !strstr(imgName, "ZDK") && !strstr(imgName, "vn.com.vng.zingalo")) {
-                    continue;
-                }
-
-                if (strcasestr(clsName, "Security") ||
-                    strcasestr(clsName, "Fingerprint") ||
-                    strcasestr(clsName, "Integrity") ||
-                    strcasestr(clsName, "Jailbreak") ||
-                    strcasestr(clsName, "Detector") ||
-                    strcasestr(clsName, "Anti") ||
-                    strcasestr(clsName, "Risk") ||
-                    strcasestr(clsName, "ZShield") ||
-                    strcasestr(clsName, "DeviceID") ||
-                    strcasestr(clsName, "DeviceInfo") ||
-                    strcasestr(clsName, "Hardware") ||
-                    strcasestr(clsName, "Biometric") ||
-                    strcasestr(clsName, "Telemetry")) {
-                    [foundModules addObject:[NSString stringWithUTF8String:clsName]];
-                }
-            }
-            free(classes);
-
-            if (foundModules.count > 0) {
-                [foundModules sortUsingSelector:@selector(compare:)];
-                logAudit(@"ZALO-SECURITY-RADAR", [NSString stringWithFormat:@"🛡️ [RADAR TOÀN DIỆN] Phát hiện %lu module bảo mật/định danh của Zalo:\n   • %@", (unsigned long)foundModules.count, [foundModules componentsJoinedByString:@"\n   • "]]);
+            if (modules.count > 0) {
+                logAudit(@"ZALO-SECURITY-RADAR", [NSString stringWithFormat:@"🛡️ [RADAR TOÀN DIỆN] Phát hiện %lu module bảo mật/định danh của Zalo:\n   • %@", (unsigned long)modules.count, [modules componentsJoinedByString:@"\n   • "]]);
             } else {
                 logAudit(@"ZALO-SECURITY-RADAR", @"🛡️ [RADAR TOÀN DIỆN] Đã quét toàn bộ binary Zalo nhưng không phát hiện module bảo mật riêng biệt.");
             }
         }
     });
+}
+
+__attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_security_modules(void) {
+    if (s_discovered_security_modules && s_discovered_security_modules.count > 0) {
+        return s_discovered_security_modules;
+    }
+    s_discovered_security_modules = perform_zalo_security_modules_scan_now();
+    return s_discovered_security_modules;
 }
 
 %ctor {
@@ -5448,6 +5468,9 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
                 logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Gốc: Bảo toàn Token Apple Gateway | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
             }
         }
+
+        // Tự động quét và lập danh mục các module bảo mật nội bộ của Zalo
+        scan_zalo_security_modules_async();
 
         // Đăng ký bộ bảo vệ dữ liệu khi tiến trình bị tắt / kết thúc đột ngột
         atexit(zt_atexit_handler);

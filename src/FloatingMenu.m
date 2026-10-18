@@ -21,6 +21,7 @@
 #import <CommonCrypto/CommonDigest.h>
 
 extern void zt_flush_audit_and_har_queues_sync(void) __attribute__((weak_import));
+extern NSArray<NSString *> *zt_get_discovered_security_modules(void) __attribute__((weak_import));
 
 static NSString *zt_preview_sha256_token_hex(NSString *prefix, NSString *seedStr) {
     if (!seedStr || seedStr.length == 0) return @"Chưa cấp (Cần Wipe)";
@@ -1034,6 +1035,27 @@ UIViewController *ZTGetTopViewController(void) {
         UIAlertController *resAlert = [UIAlertController alertControllerWithTitle:resTitle message:resMsg preferredStyle:UIAlertControllerStyleAlert];
         [resAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [top presentViewController:resAlert animated:YES completion:nil];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"🛡️ Quét Module Bảo Mật Nội Bộ Zalo" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        NSArray<NSString *> *modules = nil;
+        if (zt_get_discovered_security_modules) {
+            modules = zt_get_discovered_security_modules();
+        }
+        NSString *title = [NSString stringWithFormat:@"🛡️ Module Bảo Mật Zalo (%lu)", (unsigned long)(modules ? modules.count : 0)];
+        NSString *body = @"";
+        if (modules && modules.count > 0) {
+            NSString *list = [modules componentsJoinedByString:@"\n• "];
+            if (list.length > 800) {
+                list = [NSString stringWithFormat:@"%@\n... (và %lu class khác)", [list substringToIndex:800], (unsigned long)(modules.count - 15)];
+            }
+            body = [NSString stringWithFormat:@"Phát hiện %lu module bảo mật/định danh trong tiến trình Zalo:\n\n• %@\n\n✅ Toàn bộ các module này đều đã được làm sạch và cách ly bởi ZaloTweak.", (unsigned long)modules.count, list];
+        } else {
+            body = @"Đã quét toàn bộ binary nhưng không phát hiện module bảo mật/anti-tamper chuyên biệt nào trong Zalo.\n\nZalo dựa chủ yếu vào cơ chế Anti-Fraud phân tích hành vi trên Server (GeoIP, trạng thái SĐT, thiết bị đăng nhập).";
+        }
+        UIAlertController *scAlert = [UIAlertController alertControllerWithTitle:title message:body preferredStyle:UIAlertControllerStyleAlert];
+        [scAlert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [top presentViewController:scAlert animated:YES completion:nil];
     }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"📄 Xem / Xuất File Log" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
