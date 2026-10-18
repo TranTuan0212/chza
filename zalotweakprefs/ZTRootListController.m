@@ -1095,6 +1095,9 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     dict[@"carrierMCC"] = p.carrierMCC;
     dict[@"carrierMNC"] = p.carrierMNC;
     dict[@"carrierCountryCode"] = p.carrierCountryCode;
+    if (p.actualCarrier.length > 0) {
+        dict[@"preferredCarrier"] = p.actualCarrier;
+    }
     dict[@"batteryLevel"] = @(p.batteryLevel);
     dict[@"batteryState"] = @(p.batteryState);
     dict[@"bootTimeSec"] = @(p.bootTimeSec);
@@ -1438,19 +1441,19 @@ static NSString *findAuditLogPath(void) {
     BOOL hasConfigured = [dict[@"hasConfiguredProfile"] boolValue];
     info.hasConfiguredProfile = hasConfigured;
 
-    info.deviceName = dict[@"deviceName"] ?: [[UIDevice currentDevice] name];
-    info.iosVersion = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+    BOOL isIOS16Plus = NO;
+    NSString *sysVer = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+    if (sysVer.length > 0) {
+        NSInteger majorVer = [sysVer integerValue];
+        if (majorVer >= 16) isIOS16Plus = YES;
+    }
+    info.deviceName = isIOS16Plus ? @"iPhone" : (dict[@"deviceName"] ?: [[UIDevice currentDevice] name]);
+    info.iosVersion = sysVer;
     info.bundleId = @"vn.com.vng.zingalo";
 
-    if (!hasConfigured) {
-        info.currentIDFV = @"Chưa cấp (Cần Wipe)";
-        info.serial = @"";
-        info.wifiMAC = @"";
-    } else {
-        info.currentIDFV = dict[@"spoofedIDFV"] ?: @"Chưa cấp (Cần Wipe)";
-        info.serial = dict[@"spoofedSerial"] ?: @"";
-        info.wifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
-    }
+    info.currentIDFV = hasConfigured ? (dict[@"spoofedIDFV"] ?: @"Chưa cấp (Cần Wipe)") : @"Chưa cấp (Cần Wipe)";
+    info.serial = @"Không khả dụng";
+    info.wifiMAC = @"02:00:00:00:00:00";
 
     info.idfa = @"00000000-0000-0000-0000-000000000000";
 
@@ -1459,9 +1462,11 @@ static NSString *findAuditLogPath(void) {
                            ([regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
                            ([regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
     info.regionName = regionDesc;
+    info.preferredCarrier = dict[@"preferredCarrier"];
     info.carrierName = dict[@"carrierName"] ?: @"Viettel";
     info.carrierMCC = dict[@"carrierMCC"] ?: @"452";
     info.carrierMNC = dict[@"carrierMNC"] ?: @"04";
+    info.carrierCountryCode = dict[@"carrierCountryCode"] ?: @"vn";
 
     // Đo dung lượng thư mục Sandbox Zalo
     uint64_t sandboxTotalBytes = 0;
@@ -1659,10 +1664,10 @@ static NSString *findAuditLogPath(void) {
 
     info.preflightAllPassed = (hasConfigured && info.screenResolutionPassed && info.armCpuPassed && info.deviceIdPassed);
     info.preflightCompleted = YES;
-    info.preflightScoreText = info.preflightAllPassed ? @"8/8 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
-    info.preflightVerdictTitle = info.preflightAllPassed ? @"THIẾT BỊ 100% SẠCH & ĐỒNG BỘ 🟢" : @"CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO 🟡";
+    info.preflightScoreText = info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
+    info.preflightVerdictTitle = info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";
     info.preflightVerdictDesc = info.preflightAllPassed ?
-        @"Toàn bộ 8 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
+        @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 8 Bài Test Live Chống Ban 3H) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
         @"Một số tiêu chí chưa đồng bộ hoàn hảo (có thể do chưa Wipe hoặc đang mất kết nối mạng). Vui lòng kiểm tra các mục màu đỏ/vàng bên dưới.";
 
     // Cập nhật lastWipedIP nếu chưa có và ĐÃ CÓ profile đã cấu hình
