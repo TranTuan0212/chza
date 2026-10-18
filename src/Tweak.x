@@ -2247,8 +2247,8 @@ static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime
         contSec = 43200.0; // 12h mặc định
     }
 
-    // Thời gian ngủ tự nhiên của máy (từ 25% đến 40% tổng thời gian máy bật)
-    double sleepRatio = 0.28 + (double)((bootSec * 2654435761ULL) % 120ULL) / 1000.0;
+    // Thời gian ngủ tự nhiên của máy phân bổ đa dạng theo thói quen người dùng (từ 25% đến 68% tổng thời gian máy bật)
+    double sleepRatio = 0.25 + (double)((bootSec * 2654435761ULL) % 430ULL) / 1000.0;
     double awakeSec = contSec * (1.0 - sleepRatio);
     if (awakeSec < 60.0) awakeSec = 60.0;
 

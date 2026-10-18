@@ -116,6 +116,7 @@ static const AppleOSRelease kAppleOSReleases[] = {
     {"15.8.1", "19H380",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
     {"15.8.2", "19H384",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
     {"15.8.3", "19H386",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
+    {"15.8.5", "19H395",  15, YES}, // Bản vá bảo mật cuối cùng A9/A10 (iPhone 6s / 7)
 
     // iOS 16 Releases (iPhone 8 / 8 Plus / X)
     {"16.5",    "20F66",  16, NO},
@@ -144,7 +145,10 @@ static const AppleOSRelease kAppleOSReleases[] = {
     {"18.2",   "22C152",  18, NO},
     {"18.2.1", "22C161",  18, NO},
     {"18.3",   "22D63",   18, NO},
-    {"18.3.1", "22D72",   18, NO}
+    {"18.3.1", "22D72",   18, NO},
+    {"18.5",   "22F76",   18, NO},
+    {"18.6.1", "22G88",   18, NO},
+    {"18.7",   "22H112",  18, NO}
 };
 
 NSString *generate_apple_serial(void) {
