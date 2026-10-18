@@ -2225,6 +2225,7 @@ static inline double mach_ticks_to_seconds(uint64_t ticks) {
 
 static int64_t s_mach_time_offset = 0;
 static BOOL s_mach_offset_initialized = NO;
+static uint64_t (*orig_mach_absolute_time)(void) = NULL;
 
 static void init_mach_time_offset_if_needed(void) {
     if (s_mach_offset_initialized) return;
@@ -2292,7 +2293,6 @@ static uint64_t my_mach_continuous_time(void) {
     return real_time;
 }
 
-static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
     uint64_t real_time = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
     if (is_tweak_active()) {
