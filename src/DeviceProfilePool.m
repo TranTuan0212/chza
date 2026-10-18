@@ -318,19 +318,22 @@ static NSString *detect_real_system_machine(void) {
         diskCount++;
     }
     uint64_t nominalDisk = spec.supportedDisks[arc4random_uniform((uint32_t)diskCount)];
-    
-    // Tỉ lệ định dạng APFS thực tế sau khi trừ System, Preboot, Recovery container (~96.8% - 98.2%)
-    double apfsRatio = 0.968 + (((double)arc4random_uniform(15)) / 1000.0);
-    uint64_t rawAPFS = (uint64_t)(nominalDisk * apfsRatio);
-    profile.diskTotalSize = (rawAPFS / 4096ULL) * 4096ULL;
+    uint64_t nominalBlocks = nominalDisk / 4096ULL;
 
-    // Dung lượng trống tự nhiên (từ 25% đến 75% tổng ổ cứng), là bội số chuẩn của block 4096
-    double freeRatio = 0.25 + (((double)arc4random_uniform(50)) / 100.0);
-    uint64_t rawFree = (uint64_t)(profile.diskTotalSize * freeRatio);
-    profile.diskFreeSize = (rawFree / 4096ULL) * 4096ULL;
-    if (profile.diskFreeSize >= profile.diskTotalSize) {
-        profile.diskFreeSize = profile.diskTotalSize - (610351ULL * 4096ULL);
+    // Phân vùng APFS Container: Preboot, Recovery, System container chiếm khoảng 1.8% - 3.2% tổng block
+    // Dao động lẻ chi tiết tới từng block đơn lẻ để triệt tiêu hoàn toàn các số chẵn hàng chục nghìn / hàng triệu byte
+    double containerOverheadRatio = 0.0180 + (((double)arc4random_uniform(1400)) / 100000.0);
+    uint64_t overheadBlocks = (uint64_t)(nominalBlocks * containerOverheadRatio) + (uint64_t)(100 + arc4random_uniform(2048));
+    uint64_t totalBlocks = nominalBlocks - overheadBlocks;
+    profile.diskTotalSize = totalBlocks * 4096ULL;
+
+    // Dung lượng trống tự nhiên (từ 28% đến 68% tổng số block), lẻ tới từng block
+    double freeBlockRatio = 0.280 + (((double)arc4random_uniform(4000)) / 10000.0);
+    uint64_t freeBlocks = (uint64_t)(totalBlocks * freeBlockRatio) + (uint64_t)(100 + arc4random_uniform(1024));
+    if (freeBlocks >= totalBlocks) {
+        freeBlocks = totalBlocks - (610351ULL + (uint64_t)arc4random_uniform(4096));
     }
+    profile.diskFreeSize = freeBlocks * 4096ULL;
 
     // 4. KHO HƠN 100 TÊN THIẾT BỊ TỰ NHIÊN THEO VÙNG
     NSString *curRegion = region ?: @"VN";
