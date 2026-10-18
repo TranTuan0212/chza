@@ -1890,7 +1890,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.isCloneApp = isClone;
     info.realBundleId = isClone ? [NSString stringWithFormat:@"%@ (Clone)", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
 
-    if (s.hasConfiguredProfile && s.spoofedIDFV.length > 0) {
+    BOOL isGenuineZalo = [info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
+    if (isGenuineZalo) {
+        info.apnsPushStatus = @"Bảo toàn Token Apple Gốc";
+        info.voipPushStatus = @"Bảo toàn Token VoIP Gốc";
+        info.pushTokenPassed = YES;
+    } else if (s.hasConfiguredProfile && s.spoofedIDFV.length > 0) {
         info.apnsPushStatus = zt_preview_sha256_token_hex(@"APNS", s.spoofedIDFV);
         info.voipPushStatus = zt_preview_sha256_token_hex(@"VOIP", s.spoofedIDFV);
         info.pushTokenPassed = YES;
@@ -2134,6 +2139,22 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.timeZoneGMT = (gmtM > 0) ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
     info.preferredLanguages = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
 
+    // Đồng bộ Bàn phím gõ (UITextInputMode)
+    NSString *primaryLang = nil;
+    if ([UITextInputMode respondsToSelector:@selector(activeInputModes)]) {
+        NSArray *modes = [UITextInputMode activeInputModes];
+        for (UITextInputMode *m in modes) {
+            if ([m respondsToSelector:@selector(primaryLanguage)] && m.primaryLanguage.length > 0) {
+                primaryLang = m.primaryLanguage;
+                break;
+            }
+        }
+    }
+    if (!primaryLang || primaryLang.length == 0) {
+        primaryLang = s.preferredLanguages.firstObject ?: @"vi-VN";
+    }
+    info.keyboardInputModeText = [NSString stringWithFormat:@"%@ (Đồng bộ bàn phím ✅)", primaryLang];
+
     BOOL isVNMode = [s.regionMode isEqualToString:@"VN"] || !s.regionMode;
     BOOL isPLMode = [s.regionMode isEqualToString:@"PL"];
     BOOL isUSMode = [s.regionMode isEqualToString:@"US"];
@@ -2178,6 +2199,42 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     size_t ptsz = sizeof(proc_trans);
     sysctlbyname("sysctl.proc_translated", &proc_trans, &ptsz, NULL, 0);
     info.procTranslated = proc_trans;
+
+    // Darwin Kernel Release (sysctl kern.osrelease / uname)
+    char liveKrelBuf[64] = {0};
+    size_t krelSz = sizeof(liveKrelBuf);
+    sysctlbyname("kern.osrelease", liveKrelBuf, &krelSz, NULL, 0);
+    info.darwinKernelRelease = (strlen(liveKrelBuf) > 0) ? [NSString stringWithUTF8String:liveKrelBuf] : (s.kernOsVersion ?: @"21.6.0");
+
+    // Dynamic Battery Level
+    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+    float liveBat = [UIDevice currentDevice].batteryLevel;
+    if (liveBat >= 0.0f) {
+        info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả pin tự nhiên 🟢)", liveBat * 100.0f];
+    } else {
+        info.batteryStatusText = @"100% (Mặc định)";
+    }
+
+    // MobileGestalt Disk Capacity vs statfs
+    typedef CFPropertyListRef (*MGCopyAnswerFn)(CFStringRef property);
+    MGCopyAnswerFn fnMG = (MGCopyAnswerFn)dlsym(RTLD_DEFAULT, "MGCopyAnswer");
+    uint64_t mgDiskGB = 0;
+    if (fnMG) {
+        CFTypeRef ans = fnMG(CFSTR("TotalDiskCapacity"));
+        if (ans) {
+            if (CFGetTypeID(ans) == CFNumberGetTypeID()) {
+                uint64_t bytes = 0;
+                CFNumberGetValue((CFNumberRef)ans, kCFNumberSInt64Type, &bytes);
+                mgDiskGB = bytes / (1000ULL * 1000ULL * 1000ULL);
+            }
+            CFRelease(ans);
+        }
+    }
+    if (mgDiskGB == 0) {
+        mgDiskGB = s.totalDiskGB > 0 ? s.totalDiskGB : (uint64_t)info.diskTotalGB;
+    }
+    info.mgDiskCapacityText = [NSString stringWithFormat:@"MG: %llu GB | statfs: %.0f GB", (unsigned long long)mgDiskGB, info.diskTotalGB];
+
     info.sysctlPassed = (info.procTranslated == 0 && info.pageSizeKB == 16 && info.l2CacheSizeMB > 0);
 
     // 8. Định dạng ngày giờ cụ thể cho st_birthtime & BootTime
@@ -2235,7 +2292,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // Kiểm tra interface thực tế qua bộ lọc ngụy trang zt_get_masked_ifaddrs của Tweak
     struct ifaddrs *interfaces = NULL;
-    BOOL utunFound = NO;
+    BOOL virtualFound = NO;
+    NSMutableArray *activeIfNames = [NSMutableArray array];
     typedef int (*zt_masked_ifaddrs_fn_t)(struct ifaddrs **);
     zt_masked_ifaddrs_fn_t fn_ifaddrs = (zt_masked_ifaddrs_fn_t)dlsym(RTLD_DEFAULT, "zt_get_masked_ifaddrs");
     int ret = fn_ifaddrs ? fn_ifaddrs(&interfaces) : getifaddrs(&interfaces);
@@ -2243,16 +2301,27 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         struct ifaddrs *temp = interfaces;
         while (temp) {
             if (temp->ifa_name) {
-                if (strncmp(temp->ifa_name, "utun", 4) == 0 || strncmp(temp->ifa_name, "ppp", 3) == 0) {
-                    utunFound = YES;
+                const char *iname = temp->ifa_name;
+                if (strncmp(iname, "utun", 4) == 0 ||
+                    strncmp(iname, "tun", 3) == 0 ||
+                    strncmp(iname, "tap", 3) == 0 ||
+                    strncmp(iname, "ppp", 3) == 0 ||
+                    strncmp(iname, "ipsec", 5) == 0 ||
+                    strncmp(iname, "pdp_ip9", 7) == 0) {
+                    virtualFound = YES;
+                }
+                NSString *nameStr = [NSString stringWithUTF8String:iname];
+                if (nameStr.length > 0 && ![activeIfNames containsObject:nameStr]) {
+                    [activeIfNames addObject:nameStr];
                 }
             }
             temp = temp->ifa_next;
         }
         freeifaddrs(interfaces);
     }
-    info.ifaddrsCleanPassed = !utunFound;
-    info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
+    info.ifaddrsCleanPassed = !virtualFound;
+    info.liveInterfacesText = activeIfNames.count > 0 ? [activeIfNames componentsJoinedByString:@", "] : @"en0, lo0";
+    info.ifaddrsCleanText = virtualFound ? @"Phát hiện interface ảo lộ ra Zalo ⚠️" : [NSString stringWithFormat:@"Đã lọc sạch card ảo (%@) ✅", info.liveInterfacesText];
     info.networkBundleIdText = isClone ? [NSString stringWithFormat:@"Kernel: %@ | Zalo: vn.com.vng.zingalo", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
 
     // 2. Định Danh Centralized & Telemetry
@@ -2287,13 +2356,21 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.deviceIdDetails = [NSString stringWithFormat:@"%@ (ms1!=ms2!=ms3)", info.hardwareDeviceId];
 
     // 6. Phần Cứng & Hệ Điều Hành
-    info.hardwareSummaryText = [NSString stringWithFormat:@"%@ | iOS %@ (%@)", info.deviceMachine ?: @"iPhone", info.iosVersion ?: @"", s.kernOsVersion ?: @"Build OK"];
+    info.hardwareSummaryText = [NSString stringWithFormat:@"%@ | iOS %@ (Darwin %@)", info.deviceMachine ?: @"iPhone", info.iosVersion ?: @"", info.darwinKernelRelease ?: @"21.6.0"];
 
     // 7. Ẩn Dấu Vết Jailbreak & PAC Stripping
     info.pacStripPassed = YES;
     info.pacStripText = @"arm64 / arm64e PAC Stripped";
-    info.jbHidePassed = YES;
-    info.jbHideText = @"/var/jb, cydia_substitute trả về ENOENT";
+    int jbAcc = access("/var/jb", F_OK);
+    struct stat jbStat;
+    int jbSt = stat("/var/jb", &jbStat);
+    if ((jbAcc != 0 && errno == ENOENT) || (jbSt != 0 && errno == ENOENT)) {
+        info.jbHidePassed = YES;
+        info.jbHideText = @"/var/jb trả về ENOENT (Đã ẩn Roothide ✅)";
+    } else {
+        info.jbHidePassed = NO;
+        info.jbHideText = @"Lộ đường dẫn /var/jb ra app ⚠️";
+    }
 
     // 8. Push Tokens
     info.pushTokensSummary = @"APNs (32B) & VoIP (32B)";

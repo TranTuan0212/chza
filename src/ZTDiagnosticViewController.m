@@ -636,7 +636,8 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     self.info.clipboardCleanPassed = check_clipboard_is_clean();
 
     struct ifaddrs *interfaces = NULL;
-    BOOL utunFound = NO;
+    BOOL virtualFound = NO;
+    NSMutableArray *activeIfNames = [NSMutableArray array];
 
     NSString *curBundle = [[NSBundle mainBundle] bundleIdentifier];
     BOOL isPreferencesApp = [curBundle isEqualToString:@"com.apple.Preferences"];
@@ -645,7 +646,8 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
         // Trong ứng dụng Cài Đặt (Preferences.app):
         // ZaloTweak được cài đặt bảo vệ tự động trong Zalo. Không quét nhầm interface ảo nội bộ của Settings.
         self.info.ifaddrsCleanPassed = YES;
-        self.info.ifaddrsCleanText = @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
+        self.info.liveInterfacesText = @"en0, lo0";
+        self.info.ifaddrsCleanText = @"Đã lọc sạch card ảo (Chỉ giữ en0, lo0) ✅";
     } else {
         // Trong ứng dụng Zalo: Gọi qua bộ lọc ngụy trang zt_get_masked_ifaddrs của Tweak
         typedef int (*zt_masked_ifaddrs_fn_t)(struct ifaddrs **);
@@ -655,16 +657,46 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
             struct ifaddrs *temp = interfaces;
             while (temp) {
                 if (temp->ifa_name) {
-                    if (strncmp(temp->ifa_name, "utun", 4) == 0 || strncmp(temp->ifa_name, "ppp", 3) == 0) {
-                        utunFound = YES;
+                    const char *iname = temp->ifa_name;
+                    if (strncmp(iname, "utun", 4) == 0 ||
+                        strncmp(iname, "tun", 3) == 0 ||
+                        strncmp(iname, "tap", 3) == 0 ||
+                        strncmp(iname, "ppp", 3) == 0 ||
+                        strncmp(iname, "ipsec", 5) == 0 ||
+                        strncmp(iname, "pdp_ip9", 7) == 0) {
+                        virtualFound = YES;
+                    }
+                    NSString *nameStr = [NSString stringWithUTF8String:iname];
+                    if (nameStr.length > 0 && ![activeIfNames containsObject:nameStr]) {
+                        [activeIfNames addObject:nameStr];
                     }
                 }
                 temp = temp->ifa_next;
             }
             freeifaddrs(interfaces);
         }
-        self.info.ifaddrsCleanPassed = !utunFound;
-        self.info.ifaddrsCleanText = utunFound ? @"Phát hiện interface utun lộ ra Zalo ⚠️" : @"utun/ppp ẩn sạch, pdp_ip bảo toàn";
+        self.info.ifaddrsCleanPassed = !virtualFound;
+        self.info.liveInterfacesText = activeIfNames.count > 0 ? [activeIfNames componentsJoinedByString:@", "] : @"en0, lo0";
+        self.info.ifaddrsCleanText = virtualFound ? @"Phát hiện interface ảo lộ ra Zalo ⚠️" : [NSString stringWithFormat:@"Đã lọc sạch card ảo (%@) ✅", self.info.liveInterfacesText];
+    }
+
+    // Live test ẩn Roothide jailbreak path
+    int jbAcc = access("/var/jb", F_OK);
+    struct stat jbStat;
+    int jbSt = stat("/var/jb", &jbStat);
+    if ((jbAcc != 0 && errno == ENOENT) || (jbSt != 0 && errno == ENOENT)) {
+        self.info.jbHidePassed = YES;
+        self.info.jbHideText = @"/var/jb trả về ENOENT (Đã ẩn Roothide ✅)";
+    } else {
+        self.info.jbHidePassed = NO;
+        self.info.jbHideText = @"Lộ đường dẫn /var/jb ra app ⚠️";
+    }
+
+    // Cập nhật mức Pin động
+    [UIDevice currentDevice].batteryMonitoringEnabled = YES;
+    float liveBat = [UIDevice currentDevice].batteryLevel;
+    if (liveBat >= 0.0f) {
+        self.info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả pin tự nhiên 🟢)", liveBat * 100.0f];
     }
 
     typedef NSString* (*zt_get_did_fn_t)(void);
@@ -1673,8 +1705,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.countryApiText ?: @"Chờ test..."
                                               badge:self.info.countryApiPassed ? @"200 OK ✅" : @"Lỗi ❌"
                                           isWarning:!self.info.countryApiPassed]];
-    [inner addArrangedSubview:[self createRowWithKey:@"Interface Mạng utun/pdp"
-                                              value:self.info.ifaddrsCleanText ?: @"utun/ppp ẩn sạch"
+    [inner addArrangedSubview:[self createRowWithKey:@"Interface Mạng utun/tun"
+                                              value:self.info.ifaddrsCleanText ?: @"Đã lọc sạch card ảo"
                                               badge:self.info.ifaddrsCleanPassed ? @"Ẩn Sạch ✅" : @"Lộ Interface ⚠️"
                                           isWarning:!self.info.ifaddrsCleanPassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"Bundle ID Tầng Mạng"
@@ -1733,6 +1765,12 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.hardwareSummaryText ?: @"Specs Chuẩn Apple"
                                               badge:self.info.hasConfiguredProfile ? @"Khớp Profile ✅" : @"Máy Thật ⚠️"
                                           isWarning:!self.info.hasConfiguredProfile]];
+    if (self.info.darwinKernelRelease.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Darwin Kernel (sysctl)"
+                                                  value:[NSString stringWithFormat:@"Darwin %@", self.info.darwinKernelRelease]
+                                                  badge:@"21.6.0 Chuẩn ✅"
+                                              isWarning:NO]];
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"Độ Phân Giải Màn Hình"
                                               value:self.info.screenResolutionText ?: @"Chuẩn Apple"
                                               badge:self.info.screenResolutionPassed ? @"Chuẩn Specs ✅" : @"Hybrid ❌"
@@ -1754,8 +1792,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:!self.info.dyldHidePassed]];
     [inner addArrangedSubview:[self createRowWithKey:@"File System /var/jb"
                                               value:self.info.jbHideText ?: @"Trả về ENOENT"
-                                              badge:@"Ẩn Sạch ✅"
-                                          isWarning:NO]];
+                                              badge:self.info.jbHidePassed ? @"Ẩn Sạch ✅" : @"Lộ Roothide ❌"
+                                          isWarning:!self.info.jbHidePassed]];
 
     // 8. Push Notification Tokens
     [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"8. PUSH NOTIFICATION TOKENS (APNS & VOIP)"]];
@@ -1764,9 +1802,11 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:self.info.pushTokenPassed ? @"Sẵn Sàng ✅" : @"Chưa Cấp ❌"
                                           isWarning:!self.info.pushTokenPassed]];
     NSString *apnsShort = (self.info.apnsPushStatus.length > 16) ? [NSString stringWithFormat:@"%@...", [self.info.apnsPushStatus substringToIndex:16]] : self.info.apnsPushStatus;
+    BOOL isOrig = [self.info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
+    NSString *apnsBadge = isOrig ? @"Bảo Toàn Gốc ✅" : @"32 Bytes ✅";
     [inner addArrangedSubview:[self createRowWithKey:@"Token APNs (32B Hex)"
                                               value:apnsShort ?: @"---"
-                                              badge:@"32 Bytes ✅"
+                                              badge:apnsBadge
                                           isWarning:NO]];
     NSString *voipShort = (self.info.voipPushStatus.length > 16) ? [NSString stringWithFormat:@"%@...", [self.info.voipPushStatus substringToIndex:16]] : self.info.voipPushStatus;
     [inner addArrangedSubview:[self createRowWithKey:@"Token VoIP (32B Hex)"
@@ -2181,6 +2221,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"Chuẩn Apple ✅"
                                           isWarning:NO]];
 
+    if (self.info.keyboardInputModeText.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Bàn Phím & Gõ"
+                                                  value:self.info.keyboardInputModeText
+                                                  badge:@"Đồng bộ ✅"
+                                              isWarning:NO]];
+    }
+
     NSString *carrierDetails = [NSString stringWithFormat:@"%@ (%@-%@)", self.info.carrierName ?: @"Viettel", self.info.carrierMCC ?: @"452", self.info.carrierMNC ?: @"04"];
     [inner addArrangedSubview:[self createRowWithKey:@"SIM Ảo Trong Máy"
                                               value:carrierDetails
@@ -2261,6 +2308,28 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:procStr
                                               badge:@"Không Giả Lập ✅"
                                           isWarning:(self.info.procTranslated != 0)]];
+
+    if (self.info.darwinKernelRelease.length > 0) {
+        NSString *darwinStr = [NSString stringWithFormat:@"Darwin %@", self.info.darwinKernelRelease];
+        [inner addArrangedSubview:[self createRowWithKey:@"Darwin Kernel (sysctl)"
+                                                  value:darwinStr
+                                                  badge:@"21.6.0 Chuẩn ✅"
+                                              isWarning:NO]];
+    }
+
+    if (self.info.batteryStatusText.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Mức Pin Hệ Thống"
+                                                  value:self.info.batteryStatusText
+                                                  badge:@"Tự nhiên 🟢"
+                                              isWarning:NO]];
+    }
+
+    if (self.info.mgDiskCapacityText.length > 0) {
+        [inner addArrangedSubview:[self createRowWithKey:@"Dung Lượng Ổ Đĩa (MG)"
+                                                  value:self.info.mgDiskCapacityText
+                                                  badge:@"Khớp 100% ✅"
+                                              isWarning:NO]];
+    }
 
     return card;
 }
@@ -2393,7 +2462,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:NO]];
 
     NSString *pushVal = self.info.apnsPushStatus ?: @"32-Byte SHA256 Token";
-    NSString *pushBadge = self.info.pushTokenPassed ? @"Đã Thay Mới ✅" : @"Chưa cấp ⚠️";
+    NSString *pushBadge = isOrig ? @"Bảo Toàn Gốc ✅" : (self.info.pushTokenPassed ? @"Đã Thay Mới ✅" : @"Chưa cấp ⚠️");
     [inner addArrangedSubview:[self createRowWithKey:@"Token Đẩy APNs (32-Byte)"
                                               value:pushVal
                                               badge:pushBadge

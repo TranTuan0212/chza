@@ -60,6 +60,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *timeZoneName;
 @property (nonatomic, copy) NSString *timeZoneGMT;
 @property (nonatomic, copy) NSString *preferredLanguages;
+@property (nonatomic, copy, nullable) NSString *keyboardInputModeText;
 @property (nonatomic, assign) BOOL regionSyncPassed;
 
 // Phần cứng Radar mới
@@ -67,6 +68,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) uint32_t l2CacheSizeMB;
 @property (nonatomic, assign) uint32_t pageSizeKB;
 @property (nonatomic, assign) int procTranslated;
+@property (nonatomic, copy, nullable) NSString *darwinKernelRelease;
+@property (nonatomic, copy, nullable) NSString *batteryStatusText;
+@property (nonatomic, copy, nullable) NSString *mgDiskCapacityText;
+@property (nonatomic, copy, nullable) NSString *liveInterfacesText;
 @property (nonatomic, assign) BOOL sysctlPassed;
 
 // Ngày giờ cụ thể cho Ổ đĩa, Boot Time & Đồng bộ 3 Đồng Hồ Uptime
