@@ -880,7 +880,7 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
     [UIDevice currentDevice].batteryMonitoringEnabled = YES;
     float liveBat = [UIDevice currentDevice].batteryLevel;
     if (liveBat >= 0.0f) {
-        self.info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả pin tự nhiên 🟢)", liveBat * 100.0f];
+        self.info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả tự nhiên ~6.5%%/h 🟢)", liveBat * 100.0f];
     }
 
     typedef NSString* (*zt_get_did_fn_t)(void);

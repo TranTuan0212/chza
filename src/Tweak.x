@@ -1616,27 +1616,86 @@ static int my_uname(struct utsname *buf) {
     return @"iPhone";
 }
 
-- (float)batteryLevel {
-    if (!is_tweak_active()) return %orig;
-    float base = [ZTSettings sharedSettings].batteryLevel;
-    if (base <= 0.05f || base > 1.0f) base = 0.85f;
+static uint64_t s_battery_ref_time = 0;
+static float s_battery_ref_level = 0.0f;
+static dispatch_source_t s_battery_timer = NULL;
+
+static float compute_live_battery_level(void) {
+    ZTSettings *s = [ZTSettings sharedSettings];
+    float base = s.batteryLevel;
+    if (base <= 0.05f || base > 1.0f) {
+        base = 0.85f;
+        s.batteryLevel = base;
+    }
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
-    double uptimeHours = 0.0;
-    if (bootSec > 0 && tv.tv_sec > (time_t)bootSec) {
-        uptimeHours = ((double)tv.tv_sec - (double)bootSec) / 3600.0;
-    } else {
-        uptimeHours = 4.0;
+    uint64_t nowSec = (uint64_t)tv.tv_sec;
+
+    if (s_battery_ref_time == 0 || s_battery_ref_level <= 0.0f || fabsf(s_battery_ref_level - base) > 0.05f) {
+        s_battery_ref_time = nowSec;
+        s_battery_ref_level = base;
     }
 
-    // Tự nhiên giảm khoảng 1.5% mỗi giờ máy chạy, có chu kỳ dao động tự nhiên
-    float drain = (float)(fmod(uptimeHours * 0.015, 0.45));
-    float current = base - drain;
-    if (current < 0.15f) current = 0.15f;
+    uint64_t elapsed = (nowSec >= s_battery_ref_time) ? (nowSec - s_battery_ref_time) : 0;
+    // Tốc độ tiêu hao thực tế khi app Zalo đang chạy: ~6.5% mỗi giờ (tương đương 1% mỗi ~9.2 phút)
+    float drain = (float)elapsed * (0.065f / 3600.0f);
+    float current = s_battery_ref_level - drain;
+    if (current < 0.15f) current = 0.15f; // Chặn đáy 15%, không xả sập nguồn
     if (current > 1.0f) current = 1.0f;
     current = roundf(current * 100.0f) / 100.0f;
+
+    return current;
+}
+
+static void check_and_update_battery_drain(void) {
+    if (!is_tweak_active()) return;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.batteryState != 1) return; // Chỉ xả khi không cắm sạc (UIDeviceBatteryStateUnplugged = 1)
+
+    float current = compute_live_battery_level();
+    if (current < s.batteryLevel) {
+        float oldLevel = s.batteryLevel;
+        s.batteryLevel = current;
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        s_battery_ref_time = (uint64_t)tv.tv_sec;
+        s_battery_ref_level = current;
+        [s saveSettings];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter] postNotificationName:UIDeviceBatteryLevelDidChangeNotification
+                                                                object:[UIDevice currentDevice]];
+        });
+
+        logAudit(@"BATTERY-DRAIN", [NSString stringWithFormat:@"🔋 [PIN TỰ NHIÊN] Tụt: %.0f%% -> %.0f%% (Xả ~6.5%%/h) | Đã phát UIDeviceBatteryLevelDidChangeNotification", oldLevel * 100.0f, current * 100.0f]);
+    }
+}
+
+static void start_battery_drain_timer_if_needed(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatch_queue_t queue = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+        s_battery_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+        if (s_battery_timer) {
+            // Kiểm tra đều đặn mỗi 30 giây
+            dispatch_source_set_timer(s_battery_timer,
+                                      dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC),
+                                      30 * NSEC_PER_SEC,
+                                      5 * NSEC_PER_SEC);
+            dispatch_source_set_event_handler(s_battery_timer, ^{
+                check_and_update_battery_drain();
+            });
+            dispatch_resume(s_battery_timer);
+        }
+    });
+}
+
+- (float)batteryLevel {
+    if (!is_tweak_active()) return %orig;
+    start_battery_drain_timer_if_needed();
+    check_and_update_battery_drain();
+    float current = compute_live_battery_level();
 
     void *c0 = __builtin_return_address(0);
     if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
@@ -1656,6 +1715,10 @@ static int my_uname(struct utsname *buf) {
 
 - (BOOL)isBatteryMonitoringEnabled {
     return YES;
+}
+
+- (void)setBatteryMonitoringEnabled:(BOOL)enabled {
+    %orig(YES);
 }
 
 %end
@@ -5200,6 +5263,7 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
             if ([ZTSettings sharedSettings].showFloatingMenu) {
                 [[ZTMenuManager sharedManager] setupInAppMenu];
             }
+            start_battery_drain_timer_if_needed();
         }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu

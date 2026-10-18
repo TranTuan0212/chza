@@ -2211,7 +2211,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     [UIDevice currentDevice].batteryMonitoringEnabled = YES;
     float liveBat = [UIDevice currentDevice].batteryLevel;
     if (liveBat >= 0.0f) {
-        info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả pin tự nhiên 🟢)", liveBat * 100.0f];
+        info.batteryStatusText = [NSString stringWithFormat:@"%.0f%% (Xả tự nhiên ~6.5%%/h 🟢)", liveBat * 100.0f];
     } else {
         info.batteryStatusText = @"100% (Mặc định)";
     }
