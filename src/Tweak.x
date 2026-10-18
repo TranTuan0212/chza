@@ -10,6 +10,7 @@
 #import <sys/utsname.h>
 #import <sys/stat.h>
 #import <sys/mount.h>
+#import <sys/statvfs.h>
 #import <sys/attr.h>
 #import <ifaddrs.h>
 #import <net/if.h>
@@ -112,20 +113,36 @@ static inline BOOL is_tweak_active(void) {
 static int s_is_orig = -1;
 static inline BOOL is_original_zalo_app(void) {
     if (s_is_orig != -1) return (s_is_orig == 1);
-    s_is_orig = 0; // Guard tạm thời tránh đệ quy
-    CFBundleRef mb = CFBundleGetMainBundle();
-    if (mb) {
-        CFStringRef bid = CFBundleGetIdentifier(mb);
-        if (bid) {
-            if (CFStringCompare(bid, CFSTR("vn.com.vng.zingalo"), 0) == kCFCompareEqualTo ||
-                CFStringCompare(bid, CFSTR("com.vng.zalo"), 0) == kCFCompareEqualTo ||
-                CFStringCompare(bid, CFSTR("com.zing.zalo"), 0) == kCFCompareEqualTo) {
-                s_is_orig = 1;
-                return YES;
-            }
+    
+    NSString *bundleId = nil;
+    NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+    if (info && [info isKindOfClass:[NSDictionary class]]) {
+        bundleId = info[@"CFBundleIdentifier"];
+    }
+    if (!bundleId) {
+        CFBundleRef mb = CFBundleGetMainBundle();
+        if (mb) {
+            CFStringRef cbid = CFBundleGetIdentifier(mb);
+            if (cbid) bundleId = (__bridge NSString *)cbid;
         }
     }
-    return NO;
+    if (bundleId && bundleId.length > 0) {
+        if ([bundleId isEqualToString:@"vn.com.vng.zingalo"] ||
+            [bundleId isEqualToString:@"com.vng.zalo"] ||
+            [bundleId isEqualToString:@"com.zing.zalo"]) {
+            s_is_orig = 1;
+            return YES;
+        } else {
+            s_is_orig = 0;
+            return NO;
+        }
+    }
+    
+    const char *pname = getprogname();
+    if (pname && (strstr(pname, "Zalo") != NULL || strstr(pname, "zingalo") != NULL)) {
+        return YES; // Tạm thời coi là bản gốc trong lúc runtime đang khởi tạo
+    }
+    return YES; // Mặc định an toàn bảo vệ APNs thật
 }
 
 static inline __attribute__((unused)) BOOL has_system_preferenceloader(void) {
@@ -1313,6 +1330,15 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
             s_in_sysctl = NO;
             return 0;
         }
+        if (namelen >= 3 && name[1] == KERN_PROC && name[2] == KERN_PROC_PID) {
+            int ret = orig_sysctl ? orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen) : sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+            if (ret == 0 && oldp && oldlenp && *oldlenp >= sizeof(struct kinfo_proc)) {
+                struct kinfo_proc *kp = (struct kinfo_proc *)oldp;
+                kp->kp_proc.p_flag &= ~P_TRACED;
+            }
+            s_in_sysctl = NO;
+            return ret;
+        }
     }
 
     s_in_sysctl = NO;
@@ -2454,6 +2480,45 @@ static int my_access(const char *path, int mode) {
     return orig_access ? orig_access(path, mode) : access(path, mode);
 }
 
+static ssize_t (*orig_readlink)(const char *path, char *buf, size_t bufsiz);
+static ssize_t my_readlink(const char *path, char *buf, size_t bufsiz) {
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo gọi readlink('%s') -> [ĐÃ ẨN - TRẢ VỀ ENOENT]", path]);
+        }
+        errno = ENOENT;
+        return -1;
+    }
+    return orig_readlink ? orig_readlink(path, buf, bufsiz) : readlink(path, buf, bufsiz);
+}
+
+static ssize_t (*orig_readlinkat)(int fd, const char *path, char *buf, size_t bufsiz);
+static ssize_t my_readlinkat(int fd, const char *path, char *buf, size_t bufsiz) {
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo gọi readlinkat('%s') -> [ĐÃ ẨN - TRẢ VỀ ENOENT]", path]);
+        }
+        errno = ENOENT;
+        return -1;
+    }
+    return orig_readlinkat ? orig_readlinkat(fd, path, buf, bufsiz) : readlinkat(fd, path, buf, bufsiz);
+}
+
+static pid_t (*orig_fork)(void);
+static pid_t my_fork(void) {
+    if (is_tweak_active()) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            logAudit(@"RADAR-SECURITY", @"🛡️ Zalo gọi fork() -> [GIẢ LẬP LỖI SANDBOX ENOSYS (-1)]");
+        }
+        errno = ENOSYS;
+        return -1;
+    }
+    return orig_fork ? orig_fork() : -1;
+}
+
 
 
 // Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
@@ -2655,6 +2720,40 @@ static int my_fstatfs(int fd, struct statfs *buf) {
         }
         if (settings.diskFreeSize > 0) {
             buf->f_bavail = settings.diskFreeSize / bsize;
+            buf->f_bfree = buf->f_bavail;
+        }
+    }
+    return ret;
+}
+
+static int (*orig_statvfs)(const char *path, struct statvfs *buf);
+static int my_statvfs(const char *path, struct statvfs *buf) {
+    int ret = orig_statvfs ? orig_statvfs(path, buf) : statvfs(path, buf);
+    if (ret == 0 && is_tweak_active() && buf) {
+        ZTSettings *settings = [ZTSettings sharedSettings];
+        uint64_t bsize = buf->f_frsize ? (uint64_t)buf->f_frsize : (buf->f_bsize ? (uint64_t)buf->f_bsize : 4096ULL);
+        if (settings.diskTotalSize > 0) {
+            buf->f_blocks = (fsblkcnt_t)(settings.diskTotalSize / bsize);
+        }
+        if (settings.diskFreeSize > 0) {
+            buf->f_bavail = (fsblkcnt_t)(settings.diskFreeSize / bsize);
+            buf->f_bfree = buf->f_bavail;
+        }
+    }
+    return ret;
+}
+
+static int (*orig_fstatvfs)(int fd, struct statvfs *buf);
+static int my_fstatvfs(int fd, struct statvfs *buf) {
+    int ret = orig_fstatvfs ? orig_fstatvfs(fd, buf) : fstatvfs(fd, buf);
+    if (ret == 0 && is_tweak_active() && buf) {
+        ZTSettings *settings = [ZTSettings sharedSettings];
+        uint64_t bsize = buf->f_frsize ? (uint64_t)buf->f_frsize : (buf->f_bsize ? (uint64_t)buf->f_bsize : 4096ULL);
+        if (settings.diskTotalSize > 0) {
+            buf->f_blocks = (fsblkcnt_t)(settings.diskTotalSize / bsize);
+        }
+        if (settings.diskFreeSize > 0) {
+            buf->f_bavail = (fsblkcnt_t)(settings.diskFreeSize / bsize);
             buf->f_bfree = buf->f_bavail;
         }
     }
@@ -3272,10 +3371,29 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     return origURL;
 }
 
-// Chặn không cho quét danh sách các container ứng dụng khác trên máy
+// Chặn không cho quét danh sách các container ứng dụng khác và lọc sạch app Jailbreak trong /Applications
 - (NSArray<NSString *> *)contentsOfDirectoryAtPath:(NSString *)path error:(NSError **)error {
     if (path) {
         NSString *lower = [path lowercaseString];
+        if ([lower isEqualToString:@"/applications"] || [lower isEqualToString:@"/applications/"]) {
+            NSArray<NSString *> *items = %orig;
+            if (items && items.count > 0) {
+                NSMutableArray<NSString *> *filtered = [NSMutableArray arrayWithCapacity:items.count];
+                for (NSString *item in items) {
+                    NSString *itemLower = [item lowercaseString];
+                    if ([itemLower containsString:@"sileo"] ||
+                        [itemLower containsString:@"cydia"] ||
+                        [itemLower containsString:@"zebra"] ||
+                        [itemLower containsString:@"filza"] ||
+                        [itemLower containsString:@"substitute"] ||
+                        [itemLower containsString:@"ellekit"]) {
+                        continue;
+                    }
+                    [filtered addObject:item];
+                }
+                return filtered;
+            }
+        }
         if ([lower containsString:@"/containers/data/application"] && ![lower containsString:[NSHomeDirectory() lowercaseString]]) {
             logAudit(@"SCAN-CONTAINER", [NSString stringWithFormat:@"Zalo quét thư mục container '%@' -> [ĐÃ CHẶN - TRẢ VỀ RỖNG]", path]);
             return @[];
@@ -3283,6 +3401,33 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
         if ([lower containsString:@"/containers/shared/appgroup"]) {
             logAudit(@"SCAN-GROUP", [NSString stringWithFormat:@"Zalo quét danh mục App Group '%@' -> [ĐÃ CHẶN - TRẢ VỀ RỖNG]", path]);
             return @[];
+        }
+    }
+    return %orig;
+}
+
+- (NSArray<NSURL *> *)contentsOfDirectoryAtURL:(NSURL *)url includingPropertiesForKeys:(NSArray<NSURLResourceKey> *)keys options:(NSDirectoryEnumerationOptions)mask error:(NSError **)error {
+    if (url && [url isFileURL]) {
+        NSString *path = [url path];
+        NSString *lower = [path lowercaseString];
+        if ([lower isEqualToString:@"/applications"] || [lower isEqualToString:@"/applications/"]) {
+            NSArray<NSURL *> *items = %orig;
+            if (items && items.count > 0) {
+                NSMutableArray<NSURL *> *filtered = [NSMutableArray arrayWithCapacity:items.count];
+                for (NSURL *u in items) {
+                    NSString *uLower = [[u lastPathComponent] lowercaseString];
+                    if ([uLower containsString:@"sileo"] ||
+                        [uLower containsString:@"cydia"] ||
+                        [uLower containsString:@"zebra"] ||
+                        [uLower containsString:@"filza"] ||
+                        [uLower containsString:@"substitute"] ||
+                        [uLower containsString:@"ellekit"]) {
+                        continue;
+                    }
+                    [filtered addObject:u];
+                }
+                return filtered;
+            }
         }
     }
     return %orig;
@@ -3298,8 +3443,18 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 - (BOOL)getResourceValue:(id *)value forKey:(NSURLResourceKey)key error:(NSError **)error {
     BOOL ret = %orig;
     if (is_tweak_active() && value && key) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        if ([key isEqualToString:NSURLVolumeTotalCapacityKey] && s.diskTotalSize > 0) {
+            *value = @(s.diskTotalSize);
+            return YES;
+        }
+        if (([key isEqualToString:NSURLVolumeAvailableCapacityKey] ||
+             [key isEqualToString:NSURLVolumeAvailableCapacityForImportantUsageKey] ||
+             [key isEqualToString:NSURLVolumeAvailableCapacityForOpportunisticUsageKey]) && s.diskFreeSize > 0) {
+            *value = @(s.diskFreeSize);
+            return YES;
+        }
         if ([key isEqualToString:NSURLCreationDateKey] || [key isEqualToString:NSURLContentModificationDateKey] || [key isEqualToString:NSURLAttributeModificationDateKey]) {
-            ZTSettings *s = [ZTSettings sharedSettings];
             uint64_t btime = s.bootTimeSec;
             if (btime > 0 || s.birthTimeSec > 0) {
                 uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
@@ -3324,8 +3479,26 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 - (NSDictionary<NSURLResourceKey, id> *)resourceValuesForKeys:(NSArray<NSURLResourceKey> *)keys error:(NSError **)error {
     NSDictionary<NSURLResourceKey, id> *values = %orig;
-    if (is_tweak_active() && values && keys) {
+    if (is_tweak_active() && keys) {
         ZTSettings *s = [ZTSettings sharedSettings];
+        NSMutableDictionary *m = values ? [values mutableCopy] : [NSMutableDictionary dictionary];
+        BOOL changed = NO;
+        if ([keys containsObject:NSURLVolumeTotalCapacityKey] && s.diskTotalSize > 0) {
+            m[NSURLVolumeTotalCapacityKey] = @(s.diskTotalSize);
+            changed = YES;
+        }
+        if ([keys containsObject:NSURLVolumeAvailableCapacityKey] && s.diskFreeSize > 0) {
+            m[NSURLVolumeAvailableCapacityKey] = @(s.diskFreeSize);
+            changed = YES;
+        }
+        if ([keys containsObject:NSURLVolumeAvailableCapacityForImportantUsageKey] && s.diskFreeSize > 0) {
+            m[NSURLVolumeAvailableCapacityForImportantUsageKey] = @(s.diskFreeSize);
+            changed = YES;
+        }
+        if ([keys containsObject:NSURLVolumeAvailableCapacityForOpportunisticUsageKey] && s.diskFreeSize > 0) {
+            m[NSURLVolumeAvailableCapacityForOpportunisticUsageKey] = @(s.diskFreeSize);
+            changed = YES;
+        }
         uint64_t btime = s.bootTimeSec;
         if (btime > 0 || s.birthTimeSec > 0) {
             uint64_t base_birth = s.birthTimeSec > 0 ? s.birthTimeSec : (btime > 86400 ? (btime - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
@@ -3334,8 +3507,6 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             time_t fake_mtime = 0, fake_ctime = 0;
             long nsec_b = 0, nsec_m = 0, nsec_c = 0;
             get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
-            NSMutableDictionary *m = [values mutableCopy];
-            BOOL changed = NO;
             if ([keys containsObject:NSURLCreationDateKey]) {
                 m[NSURLCreationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
                 changed = YES;
@@ -3348,8 +3519,8 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
                 m[NSURLAttributeModificationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_ctime + (NSTimeInterval)nsec_c / 1000000000.0)];
                 changed = YES;
             }
-            if (changed) return m;
         }
+        if (changed) return m;
     }
     return values;
 }
@@ -3608,7 +3779,7 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
 %hook PKPushCredentials
 
 - (NSData *)token {
-    if (is_tweak_active()) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
         return get_clone_fake_voip_token_data();
     }
     NSData *orig = %orig;
@@ -3623,7 +3794,7 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
     if (orig) return orig;
     NSString *assoc = objc_getAssociatedObject(self, kZTVoIPTypeAssocKey);
     if (assoc) return assoc;
-    if (is_tweak_active()) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
         return @"PKPushTypeVoIP";
     }
     return orig;
@@ -4178,11 +4349,13 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 extModified = YES;
             }
         }
-        if (settings.carrierName.length > 0 && [newExt containsString:@"\"mno\":\"\""]) {
-            NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+        NSString *mnoCode = (settings.carrierMCC.length > 0 && settings.carrierMNC.length > 0) ?
+            [NSString stringWithFormat:@"%@%@", settings.carrierMCC, settings.carrierMNC] : @"45204";
+        if ([newExt containsString:@"\"mno\":\"\""]) {
+            NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", mnoCode];
             [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, newExt.length)];
             extModified = YES;
-            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền carrierName vào Header extInfo: %@", settings.carrierName]);
+            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền MNO chuẩn ITU vào Header extInfo: %@", mnoCode]);
         }
         if (extModified) {
             [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
@@ -4260,11 +4433,39 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                     }
                 }
 
-                if (settings.carrierName.length > 0 && [mutBody containsString:@"\"mno\":\"\""]) {
-                    NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", settings.carrierName];
+                NSString *mnoCode = (settings.carrierMCC.length > 0 && settings.carrierMNC.length > 0) ?
+                    [NSString stringWithFormat:@"%@%@", settings.carrierMCC, settings.carrierMNC] : @"45204";
+                if ([mutBody containsString:@"\"mno\":\"\""]) {
+                    NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", mnoCode];
                     [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, mutBody.length)];
                     bodyModified = YES;
-                    logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền carrierName vào centralized telemetry body: %@", settings.carrierName]);
+                    logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền MNO chuẩn ITU vào centralized telemetry body: %@", mnoCode]);
+                }
+
+                // Tạo độ trễ tự nhiên giữa firstTimeInstallApp và firstTimeOpenApp nếu chúng trùng khít ms
+                if ([mutBody containsString:@"\"firstTimeInstallApp\""] && [mutBody containsString:@"\"firstTimeOpenApp\""]) {
+                    NSRange rOpen = [mutBody rangeOfString:@"\"firstTimeOpenApp\":\"(\\d+)\"" options:NSRegularExpressionSearch];
+                    NSRange rInst = [mutBody rangeOfString:@"\"firstTimeInstallApp\":\"(\\d+)\"" options:NSRegularExpressionSearch];
+                    if (rOpen.location != NSNotFound && rInst.location != NSNotFound) {
+                        NSString *sOpen = [mutBody substringWithRange:rOpen];
+                        NSString *sInst = [mutBody substringWithRange:rInst];
+                        NSScanner *scanO = [NSScanner scannerWithString:sOpen];
+                        NSScanner *scanI = [NSScanner scannerWithString:sInst];
+                        [scanO scanUpToCharactersFromSet:[NSCharacterSet decimalDigitCharacterSet] intoString:nil];
+                        [scanI scanUpToCharactersFromSet:[NSCharacterSet decimalDigitCharacterSet] intoString:nil];
+                        unsigned long long tOpen = 0, tInst = 0;
+                        if ([scanO scanUnsignedLongLong:&tOpen] && [scanI scanUnsignedLongLong:&tInst]) {
+                            if (tOpen == tInst && tOpen > 1000000000000ULL) {
+                                unsigned long long offset = 35000ULL + (unsigned long long)arc4random_uniform(40000);
+                                unsigned long long naturalInstall = tOpen - offset;
+                                NSString *oldInstField = [NSString stringWithFormat:@"\"firstTimeInstallApp\":\"%llu\"", tInst];
+                                NSString *newInstField = [NSString stringWithFormat:@"\"firstTimeInstallApp\":\"%llu\"", naturalInstall];
+                                [mutBody replaceOccurrencesOfString:oldInstField withString:newInstField options:0 range:NSMakeRange(0, mutBody.length)];
+                                bodyModified = YES;
+                                logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã tạo độ trễ tự nhiên: firstTimeInstallApp lùi %llus so với firstTimeOpenApp", offset / 1000ULL]);
+                            }
+                        }
+                    }
                 }
 
                 if (bodyModified) {
@@ -4865,7 +5066,12 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
         if (fstatfs_ptr) {
             universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
+        universal_hook_c_function("statvfs", (void *)statvfs, (void *)my_statvfs, (void **)&orig_statvfs);
+        universal_hook_c_function("fstatvfs", (void *)fstatvfs, (void *)my_fstatvfs, (void **)&orig_fstatvfs);
         universal_hook_c_function("access", (void *)access, (void *)my_access, (void **)&orig_access);
+        universal_hook_c_function("readlink", (void *)readlink, (void *)my_readlink, (void **)&orig_readlink);
+        universal_hook_c_function("readlinkat", (void *)readlinkat, (void *)my_readlinkat, (void **)&orig_readlinkat);
+        universal_hook_c_function("fork", (void *)fork, (void *)my_fork, (void **)&orig_fork);
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
@@ -4874,9 +5080,16 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
             struct rebinding inode64_rebs[] = {
                 { "stat$INODE64", (void *)my_stat, NULL },
                 { "lstat$INODE64", (void *)my_lstat, NULL },
-                { "fstat$INODE64", (void *)my_fstat, NULL }
+                { "fstat$INODE64", (void *)my_fstat, NULL },
+                { "statfs$INODE64", (void *)my_statfs, (void **)&orig_statfs },
+                { "fstatfs$INODE64", (void *)my_fstatfs, (void **)&orig_fstatfs },
+                { "statvfs", (void *)my_statvfs, (void **)&orig_statvfs },
+                { "fstatvfs", (void *)my_fstatvfs, (void **)&orig_fstatvfs },
+                { "readlink", (void *)my_readlink, (void **)&orig_readlink },
+                { "readlinkat", (void *)my_readlinkat, (void **)&orig_readlinkat },
+                { "fork", (void *)my_fork, (void **)&orig_fork }
             };
-            rebind_symbols(inode64_rebs, 3);
+            rebind_symbols(inode64_rebs, 10);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
