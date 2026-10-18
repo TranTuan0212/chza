@@ -780,7 +780,8 @@ static void purge_entire_sandbox_safely(void) {
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
         self.profileId = dict[@"profileId"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: get_real_disk_total_size();
-        self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: 74218940000ULL;
+        uint64_t defFree = (self.diskTotalSize > 0) ? (uint64_t)(self.diskTotalSize * 0.65) : 20000000000ULL;
+        self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: defFree;
         self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
         self.lastWipedIDFV = dict[@"lastWipedIDFV"] ?: @"";
         self.lastWipedIP = dict[@"lastWipedIP"] ?: @"";
@@ -2223,87 +2224,42 @@ static inline double mach_ticks_to_seconds(uint64_t ticks) {
     return mach_ticks_to_signed_seconds((int64_t)ticks);
 }
 
-static int64_t s_mach_time_offset = 0;
-static BOOL s_mach_offset_initialized = NO;
-static uint64_t (*orig_mach_absolute_time)(void) = NULL;
-
-static void init_mach_time_offset_if_needed(void) {
-    if (s_mach_offset_initialized) return;
-    s_mach_offset_initialized = YES;
-
-    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
-    if (bootSec > 0) {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        double now = (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.0);
-        double bootSubsec = (double)((bootSec * 2654435761ULL) % 1000000ULL) / 1000000.0;
-        double targetBootTime = (double)bootSec + bootSubsec;
-        if (now > targetBootTime) {
-            double targetUptime = now - targetBootTime;
-            uint64_t targetTicks = seconds_to_mach_ticks(targetUptime);
-            uint64_t realTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
-            s_mach_time_offset = (int64_t)targetTicks - (int64_t)realTicks;
-        }
-    }
-}
-
-// Đồng bộ Uptime với kern.boottime tuyệt đối
+// Đồng bộ Uptime với kern.boottime tự nhiên (now - boottime >= systemUptime, chênh lệch là thời gian máy ngủ)
 static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime) {
-    init_mach_time_offset_if_needed();
-    uint64_t currentTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
-    currentTicks = (uint64_t)((int64_t)currentTicks + s_mach_time_offset);
-    double uptimeSec = mach_ticks_to_seconds(currentTicks);
-    if (uptimeSec < 60.0) uptimeSec = 43200.0;
-    if (outContUptime) *outContUptime = uptimeSec;
-    if (outAwakeUptime) *outAwakeUptime = uptimeSec;
+    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    double now = (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.0);
+
+    double contSec = 0.0;
+    if (bootSec > 0 && now > (double)bootSec) {
+        contSec = now - (double)bootSec;
+    } else {
+        contSec = 43200.0; // 12h mặc định
+    }
+
+    // Thời gian ngủ tự nhiên của máy (từ 25% đến 40% tổng thời gian máy bật)
+    double sleepRatio = 0.28 + (double)((bootSec * 2654435761ULL) % 120ULL) / 1000.0;
+    double awakeSec = contSec * (1.0 - sleepRatio);
+    if (awakeSec < 60.0) awakeSec = 60.0;
+
+    if (outContUptime) *outContUptime = contSec;
+    if (outAwakeUptime) *outAwakeUptime = awakeSec;
 }
 
 static int (*orig_clock_gettime)(clockid_t clk_id, struct timespec *tp);
 static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
-    int ret = orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
-    if (ret == 0 && tp && is_tweak_active()) {
-        init_mach_time_offset_if_needed();
-        if (s_mach_time_offset != 0 && (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_UPTIME_RAW || clk_id == CLOCK_MONOTONIC_RAW)) {
-            double offsetSec = mach_ticks_to_signed_seconds(s_mach_time_offset);
-            double totalSec = (double)tp->tv_sec + ((double)tp->tv_nsec / 1000000000.0) + offsetSec;
-            if (totalSec > 0) {
-                tp->tv_sec = (time_t)totalSec;
-                tp->tv_nsec = (long)((totalSec - (double)tp->tv_sec) * 1000000000.0);
-            }
-        }
-        void *c0 = __builtin_return_address(0);
-        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
-            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi clock_gettime(clk_id=%d) từ %@", (int)clk_id, format_caller_info(c0)]);
-        }
-    }
-    return ret;
+    return orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
 }
 
 static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
-    uint64_t real_time = orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
-    if (is_tweak_active()) {
-        init_mach_time_offset_if_needed();
-        void *c0 = __builtin_return_address(0);
-        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
-            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_continuous_time() từ %@", format_caller_info(c0)]);
-        }
-        return (uint64_t)((int64_t)real_time + s_mach_time_offset);
-    }
-    return real_time;
+    return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
 }
 
+static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
-    uint64_t real_time = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
-    if (is_tweak_active()) {
-        init_mach_time_offset_if_needed();
-        void *c0 = __builtin_return_address(0);
-        if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
-            logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_absolute_time() từ %@", format_caller_info(c0)]);
-        }
-        return (uint64_t)((int64_t)real_time + s_mach_time_offset);
-    }
-    return real_time;
+    return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
 }
 
 
@@ -2572,15 +2528,12 @@ static ssize_t my_readlinkat(int fd, const char *path, char *buf, size_t bufsiz)
 
 static pid_t (*orig_fork)(void);
 static pid_t my_fork(void) {
-    if (is_tweak_active()) {
-        void *c0 = __builtin_return_address(0);
-        if (is_zalo_caller(c0)) {
-            logAudit(@"RADAR-SECURITY", @"🛡️ Zalo gọi fork() -> [GIẢ LẬP LỖI SANDBOX ENOSYS (-1)]");
-        }
-        errno = ENOSYS;
-        return -1;
+    void *c0 = __builtin_return_address(0);
+    if (is_zalo_caller(c0)) {
+        logAudit(@"RADAR-SECURITY", @"🛡️ Zalo gọi fork() -> [GIẢ LẬP LỖI SANDBOX ENOSYS (-1)]");
     }
-    return orig_fork ? orig_fork() : -1;
+    errno = ENOSYS;
+    return -1;
 }
 
 
@@ -4961,7 +4914,7 @@ static void swizzle_session_delegate_class(Class cls) {
     %orig;
     if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
         if ([ZTSettings sharedSettings].showFloatingMenu) {
-            dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [[ZTMenuManager sharedManager] tryAttachFloatingButton];
             });
         }

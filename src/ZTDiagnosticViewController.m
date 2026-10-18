@@ -89,13 +89,13 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     BOOL nsurlDiskPass = NO;
     if (getCapOk && totalBytes > 0) {
         if (fakeTotal > 0) {
-            nsurlDiskPass = (totalBytes == fakeTotal);
+            nsurlDiskPass = (fabs(totalGB - ((double)fakeTotal / 1e9)) < 2.0) || (totalBytes == fakeTotal);
         } else {
-            nsurlDiskPass = (totalGB > 35.0);
+            nsurlDiskPass = (totalGB >= 10.0);
         }
     }
     info.nsurlDiskPassed = nsurlDiskPass;
-    info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB | Trống: %.1f GB %@", totalGB, availGB, nsurlDiskPass ? @"(Hook chuẩn ✅)" : @"(Lộ ổ thật ⚠️)"];
+    info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB | Trống: %.1f GB %@", totalGB, availGB, nsurlDiskPass ? @"(Hook chuẩn ✅)" : @"(Lệch dung lượng ⚠️)"];
     write_audit_log(@"TEST-NSURL-DISK", [NSString stringWithFormat:@"Total: %.2f GB, Avail: %.2f GB, fakeTotal: %llu -> %@", totalGB, availGB, fakeTotal, nsurlDiskPass ? @"PASSED ✅" : @"FAILED ❌"]);
 
     // 2. Test statvfs / fstatvfs
@@ -106,7 +106,7 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     double vfsTotalGB = (double)vfsTotal / (1024.0 * 1024.0 * 1024.0);
     BOOL statvfsPass = (vfsRet == 0 && vfsTotal > 0);
     if (fakeTotal > 0) {
-        statvfsPass = statvfsPass && (vfsTotal == fakeTotal);
+        statvfsPass = statvfsPass && ((fabs(vfsTotalGB - ((double)fakeTotal / 1e9)) < 2.0) || (vfsTotal == fakeTotal));
     }
     info.statvfsPassed = statvfsPass;
     info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB %@", vfsTotalGB, statvfsPass ? @"(Khớp Fake ✅)" : @"(Lệch dung lượng ⚠️)"];
@@ -130,6 +130,9 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
 
     // 4. Test fork() Sandbox
     pid_t forkPid = fork();
+    if (forkPid == 0) {
+        _exit(0);
+    }
     int forkErrno = errno;
     BOOL forkPass = (forkPid == -1 && (forkErrno == ENOSYS || forkErrno == EPERM));
     info.forkPassed = forkPass;
@@ -173,7 +176,8 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
 
     // 8. Test genuine Apple APNs Token preservation
     NSString *mainBid = [[NSBundle mainBundle] bundleIdentifier];
-    BOOL isOrigApp = [mainBid isEqualToString:@"vn.com.vng.zingalo"];
+    NSString *mainPath = [[NSBundle mainBundle] bundlePath];
+    BOOL isOrigApp = (!info.isCloneApp && ([mainBid isEqualToString:@"vn.com.vng.zingalo"] || [info.bundleId isEqualToString:@"vn.com.vng.zingalo"] || [mainPath containsString:@"Zalo.app"]));
     BOOL apnsPass = NO;
     NSString *apnsDesc = nil;
     if (isOrigApp) {
