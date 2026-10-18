@@ -1996,35 +1996,78 @@ static void update_cached_locale_and_tz(void) {
 // Bảo toàn 100% thuộc tính hiển thị vật lý của UIScreen (bounds, nativeBounds, scale) để UIKit & Metal
 // render chuẩn xác, không bị lỗi buffer mismatch. Thông số màn hình fake được cung cấp qua MGCopyAnswer & Headers.
 
-// Đồng bộ Uptime (kUpTickCPULastAuthen, kUpTickContCPULastAuthen, kLastBootTimeAuthen) với kern.boottime tuyệt đối
-static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime) {
-    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    double now = (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.0);
-    if (bootSec == 0 || now <= (double)bootSec + 60.0) {
-        bootSec = (uint64_t)(now - 43200.0);
+static uint64_t seconds_to_mach_ticks(double seconds) {
+    mach_timebase_info_data_t tb;
+    mach_timebase_info(&tb);
+    if (tb.numer == 0 || tb.denom == 0) {
+        tb.numer = 1;
+        tb.denom = 1;
     }
-    double bootSubsec = (double)((bootSec * 2654435761ULL) % 1000000ULL) / 1000000.0;
-    double contUptime = now - ((double)bootSec + bootSubsec);
-    if (contUptime < 60.0) contUptime = 43200.0;
+    double nanos = seconds * 1000000000.0;
+    return (uint64_t)((nanos * (double)tb.denom) / (double)tb.numer);
+}
 
-    // Thời gian máy sleep tĩnh cố định theo hồ sơ (để kUpTickCPULastAuthen < kUpTickContCPULastAuthen tự nhiên như iPhone thật,
-    // đồng thời cả 2 cùng tăng 1:1 theo thời gian thực khi app đang mở)
-    double deterministicSleep = (double)(600ULL + ((bootSec * 2246822519ULL) % 5400ULL)) +
-                                ((double)((bootSec * 3266489917ULL) % 1000000ULL) / 1000000.0);
-    if (deterministicSleep >= contUptime * 0.45) {
-        deterministicSleep = contUptime * 0.18;
+static inline double mach_ticks_to_signed_seconds(int64_t ticks) {
+    mach_timebase_info_data_t tb;
+    mach_timebase_info(&tb);
+    if (tb.numer == 0 || tb.denom == 0) {
+        tb.numer = 1;
+        tb.denom = 1;
     }
-    double awakeUptime = contUptime - deterministicSleep;
-    if (outContUptime) *outContUptime = contUptime;
-    if (outAwakeUptime) *outAwakeUptime = awakeUptime;
+    return ((double)ticks * (double)tb.numer) / ((double)tb.denom * 1000000000.0);
+}
+
+static inline double mach_ticks_to_seconds(uint64_t ticks) {
+    return mach_ticks_to_signed_seconds((int64_t)ticks);
+}
+
+static int64_t s_mach_time_offset = 0;
+static BOOL s_mach_offset_initialized = NO;
+
+static void init_mach_time_offset_if_needed(void) {
+    if (s_mach_offset_initialized) return;
+    s_mach_offset_initialized = YES;
+
+    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
+    if (bootSec > 0) {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        double now = (double)tv.tv_sec + ((double)tv.tv_usec / 1000000.0);
+        double bootSubsec = (double)((bootSec * 2654435761ULL) % 1000000ULL) / 1000000.0;
+        double targetBootTime = (double)bootSec + bootSubsec;
+        if (now > targetBootTime) {
+            double targetUptime = now - targetBootTime;
+            uint64_t targetTicks = seconds_to_mach_ticks(targetUptime);
+            uint64_t realTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+            s_mach_time_offset = (int64_t)targetTicks - (int64_t)realTicks;
+        }
+    }
+}
+
+// Đồng bộ Uptime với kern.boottime tuyệt đối
+static void get_consistent_uptimes(double *outContUptime, double *outAwakeUptime) {
+    init_mach_time_offset_if_needed();
+    uint64_t currentTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+    currentTicks = (uint64_t)((int64_t)currentTicks + s_mach_time_offset);
+    double uptimeSec = mach_ticks_to_seconds(currentTicks);
+    if (uptimeSec < 60.0) uptimeSec = 43200.0;
+    if (outContUptime) *outContUptime = uptimeSec;
+    if (outAwakeUptime) *outAwakeUptime = uptimeSec;
 }
 
 static int (*orig_clock_gettime)(clockid_t clk_id, struct timespec *tp);
 static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
     int ret = orig_clock_gettime ? orig_clock_gettime(clk_id, tp) : clock_gettime(clk_id, tp);
     if (ret == 0 && tp && is_tweak_active()) {
+        init_mach_time_offset_if_needed();
+        if (s_mach_time_offset != 0 && (clk_id == CLOCK_MONOTONIC || clk_id == CLOCK_UPTIME_RAW || clk_id == CLOCK_MONOTONIC_RAW)) {
+            double offsetSec = mach_ticks_to_signed_seconds(s_mach_time_offset);
+            double totalSec = (double)tp->tv_sec + ((double)tp->tv_nsec / 1000000000.0) + offsetSec;
+            if (totalSec > 0) {
+                tp->tv_sec = (time_t)totalSec;
+                tp->tv_nsec = (long)((totalSec - (double)tp->tv_sec) * 1000000000.0);
+            }
+        }
         void *c0 = __builtin_return_address(0);
         if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
             logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi clock_gettime(clk_id=%d) từ %@", (int)clk_id, format_caller_info(c0)]);
@@ -2037,10 +2080,12 @@ static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
     uint64_t real_time = orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
     if (is_tweak_active()) {
+        init_mach_time_offset_if_needed();
         void *c0 = __builtin_return_address(0);
         if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
             logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_continuous_time() từ %@", format_caller_info(c0)]);
         }
+        return (uint64_t)((int64_t)real_time + s_mach_time_offset);
     }
     return real_time;
 }
@@ -2049,13 +2094,16 @@ static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
     uint64_t real_time = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
     if (is_tweak_active()) {
+        init_mach_time_offset_if_needed();
         void *c0 = __builtin_return_address(0);
         if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
             logAudit(@"RADAR-CLOCK", [NSString stringWithFormat:@"🕒 Zalo gọi mach_absolute_time() từ %@", format_caller_info(c0)]);
         }
+        return (uint64_t)((int64_t)real_time + s_mach_time_offset);
     }
     return real_time;
 }
+
 
 #ifndef PT_DENY_ATTACH
 #define PT_DENY_ATTACH 31
@@ -2257,7 +2305,18 @@ static BOOL is_jailbreak_path(const char *path) {
         "/etc/apt",
         "/private/var/lib/apt",
         "/private/var/stash",
+        "/var/jb",
+        "/var/lib/apt",
+        "/var/lib/dpkg",
+        "/var/log/dpkg",
+        "/Library/MobileSubstrate",
+        "/private/preboot",
         "MobileSubstrate.dylib",
+        "cydia_substitute",
+        "libsubstitute",
+        "substitute",
+        "ellekit",
+        "libhooker",
         "test_jb",
         "jailbreak.txt",
         NULL
@@ -2268,6 +2327,19 @@ static BOOL is_jailbreak_path(const char *path) {
         }
     }
     return NO;
+}
+
+static int (*orig_access)(const char *path, int mode);
+static int my_access(const char *path, int mode) {
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            logAudit(@"JB-FILE-CHECK", [NSString stringWithFormat:@"Zalo gọi access('%s') -> [ĐÃ ẨN - TRẢ VỀ ENOENT]", path]);
+        }
+        errno = ENOENT;
+        return -1;
+    }
+    return orig_access ? orig_access(path, mode) : access(path, mode);
 }
 
 
@@ -2574,6 +2646,12 @@ static int my_stat(const char *path, struct stat *buf) {
     if (s_in_stat) return orig_stat ? orig_stat(path, buf) : stat(path, buf);
     s_in_stat = YES;
 
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        s_in_stat = NO;
+        errno = ENOENT;
+        return -1;
+    }
+
     int ret = orig_stat ? orig_stat(path, buf) : stat(path, buf);
     if (ret == 0 && is_tweak_active() && buf && path) {
         if (should_fake_stat_path(path)) {
@@ -2592,6 +2670,12 @@ static int my_lstat(const char *path, struct stat *buf) {
     static __thread BOOL s_in_lstat = NO;
     if (s_in_lstat) return orig_lstat ? orig_lstat(path, buf) : lstat(path, buf);
     s_in_lstat = YES;
+
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        s_in_lstat = NO;
+        errno = ENOENT;
+        return -1;
+    }
 
     int ret = orig_lstat ? orig_lstat(path, buf) : lstat(path, buf);
     if (ret == 0 && is_tweak_active() && buf && path) {
@@ -2741,6 +2825,12 @@ static int my_open(const char *path, int oflag, ...) {
     if (s_in_open) return orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
     s_in_open = YES;
 
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        s_in_open = NO;
+        errno = ENOENT;
+        return -1;
+    }
+
     if (path && strncmp(path, "KVCore/", 7) == 0) {
         NSString *base = get_kvcore_sandbox_base_path();
         if (base) {
@@ -2771,6 +2861,12 @@ static int my_openat(int fd, const char *path, int oflag, ...) {
     static __thread BOOL s_in_openat = NO;
     if (s_in_openat) return orig_openat ? orig_openat(fd, path, oflag, mode) : openat(fd, path, oflag, mode);
     s_in_openat = YES;
+
+    if (is_tweak_active() && path && is_jailbreak_path(path)) {
+        s_in_openat = NO;
+        errno = ENOENT;
+        return -1;
+    }
 
     if (path && (fd == AT_FDCWD || fd >= 0) && strncmp(path, "KVCore/", 7) == 0) {
         NSString *base = get_kvcore_sandbox_base_path();
@@ -3268,38 +3364,9 @@ static inline NSString *hex_string_from_data(NSData *data) {
                 return nil;
             }
         }
-        if (is_tweak_active()) {
-            void *c0 = __builtin_return_address(0);
-            if ([defaultName isEqualToString:@"kLastBootTimeAuthen"]) {
-                ZTSettings *s = [ZTSettings sharedSettings];
-                if (s.bootTimeSec > 0) {
-                    NSString *fakeBt = [NSString stringWithFormat:@"%llu", (unsigned long long)s.bootTimeSec];
-                    if ([ZTSettings sharedSettings].enableAuditLog) {
-                        logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kLastBootTimeAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeBt]);
-                    }
-                    return fakeBt;
-                }
-            } else if ([defaultName isEqualToString:@"kUpTickCPULastAuthen"]) {
-                double awakeUp = 0;
-                get_consistent_uptimes(NULL, &awakeUp);
-                NSString *fakeAwake = [NSString stringWithFormat:@"%.2f", awakeUp];
-                if ([ZTSettings sharedSettings].enableAuditLog) {
-                    logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kUpTickCPULastAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeAwake]);
-                }
-                return fakeAwake;
-            } else if ([defaultName isEqualToString:@"kUpTickContCPULastAuthen"]) {
-                double contUp = 0;
-                get_consistent_uptimes(&contUp, NULL);
-                NSString *fakeCont = [NSString stringWithFormat:@"%.2f", contUp];
-                if ([ZTSettings sharedSettings].enableAuditLog) {
-                    logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"🔍 Zalo đọc UserDefaults: 'kUpTickContCPULastAuthen' từ %@ -> [ĐỒNG BỘ PROFILE] %@", format_caller_info(c0), fakeCont]);
-                }
-                return fakeCont;
-            }
-        }
     }
     id val = %orig;
-    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+    if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
             val = hex_string_from_data(get_clone_fake_apns_token_data());
             logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp APNs Token theo Profile cho khoá '%@'", defaultName]);
@@ -3308,6 +3375,7 @@ static inline NSString *hex_string_from_data(NSData *data) {
             logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp VoIP PushKit Token theo Profile cho khoá '%@'", defaultName]);
         }
     }
+
     if ([ZTSettings sharedSettings].enableAuditLog && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         NSString *lower = [defaultName lowercaseString];
         if ([lower containsString:@"device"] ||
@@ -3327,7 +3395,7 @@ static inline NSString *hex_string_from_data(NSData *data) {
 }
 
 - (NSString *)stringForKey:(NSString *)defaultName {
-    if (is_tweak_active() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
+    if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
             return hex_string_from_data(get_clone_fake_apns_token_data());
         } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
@@ -3340,7 +3408,7 @@ static inline NSString *hex_string_from_data(NSData *data) {
 %end
 
 static void deliver_clone_apns_token_to_delegate(UIApplication *app, id<UIApplicationDelegate> delegate) {
-    if (!app || !delegate || !is_tweak_active()) return;
+    if (!app || !delegate || !is_tweak_active() || is_original_zalo_app()) return;
     SEL sel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
     if ([delegate respondsToSelector:sel]) {
         NSData *fakeToken = get_clone_fake_apns_token_data();
@@ -3399,7 +3467,7 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
 %end
 
 static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
-    if (!registry || !delegate || !is_tweak_active()) return;
+    if (!registry || !delegate || !is_tweak_active() || is_original_zalo_app()) return;
     SEL sel = @selector(pushRegistry:didUpdatePushCredentials:forType:);
     if ([delegate respondsToSelector:sel]) {
         Class credCls = NSClassFromString(@"PKPushCredentials");
@@ -3421,7 +3489,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 %hook PKPushRegistry
 
 - (NSData *)pushTokenForType:(NSString *)type {
-    if (is_tweak_active()) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
         return get_clone_fake_voip_token_data();
     }
     return %orig;
@@ -3429,7 +3497,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
 - (void)setDesiredPushTypes:(NSSet *)types {
     %orig;
-    if (is_tweak_active()) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             @try {
                 id regObj = (id)self;
@@ -3442,7 +3510,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
 - (void)setDelegate:(id)delegate {
     %orig;
-    if (delegate && is_tweak_active()) {
+    if (delegate && is_tweak_active() && !is_original_zalo_app()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             deliver_clone_voip_token_to_registry(self, delegate);
         });
@@ -3462,7 +3530,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
 - (void)registerForRemoteNotifications {
     %orig;
-    if (is_tweak_active()) {
+    if (is_tweak_active() && !is_original_zalo_app()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             deliver_clone_apns_token_to_delegate(self, self.delegate);
         });
@@ -3475,33 +3543,42 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
         Class delClass = [delegate class];
         if (delClass && delClass != s_swappedDelClass) {
             s_swappedDelClass = delClass;
-            // 1. Chặn iOS trả về APNs Token phần cứng thật trên Zalo Gốc -> ép dùng APNs Token theo Profile
             SEL regSel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
             Method regMethod = class_getInstanceMethod(delClass, regSel);
             if (regMethod) {
                 typedef void (*OrigDidRegIMP)(id, SEL, UIApplication *, NSData *);
                 OrigDidRegIMP origImp = (OrigDidRegIMP)method_getImplementation(regMethod);
                 IMP customRegImp = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSData *realToken) {
-                    NSData *tokenToPass = is_tweak_active() ? get_clone_fake_apns_token_data() : realToken;
+                    NSData *tokenToPass = realToken;
+                    if (!is_original_zalo_app()) {
+                        tokenToPass = get_clone_fake_apns_token_data();
+                    } else {
+                        if (!tokenToPass || tokenToPass.length == 0) {
+                            tokenToPass = realToken;
+                        }
+                    }
                     if (origImp) {
                         origImp(self_del, regSel, app, tokenToPass);
                     }
                 });
                 method_setImplementation(regMethod, customRegImp);
             }
-            // 2. Chặn thông báo lỗi APNs trên bản Clone/Sideload
-            SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
-            Method m = class_getInstanceMethod(delClass, failSel);
-            if (m) {
-                IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
-                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
-                });
-                method_setImplementation(m, noop);
+            if (!is_original_zalo_app()) {
+                SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
+                Method m = class_getInstanceMethod(delClass, failSel);
+                if (m) {
+                    IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
+                        logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
+                    });
+                    method_setImplementation(m, noop);
+                }
             }
         }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            deliver_clone_apns_token_to_delegate(self, delegate);
-        });
+        if (!is_original_zalo_app()) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                deliver_clone_apns_token_to_delegate(self, delegate);
+            });
+        }
     }
     %orig;
 }
@@ -4623,6 +4700,7 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
         if (fstatfs_ptr) {
             universal_hook_c_function("fstatfs", fstatfs_ptr, (void *)my_fstatfs, (void **)&orig_fstatfs);
         }
+        universal_hook_c_function("access", (void *)access, (void *)my_access, (void **)&orig_access);
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
