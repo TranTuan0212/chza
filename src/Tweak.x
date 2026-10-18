@@ -1192,7 +1192,7 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
 
     if (name[0] == CTL_HW) {
         if (name[1] == HW_MACHINE) {
-            const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone";
+            const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone9,3";
             size_t val_len = strlen(val) + 1;
             if (oldp && oldlenp) {
                 size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
@@ -1329,7 +1329,7 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
     ZTSettings *settings = [ZTSettings sharedSettings];
 
     if (strcmp(name, "hw.machine") == 0 || strcmp(name, "hw.product") == 0) {
-        const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone";
+        const char *val = settings.deviceMachine.length > 0 ? [settings.deviceMachine UTF8String] : "iPhone9,3";
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
             size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
@@ -2581,26 +2581,41 @@ static int my_getifaddrs(struct ifaddrs **ifap) {
         return ret;
     }
 
+    struct ifaddrs *prev = NULL;
     struct ifaddrs *curr = *ifap;
     BOOL modified = NO;
     while (curr) {
+        BOOL is_vpn = NO;
         if (curr->ifa_name) {
             const char *n = curr->ifa_name;
             if (strncmp(n, "tun", 3) == 0 ||
                 strncmp(n, "tap", 3) == 0 ||
                 strncmp(n, "ppp", 3) == 0 ||
                 strncmp(n, "ipsec", 5) == 0 ||
-                strncmp(n, "utun", 4) == 0) {
-                // Không ngắt con trỏ danh sách liên kết để bảo vệ bộ nhớ malloc của freeifaddrs
-                // Thay vào đó, đổi tên interface thành pdp_ip để Zalo không nhận diện ra VPN
-                curr->ifa_name = "pdp_ip9";
-                modified = YES;
+                strncmp(n, "utun", 4) == 0 ||
+                strncmp(n, "pdp_ip9", 7) == 0) {
+                is_vpn = YES;
             }
         }
+        if (is_vpn) {
+            modified = YES;
+            if (prev) {
+                // Node nằm sau: Unlink an toàn khỏi linked-list!
+                // Con trỏ gốc *ifap không bị thay đổi nên freeifaddrs(*ifap) giải phóng nguyên vẹn khối malloc.
+                prev->ifa_next = curr->ifa_next;
+                curr = curr->ifa_next;
+                continue;
+            } else {
+                // Trường hợp hy hữu nếu node đầu tiên là VPN: Đổi tên thành card Apple nội bộ awdl0
+                curr->ifa_name = "awdl0";
+                if (curr->ifa_flags) curr->ifa_flags &= ~(IFF_POINTOPOINT | IFF_LOOPBACK);
+            }
+        }
+        prev = curr;
         curr = curr->ifa_next;
     }
     if (modified) {
-        logAudit(@"VPN-CHECK", @"Quét danh sách getifaddrs -> [ĐÃ ẨN SẠCH TUN/UTUN -> pdp_ip9]");
+        logAudit(@"VPN-CHECK", @"Quét danh sách getifaddrs -> [ĐÃ LỌC BỎ HOÀN TOÀN CARD MẠNG ẢO VPN/UTUN]");
     }
     return 0;
 }
@@ -2889,7 +2904,14 @@ static const char *my_dyld_get_image_name(uint32_t image_index) {
     const char *name = orig_dyld_get_image_name ? orig_dyld_get_image_name(image_index) : _dyld_get_image_name(image_index);
     if (name && is_tweak_active() && is_sensitive_image_path_cstr(name)) {
         if (is_zalo_caller(__builtin_return_address(0))) {
-            return "/System/Library/Frameworks/Foundation.framework/Foundation";
+            static const char *s_safe_fallback_images[] = {
+                "/usr/lib/libobjc.A.dylib",
+                "/usr/lib/system/libsystem_c.dylib",
+                "/usr/lib/system/libsystem_kernel.dylib",
+                "/usr/lib/system/libsystem_m.dylib",
+                "/usr/lib/system/libdispatch.dylib"
+            };
+            return s_safe_fallback_images[image_index % 5];
         }
     }
     return name;
