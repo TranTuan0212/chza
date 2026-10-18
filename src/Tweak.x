@@ -3465,10 +3465,19 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             *value = @(s.diskTotalSize);
             return YES;
         }
-        if (([key isEqualToString:NSURLVolumeAvailableCapacityKey] ||
-             [key isEqualToString:NSURLVolumeAvailableCapacityForImportantUsageKey] ||
-             [key isEqualToString:NSURLVolumeAvailableCapacityForOpportunisticUsageKey]) && s.diskFreeSize > 0) {
+        if ([key isEqualToString:NSURLVolumeAvailableCapacityKey] && s.diskFreeSize > 0) {
             *value = @(s.diskFreeSize);
+            return YES;
+        }
+        if ([key isEqualToString:NSURLVolumeAvailableCapacityForImportantUsageKey] && s.diskFreeSize > 0) {
+            uint64_t purgeable = 1450000000ULL + ((s.diskFreeSize * 104729ULL) % 1500000000ULL);
+            *value = @(s.diskFreeSize + purgeable);
+            return YES;
+        }
+        if ([key isEqualToString:NSURLVolumeAvailableCapacityForOpportunisticUsageKey] && s.diskFreeSize > 0) {
+            uint64_t reserve = 450000000ULL + ((s.diskFreeSize * 2654435761ULL) % 450000000ULL);
+            uint64_t oppFree = (s.diskFreeSize > reserve) ? (s.diskFreeSize - reserve) : s.diskFreeSize;
+            *value = @(oppFree);
             return YES;
         }
         if ([key isEqualToString:NSURLCreationDateKey] || [key isEqualToString:NSURLContentModificationDateKey] || [key isEqualToString:NSURLAttributeModificationDateKey]) {
@@ -3509,11 +3518,14 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             changed = YES;
         }
         if ([keys containsObject:NSURLVolumeAvailableCapacityForImportantUsageKey] && s.diskFreeSize > 0) {
-            m[NSURLVolumeAvailableCapacityForImportantUsageKey] = @(s.diskFreeSize);
+            uint64_t purgeable = 1450000000ULL + ((s.diskFreeSize * 104729ULL) % 1500000000ULL);
+            m[NSURLVolumeAvailableCapacityForImportantUsageKey] = @(s.diskFreeSize + purgeable);
             changed = YES;
         }
         if ([keys containsObject:NSURLVolumeAvailableCapacityForOpportunisticUsageKey] && s.diskFreeSize > 0) {
-            m[NSURLVolumeAvailableCapacityForOpportunisticUsageKey] = @(s.diskFreeSize);
+            uint64_t reserve = 450000000ULL + ((s.diskFreeSize * 2654435761ULL) % 450000000ULL);
+            uint64_t oppFree = (s.diskFreeSize > reserve) ? (s.diskFreeSize - reserve) : s.diskFreeSize;
+            m[NSURLVolumeAvailableCapacityForOpportunisticUsageKey] = @(oppFree);
             changed = YES;
         }
         uint64_t btime = s.bootTimeSec;

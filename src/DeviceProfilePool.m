@@ -320,9 +320,13 @@ static NSString *detect_real_system_machine(void) {
     uint64_t totalDisk = spec.supportedDisks[arc4random_uniform((uint32_t)diskCount)];
     profile.diskTotalSize = totalDisk;
 
-    // Dung lượng trống tự nhiên (từ 25% đến 75% tổng ổ cứng)
+    // Dung lượng trống tự nhiên (từ 25% đến 75% tổng ổ cứng), số byte lẻ tự nhiên
     double freeRatio = 0.25 + (((double)arc4random_uniform(50)) / 100.0);
-    profile.diskFreeSize = (uint64_t)(totalDisk * freeRatio);
+    uint64_t oddByteJitter = (uint64_t)(arc4random_uniform(899999999) + 100000000) | 1ULL;
+    profile.diskFreeSize = (uint64_t)(totalDisk * freeRatio) + oddByteJitter;
+    if (profile.diskFreeSize >= totalDisk) {
+        profile.diskFreeSize = totalDisk - 2500000000ULL + oddByteJitter;
+    }
 
     // 4. KHO HƠN 100 TÊN THIẾT BỊ TỰ NHIÊN THEO VÙNG
     NSString *curRegion = region ?: @"VN";
