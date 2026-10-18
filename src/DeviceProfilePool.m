@@ -312,20 +312,24 @@ static NSString *detect_real_system_machine(void) {
     profile.systemVersion = [NSString stringWithUTF8String:chosenOS->version];
     profile.kernOsVersion = [NSString stringWithUTF8String:chosenOS->build];
 
-    // 3. CHỌN BỘ NHỚ Ổ CỨNG HỢP LỆ VỚI DÒNG MÁY ĐÓ
+    // 3. CHỌN BỘ NHỚ Ổ CỨNG HỢP LỆ VỚI DÒNG MÁY ĐÓ (Trừ phân vùng APFS Container, bội số 4096)
     int diskCount = 0;
     while (spec.supportedDisks[diskCount] != 0 && diskCount < 5) {
         diskCount++;
     }
-    uint64_t totalDisk = spec.supportedDisks[arc4random_uniform((uint32_t)diskCount)];
-    profile.diskTotalSize = totalDisk;
+    uint64_t nominalDisk = spec.supportedDisks[arc4random_uniform((uint32_t)diskCount)];
+    
+    // Tỉ lệ định dạng APFS thực tế sau khi trừ System, Preboot, Recovery container (~96.8% - 98.2%)
+    double apfsRatio = 0.968 + (((double)arc4random_uniform(15)) / 1000.0);
+    uint64_t rawAPFS = (uint64_t)(nominalDisk * apfsRatio);
+    profile.diskTotalSize = (rawAPFS / 4096ULL) * 4096ULL;
 
-    // Dung lượng trống tự nhiên (từ 25% đến 75% tổng ổ cứng), số byte lẻ tự nhiên
+    // Dung lượng trống tự nhiên (từ 25% đến 75% tổng ổ cứng), là bội số chuẩn của block 4096
     double freeRatio = 0.25 + (((double)arc4random_uniform(50)) / 100.0);
-    uint64_t oddByteJitter = (uint64_t)(arc4random_uniform(899999999) + 100000000) | 1ULL;
-    profile.diskFreeSize = (uint64_t)(totalDisk * freeRatio) + oddByteJitter;
-    if (profile.diskFreeSize >= totalDisk) {
-        profile.diskFreeSize = totalDisk - 2500000000ULL + oddByteJitter;
+    uint64_t rawFree = (uint64_t)(profile.diskTotalSize * freeRatio);
+    profile.diskFreeSize = (rawFree / 4096ULL) * 4096ULL;
+    if (profile.diskFreeSize >= profile.diskTotalSize) {
+        profile.diskFreeSize = profile.diskTotalSize - (610351ULL * 4096ULL);
     }
 
     // 4. KHO HƠN 100 TÊN THIẾT BỊ TỰ NHIÊN THEO VÙNG
@@ -508,14 +512,38 @@ static NSString *detect_real_system_machine(void) {
         profile.timeZoneName = @"Asia/Ho_Chi_Minh";
     }
 
+    // Áp dụng giới hạn bảo mật và hành vi thực tế của Apple theo phiên bản iOS:
+    BOOL is_ios16_plus = (chosenOS->major >= 16);
+    BOOL is_ios16_4_plus = (chosenOS->major >= 17);
+    if (chosenOS->major == 16) {
+        NSArray *parts = [[NSString stringWithUTF8String:chosenOS->version] componentsSeparatedByString:@"."];
+        if (parts.count >= 2 && [parts[1] integerValue] >= 4) {
+            is_ios16_4_plus = YES;
+        }
+    }
+
+    if (is_ios16_plus) {
+        // Trên iOS 16.0+, [UIDevice currentDevice].name luôn trả về generic "iPhone" cho App Store apps
+        profile.deviceName = @"iPhone";
+    }
+
+    if (is_ios16_4_plus) {
+        // Trên iOS 16.4+, CTCarrier bị Apple deprecate hoàn toàn, app App Store thông thường chỉ nhận placeholder
+        profile.carrierName = @"--";
+        profile.carrierMCC = @"65535";
+        profile.carrierMNC = @"65535";
+        profile.carrierCountryCode = @"";
+    }
+
     // 5. CÁC THÔNG SỐ ĐỊNH DANH DUY NHẤT & MÃ BẢO VỆ
     profile.spoofedIDFV = [[NSUUID UUID] UUIDString];
     profile.spoofedIDFA = @"00000000-0000-0000-0000-000000000000"; // Chuẩn Apple ATT Denied
     profile.profileId = [[NSUUID UUID] UUIDString];
     profile.bootSessionUUID = [[NSUUID UUID] UUIDString];
 
-    // Uptime ngẫu nhiên tự nhiên cho máy vừa kích hoạt/khởi động (từ 2 giờ đến 36 giờ trước) kèm jitter giây lẻ
-    uint32_t randomOffset = 7200 + arc4random_uniform(122400) + arc4random_uniform(59);
+    // Uptime ngẫu nhiên tự nhiên của người dùng iPhone thật (từ 3 đến 14 ngày trước) kèm jitter giây lẻ
+    uint32_t days = 3 + arc4random_uniform(12); // 3 đến 14 ngày
+    uint32_t randomOffset = (days * 86400) + arc4random_uniform(86400);
     profile.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
 
     // Ngày sinh ổ đĩa chuẩn xác theo vòng đời sản xuất của Apple
@@ -533,10 +561,12 @@ static NSString *detect_real_system_machine(void) {
     profile.batteryLevel = 0.50f + ((float)arc4random_uniform(46)) / 100.0f;
     profile.batteryState = 1; // UIDeviceBatteryStateUnplugged
 
-    // Serial & MAC chuẩn Apple
+    // Serial & MAC chuẩn Apple:
+    // Từ iOS 7+, getifaddrs/sysctl luôn trả về 02:00:00:00:00:00 cho third-party apps
+    // App Store apps không có quyền đọc Serial (MGCopyAnswer trả NULL)
     profile.spoofedSerial = generate_apple_serial();
-    profile.spoofedWifiMAC = generate_apple_mac();
-    profile.spoofedBluetoothMAC = generate_apple_mac();
+    profile.spoofedWifiMAC = @"02:00:00:00:00:00";
+    profile.spoofedBluetoothMAC = @"02:00:00:00:00:00";
 
     return profile;
 }

@@ -1600,7 +1600,14 @@ static int my_uname(struct utsname *buf) {
     if (!is_tweak_active()) {
         return %orig;
     }
-    return [ZTSettings sharedSettings].deviceName;
+    NSString *sysVer = [ZTSettings sharedSettings].systemVersion;
+    if (sysVer.length > 0) {
+        NSInteger major = [[sysVer componentsSeparatedByString:@"."].firstObject integerValue];
+        if (major >= 16) {
+            return @"iPhone";
+        }
+    }
+    return [ZTSettings sharedSettings].deviceName ?: @"iPhone";
 }
 
 - (NSString *)model {
@@ -1886,7 +1893,8 @@ static void start_battery_drain_timer_if_needed(void) {
 
 - (NSString *)isoCountryCode {
     if (!is_tweak_active()) return %orig;
-    return [ZTSettings sharedSettings].carrierCountryCode ?: @"vn";
+    NSString *iso = [ZTSettings sharedSettings].carrierCountryCode;
+    return (iso.length > 0) ? iso : nil;
 }
 
 - (BOOL)allowsVOIP {
@@ -1916,7 +1924,8 @@ static void start_battery_drain_timer_if_needed(void) {
     return [ZTSettings sharedSettings].carrierMNC ?: @"04";
 }
 - (NSString *)isoCountryCode {
-    return [ZTSettings sharedSettings].carrierCountryCode ?: @"vn";
+    NSString *iso = [ZTSettings sharedSettings].carrierCountryCode;
+    return (iso.length > 0) ? iso : nil;
 }
 - (BOOL)allowsVOIP {
     return YES;
@@ -3151,7 +3160,8 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
 
     if ([prop isEqualToString:@"SerialNumber"]) {
         s_in_mg = NO;
-        return settings.spoofedSerial ? (__bridge_retained CFTypeRef)[settings.spoofedSerial copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+        // App Store apps không có quyền đọc SerialNumber qua MGCopyAnswer -> Trả NULL chuẩn Apple Sandbox
+        return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
     }
     if ([prop isEqualToString:@"UniqueDeviceID"]) {
         NSString *udid = [[settings.spoofedIDFV stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
@@ -3160,14 +3170,19 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
     }
     if ([prop isEqualToString:@"WifiAddress"]) {
         s_in_mg = NO;
-        return settings.spoofedWifiMAC ? (__bridge_retained CFTypeRef)[settings.spoofedWifiMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+        // Chuẩn iOS 7+: Third-party apps luôn nhận 02:00:00:00:00:00
+        return (__bridge_retained CFTypeRef)[@"02:00:00:00:00:00" copy];
     }
     if ([prop isEqualToString:@"BluetoothAddress"]) {
         s_in_mg = NO;
-        return settings.spoofedBluetoothMAC ? (__bridge_retained CFTypeRef)[settings.spoofedBluetoothMAC copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+        return NULL;
     }
     if ([prop isEqualToString:@"UserAssignedDeviceName"]) {
         s_in_mg = NO;
+        NSString *sysVer = settings.systemVersion;
+        if (sysVer.length > 0 && [[sysVer componentsSeparatedByString:@"."].firstObject integerValue] >= 16) {
+            return (__bridge_retained CFTypeRef)[@"iPhone" copy];
+        }
         return settings.deviceName ? (__bridge_retained CFTypeRef)[settings.deviceName copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
     }
     if ([prop isEqualToString:@"ProductType"]) {
