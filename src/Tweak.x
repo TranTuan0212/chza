@@ -1169,6 +1169,17 @@ static void logAudit(NSString *category, NSString *detail) {
 // 1. TẦNG C API: sysctl, sysctlbyname & uname HOOKING
 // ==========================================
 
+static NSString *get_darwin_kernel_release(NSString *sysVer) {
+    if (!sysVer || sysVer.length == 0) return @"21.6.0";
+    NSArray<NSString *> *components = [sysVer componentsSeparatedByString:@"."];
+    if (components.count == 0) return @"21.6.0";
+    NSInteger major = [components[0] integerValue];
+    NSInteger minor = components.count > 1 ? [components[1] integerValue] : 0;
+    NSInteger darwinMajor = major + 6;
+    NSInteger darwinMinor = minor;
+    return [NSString stringWithFormat:@"%ld.%ld.0", (long)darwinMajor, (long)darwinMinor];
+}
+
 static int (*orig_sysctl)(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) = NULL;
 static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     static __thread BOOL s_in_sysctl = NO;
@@ -1277,6 +1288,20 @@ static int my_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void
             s_in_sysctl = NO;
             return 0;
         }
+#ifdef KERN_OSRELEASE
+        if (name[1] == KERN_OSRELEASE) {
+            NSString *releaseStr = get_darwin_kernel_release(settings.systemVersion);
+            const char *val = [releaseStr UTF8String];
+            size_t val_len = strlen(val) + 1;
+            if (oldp && oldlenp) {
+                size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
+                memcpy(oldp, val, copy_len);
+            }
+            if (oldlenp) *oldlenp = val_len;
+            s_in_sysctl = NO;
+            return 0;
+        }
+#endif
         if (name[1] == KERN_HOSTNAME && settings.deviceName.length > 0) {
             const char *val = [settings.deviceName UTF8String];
             size_t val_len = strlen(val) + 1;
@@ -1341,6 +1366,19 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
 
     if (strcmp(name, "kern.osversion") == 0) {
         const char *val = settings.kernOsVersion.length > 0 ? [settings.kernOsVersion UTF8String] : "19H218";
+        size_t val_len = strlen(val) + 1;
+        if (oldp && oldlenp) {
+            size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
+            memcpy(oldp, val, copy_len);
+        }
+        if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
+        return 0;
+    }
+
+    if (strcmp(name, "kern.osrelease") == 0) {
+        NSString *releaseStr = get_darwin_kernel_release(settings.systemVersion);
+        const char *val = [releaseStr UTF8String];
         size_t val_len = strlen(val) + 1;
         if (oldp && oldlenp) {
             size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
@@ -1493,6 +1531,10 @@ static int my_uname(struct utsname *buf) {
         if (settings.deviceMachine.length > 0) {
             strlcpy(buf->machine, [settings.deviceMachine UTF8String], sizeof(buf->machine));
         }
+        NSString *releaseStr = get_darwin_kernel_release(settings.systemVersion);
+        if (releaseStr.length > 0) {
+            strlcpy(buf->release, [releaseStr UTF8String], sizeof(buf->release));
+        }
     }
     s_in_uname = NO;
     return ret;
@@ -1549,11 +1591,31 @@ static int my_uname(struct utsname *buf) {
 
 - (float)batteryLevel {
     if (!is_tweak_active()) return %orig;
+    float base = [ZTSettings sharedSettings].batteryLevel;
+    if (base <= 0.05f || base > 1.0f) base = 0.85f;
+
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    uint64_t bootSec = [ZTSettings sharedSettings].bootTimeSec;
+    double uptimeHours = 0.0;
+    if (bootSec > 0 && tv.tv_sec > (time_t)bootSec) {
+        uptimeHours = ((double)tv.tv_sec - (double)bootSec) / 3600.0;
+    } else {
+        uptimeHours = 4.0;
+    }
+
+    // Tự nhiên giảm khoảng 1.5% mỗi giờ máy chạy, có chu kỳ dao động tự nhiên
+    float drain = (float)(fmod(uptimeHours * 0.015, 0.45));
+    float current = base - drain;
+    if (current < 0.15f) current = 0.15f;
+    if (current > 1.0f) current = 1.0f;
+    current = roundf(current * 100.0f) / 100.0f;
+
     void *c0 = __builtin_return_address(0);
     if (is_zalo_caller(c0) && should_log_radar_caller(c0)) {
-        logAudit(@"RADAR-SENSOR", [NSString stringWithFormat:@"🔋 Zalo đọc UIDevice.batteryLevel (%.2f) từ %@", [ZTSettings sharedSettings].batteryLevel, format_caller_info(c0)]);
+        logAudit(@"RADAR-SENSOR", [NSString stringWithFormat:@"🔋 Zalo đọc UIDevice.batteryLevel (%.2f) từ %@", current, format_caller_info(c0)]);
     }
-    return [ZTSettings sharedSettings].batteryLevel;
+    return current;
 }
 
 - (UIDeviceBatteryState)batteryState {
@@ -1897,6 +1959,20 @@ static void update_cached_locale_and_tz(void) {
     return res;
 }
 
++ (NSLocale *)autoupdatingCurrentLocale {
+    if (!is_tweak_active() || s_in_locale_hook) return %orig;
+    s_in_locale_hook = YES;
+    if (!s_cachedLocale) {
+        update_cached_locale_and_tz();
+    }
+    NSLocale *res = s_cachedLocale ?: %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc NSLocale autoupdatingCurrentLocale -> [TRẢ VỀ %@]", [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN"]);
+    }
+    s_in_locale_hook = NO;
+    return res;
+}
+
 + (NSArray<NSString *> *)preferredLanguages {
     if (!is_tweak_active() || s_in_locale_hook) return %orig;
     s_in_locale_hook = YES;
@@ -1989,6 +2065,42 @@ static void update_cached_locale_and_tz(void) {
     }
     s_in_tz_hook = NO;
     return result;
+}
+
+%end
+
+// ==========================================
+// ĐỒNG BỘ BÀN PHÍM / INPUT MODES: UITextInputMode
+// ==========================================
+
+%hook UITextInputMode
+
+- (NSString *)primaryLanguage {
+    if (!is_tweak_active()) return %orig;
+    void *c0 = __builtin_return_address(0);
+    if (is_zalo_caller(c0)) {
+        NSArray *langs = [ZTSettings sharedSettings].preferredLanguages;
+        if (!langs || langs.count == 0) {
+            langs = @[@"vi-VN", @"en-US"];
+        }
+        NSArray *modes = [UITextInputMode activeInputModes];
+        NSUInteger idx = [modes indexOfObject:self];
+        if (idx != NSNotFound && idx < langs.count) {
+            return langs[idx];
+        }
+        return langs.firstObject;
+    }
+    return %orig;
+}
+
++ (NSArray *)activeInputModes {
+    NSArray *orig = %orig;
+    if (!is_tweak_active()) return orig;
+    void *c0 = __builtin_return_address(0);
+    if (is_zalo_caller(c0) && [ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"RADAR-KEYBOARD", [NSString stringWithFormat:@"Zalo đọc UITextInputMode activeInputModes (count=%lu)", (unsigned long)(orig ? orig.count : 0)]);
+    }
+    return orig;
 }
 
 %end
@@ -2935,6 +3047,37 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
     if ([prop isEqualToString:@"HWModelStr"] || [prop isEqualToString:@"HardwarePlatform"]) {
         s_in_mg = NO;
         return settings.deviceModel ? (__bridge_retained CFTypeRef)[settings.deviceModel copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
+    }
+    if ([prop isEqualToString:@"TotalDiskCapacity"] || [prop isEqualToString:@"TotalDataCapacity"]) {
+        s_in_mg = NO;
+        uint64_t total = settings.diskTotalSize > 0 ? settings.diskTotalSize : 64000000000ULL;
+        if (settings.enableAuditLog) {
+            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(%@) -> [ĐÃ FAKE TOTAL DISK %llu bytes]", prop, total]);
+        }
+        return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &total);
+    }
+    if ([prop isEqualToString:@"TotalDataAvailable"]) {
+        s_in_mg = NO;
+        uint64_t free = settings.diskFreeSize > 0 ? settings.diskFreeSize : 32000000000ULL;
+        if (settings.enableAuditLog) {
+            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(TotalDataAvailable) -> [ĐÃ FAKE FREE DISK %llu bytes]", free]);
+        }
+        return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &free);
+    }
+    if ([prop isEqualToString:@"DiskUsage"]) {
+        s_in_mg = NO;
+        uint64_t total = settings.diskTotalSize > 0 ? settings.diskTotalSize : 64000000000ULL;
+        uint64_t free = settings.diskFreeSize > 0 ? settings.diskFreeSize : 32000000000ULL;
+        if (settings.enableAuditLog) {
+            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(DiskUsage) -> [ĐÃ FAKE DISK DICTIONARY]"]);
+        }
+        NSDictionary *usage = @{
+            @"TotalDiskCapacity": @(total),
+            @"TotalDataCapacity": @(total),
+            @"TotalDataAvailable": @(free),
+            @"AmountDataReserved": @(1024ULL * 1024ULL * 512ULL)
+        };
+        return (__bridge_retained CFTypeRef)usage;
     }
 
     s_in_mg = NO;
