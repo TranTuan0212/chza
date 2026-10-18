@@ -544,8 +544,8 @@ static NSString *detect_real_system_machine(void) {
     profile.profileId = [[NSUUID UUID] UUIDString];
     profile.bootSessionUUID = [[NSUUID UUID] UUIDString];
 
-    // Uptime ngẫu nhiên tự nhiên của người dùng iPhone thật (từ 3 đến 14 ngày trước) kèm jitter giây lẻ
-    uint32_t days = 3 + arc4random_uniform(12); // 3 đến 14 ngày
+    // Uptime ngẫu nhiên tự nhiên của người dùng iPhone thật (phân tán rộng từ 3 đến 28 ngày trước) kèm jitter giây lẻ
+    uint32_t days = 3 + arc4random_uniform(26); // 3 đến 28 ngày
     uint32_t randomOffset = (days * 86400) + arc4random_uniform(86400);
     profile.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
 
