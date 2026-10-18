@@ -1153,9 +1153,13 @@ static void zt_atexit_handler(void) {
     handle_app_termination_event("atexit");
 }
 
-static UIBackgroundTaskIdentifier s_bg_task_id = UIBackgroundTaskInvalid;
+static UIBackgroundTaskIdentifier s_bg_task_id;
 static void renew_background_task_assertion(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        static dispatch_once_t s_bg_once;
+        dispatch_once(&s_bg_once, ^{
+            s_bg_task_id = UIBackgroundTaskInvalid;
+        });
         UIApplication *app = [UIApplication sharedApplication];
         if (!app) return;
         if (s_bg_task_id != UIBackgroundTaskInvalid) {
@@ -5471,6 +5475,8 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
 
         // Tự động quét và lập danh mục các module bảo mật nội bộ của Zalo
         scan_zalo_security_modules_async();
+
+        s_bg_task_id = UIBackgroundTaskInvalid;
 
         // Đăng ký bộ bảo vệ dữ liệu khi tiến trình bị tắt / kết thúc đột ngột
         atexit(zt_atexit_handler);
