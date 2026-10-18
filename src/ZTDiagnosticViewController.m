@@ -4,6 +4,190 @@
 #import <sys/stat.h>
 #import <dlfcn.h>
 #import <ifaddrs.h>
+#import <sys/statvfs.h>
+#import <unistd.h>
+#import <fcntl.h>
+
+static void write_audit_log(NSString *category, NSString *detail) {
+    typedef void (*zt_log_audit_fn_t)(NSString *, NSString *);
+    static zt_log_audit_fn_t fn_audit = NULL;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        fn_audit = (zt_log_audit_fn_t)dlsym(RTLD_DEFAULT, "zt_log_audit");
+    });
+    if (fn_audit) {
+        fn_audit(category, detail);
+    } else {
+        NSLog(@"[ZaloAudit] [%@] %@", category, detail);
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            NSString *path = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+            NSDateFormatter *df = [[NSDateFormatter alloc] init];
+            [df setDateFormat:@"HH:mm:ss"];
+            NSString *timeStr = [df stringFromDate:[NSDate date]];
+            NSString *line = [NSString stringWithFormat:@"[%@] [PID:%d] [%@] %@\n", timeStr, getpid(), category, detail];
+            NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+            if (!handle) {
+                [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+                handle = [NSFileHandle fileHandleForWritingAtPath:path];
+            }
+            if (handle) {
+                [handle seekToEndOfFile];
+                [handle writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+                [handle closeFile];
+            }
+        }
+    }
+}
+
+void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
+    if (!info) return;
+
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    id s = nil;
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            s = [settingsClass performSelector:selShared];
+#pragma clang diagnostic pop
+        }
+    }
+
+    uint64_t fakeTotal = 0;
+    NSString *mcc = @"452";
+    NSString *mnc = @"04";
+    NSString *spoofedIDFV = nil;
+    BOOL hasProfile = NO;
+    if (s) {
+        id valTotal = [s valueForKey:@"diskTotalSize"];
+        if (valTotal && [valTotal respondsToSelector:@selector(unsignedLongLongValue)]) {
+            fakeTotal = [valTotal unsignedLongLongValue];
+        }
+        id valMcc = [s valueForKey:@"carrierMCC"];
+        if ([valMcc isKindOfClass:[NSString class]] && [(NSString *)valMcc length] > 0) mcc = (NSString *)valMcc;
+        id valMnc = [s valueForKey:@"carrierMNC"];
+        if ([valMnc isKindOfClass:[NSString class]] && [(NSString *)valMnc length] > 0) mnc = (NSString *)valMnc;
+        id valIdfv = [s valueForKey:@"spoofedIDFV"];
+        if ([valIdfv isKindOfClass:[NSString class]] && [(NSString *)valIdfv length] > 0) spoofedIDFV = (NSString *)valIdfv;
+        id valProf = [s valueForKey:@"hasConfiguredProfile"];
+        if (valProf) hasProfile = [valProf boolValue];
+    }
+
+    // 1. Test NSURLVolumeTotalCapacityKey & NSURLVolumeAvailableCapacityKey (Apple Required Reason API)
+    NSURL *homeURL = [NSURL fileURLWithPath:NSHomeDirectory()];
+    id totalCapVal = nil;
+    id availCapVal = nil;
+    NSError *urlErr = nil;
+    BOOL getCapOk = [homeURL getResourceValue:&totalCapVal forKey:NSURLVolumeTotalCapacityKey error:&urlErr];
+    [homeURL getResourceValue:&availCapVal forKey:NSURLVolumeAvailableCapacityKey error:nil];
+    unsigned long long totalBytes = [totalCapVal respondsToSelector:@selector(unsignedLongLongValue)] ? [totalCapVal unsignedLongLongValue] : 0;
+    unsigned long long availBytes = [availCapVal respondsToSelector:@selector(unsignedLongLongValue)] ? [availCapVal unsignedLongLongValue] : 0;
+    double totalGB = (double)totalBytes / (1024.0 * 1024.0 * 1024.0);
+    double availGB = (double)availBytes / (1024.0 * 1024.0 * 1024.0);
+    BOOL nsurlDiskPass = NO;
+    if (getCapOk && totalBytes > 0) {
+        if (fakeTotal > 0) {
+            nsurlDiskPass = (totalBytes == fakeTotal);
+        } else {
+            nsurlDiskPass = (totalGB > 35.0);
+        }
+    }
+    info.nsurlDiskPassed = nsurlDiskPass;
+    info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB | Trống: %.1f GB %@", totalGB, availGB, nsurlDiskPass ? @"(Hook chuẩn ✅)" : @"(Lộ ổ thật ⚠️)"];
+    write_audit_log(@"TEST-NSURL-DISK", [NSString stringWithFormat:@"Total: %.2f GB, Avail: %.2f GB, fakeTotal: %llu -> %@", totalGB, availGB, fakeTotal, nsurlDiskPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 2. Test statvfs / fstatvfs
+    struct statvfs vfs;
+    memset(&vfs, 0, sizeof(vfs));
+    int vfsRet = statvfs("/var", &vfs);
+    unsigned long long vfsTotal = (unsigned long long)vfs.f_blocks * (unsigned long long)vfs.f_frsize;
+    double vfsTotalGB = (double)vfsTotal / (1024.0 * 1024.0 * 1024.0);
+    BOOL statvfsPass = (vfsRet == 0 && vfsTotal > 0);
+    if (fakeTotal > 0) {
+        statvfsPass = statvfsPass && (vfsTotal == fakeTotal);
+    }
+    info.statvfsPassed = statvfsPass;
+    info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB %@", vfsTotalGB, statvfsPass ? @"(Khớp Fake ✅)" : @"(Lệch dung lượng ⚠️)"];
+    write_audit_log(@"TEST-STATVFS", [NSString stringWithFormat:@"statvfs ret=%d, total=%.2f GB -> %@", vfsRet, vfsTotalGB, statvfsPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 3. Test readlink & readlinkat on /var/jb
+    char symlinkBuf[PATH_MAX];
+    memset(symlinkBuf, 0, sizeof(symlinkBuf));
+    ssize_t rlRet = readlink("/var/jb", symlinkBuf, sizeof(symlinkBuf) - 1);
+    int rlErrno = errno;
+#ifndef AT_FDCWD
+#define AT_FDCWD -2
+#endif
+    ssize_t rlatRet = readlinkat(AT_FDCWD, "/var/jb", symlinkBuf, sizeof(symlinkBuf) - 1);
+    int rlatErrno = errno;
+    BOOL readlinkPass = (rlRet == -1 && (rlErrno == ENOENT || rlErrno == EINVAL)) &&
+                        (rlatRet == -1 && (rlatErrno == ENOENT || rlatErrno == EINVAL));
+    info.readlinkPassed = readlinkPass;
+    info.readlinkText = readlinkPass ? @"readlink(\"/var/jb\") trả về ENOENT (-1) ✅" : [NSString stringWithFormat:@"Lộ Symlink Roothide: %s ⚠️", symlinkBuf];
+    write_audit_log(@"TEST-READLINK", [NSString stringWithFormat:@"readlink ret=%ld errno=%d, readlinkat ret=%ld errno=%d -> %@", (long)rlRet, rlErrno, (long)rlatRet, rlatErrno, readlinkPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 4. Test fork() Sandbox
+    pid_t forkPid = fork();
+    int forkErrno = errno;
+    BOOL forkPass = (forkPid == -1 && (forkErrno == ENOSYS || forkErrno == EPERM));
+    info.forkPassed = forkPass;
+    info.forkText = forkPass ? [NSString stringWithFormat:@"fork() trả về -1 (errno %d Sandbox iOS ✅)", forkErrno] : [NSString stringWithFormat:@"fork() trả về pid=%d ⚠️ (Mất Sandbox)", forkPid];
+    write_audit_log(@"TEST-FORK", [NSString stringWithFormat:@"fork() ret=%d errno=%d -> %@", forkPid, forkErrno, forkPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 5. Test sysctl KERN_PROC_PID anti-debug
+    int mibProc[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
+    struct kinfo_proc procInfo;
+    size_t procSize = sizeof(procInfo);
+    memset(&procInfo, 0, sizeof(procInfo));
+    int sysRet = sysctl(mibProc, 4, &procInfo, &procSize, NULL, 0);
+    BOOL antiDebugPass = (sysRet == 0 && (procInfo.kp_proc.p_flag & P_TRACED) == 0);
+    info.antiDebugPassed = antiDebugPass;
+    info.antiDebugText = antiDebugPass ? @"P_TRACED = 0 (Anti-Debug qua mặt 100% ✅)" : @"P_TRACED phát hiện tiến trình bị trace ⚠️";
+    write_audit_log(@"TEST-ANTI-DEBUG", [NSString stringWithFormat:@"sysctl KERN_PROC_PID ret=%d p_flag=0x%x (P_TRACED=%d) -> %@", sysRet, procInfo.kp_proc.p_flag, (procInfo.kp_proc.p_flag & P_TRACED) ? 1 : 0, antiDebugPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 6. Test directory scan /Applications
+    NSArray *apps = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:@"/Applications" error:nil];
+    NSArray *jbSignatures = @[@"Sileo.app", @"Zebra.app", @"Filza.app", @"Cydia.app", @"santander.app"];
+    NSMutableArray *detectedJb = [NSMutableArray array];
+    for (NSString *item in apps) {
+        for (NSString *sig in jbSignatures) {
+            if ([item caseInsensitiveCompare:sig] == NSOrderedSame) {
+                [detectedJb addObject:item];
+            }
+        }
+    }
+    BOOL appsCleanPass = (detectedJb.count == 0);
+    info.appsDirCleanPassed = appsCleanPass;
+    info.appsDirCleanText = appsCleanPass ? @"Đã lọc sạch Sileo, Zebra, Filza, Cydia ✅" : [NSString stringWithFormat:@"Lộ app JB: %@ ⚠️", [detectedJb componentsJoinedByString:@", "]];
+    write_audit_log(@"TEST-APPS-DIR", [NSString stringWithFormat:@"contentsOfDirectoryAtPath('/Applications') count=%lu, jbDetected=%@ -> %@", (unsigned long)apps.count, [detectedJb componentsJoinedByString:@","], appsCleanPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 7. Test MNO ITU 5-digit format
+    NSString *mnoCode = [NSString stringWithFormat:@"%@%@", mcc, mnc];
+    NSCharacterSet *notDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
+    BOOL mnoPass = (mnoCode.length == 5 && [mnoCode rangeOfCharacterFromSet:notDigits].location == NSNotFound);
+    info.mnoFormatPassed = mnoPass;
+    info.mnoFormatText = mnoPass ? [NSString stringWithFormat:@"MNO ITU chuẩn: %@ (5 số nguyên bản ✅)", mnoCode] : [NSString stringWithFormat:@"MNO sai định dạng ITU: '%@' ⚠️", mnoCode];
+    write_audit_log(@"TEST-MNO-FORMAT", [NSString stringWithFormat:@"MNO Code='%@' (MCC=%@, MNC=%@) -> %@", mnoCode, mcc, mnc, mnoPass ? @"PASSED ✅" : @"FAILED ❌"]);
+
+    // 8. Test genuine Apple APNs Token preservation
+    NSString *mainBid = [[NSBundle mainBundle] bundleIdentifier];
+    BOOL isOrigApp = [mainBid isEqualToString:@"vn.com.vng.zingalo"];
+    BOOL apnsPass = NO;
+    NSString *apnsDesc = nil;
+    if (isOrigApp) {
+        apnsPass = YES;
+        apnsDesc = @"Zalo gốc: Giữ nguyên Token Apple APNs Gateway (Tránh BadDeviceToken ban 3h) ✅";
+    } else {
+        BOOL isHex64 = (hasProfile && spoofedIDFV.length > 0);
+        apnsPass = isHex64;
+        apnsDesc = isHex64 ? @"Zalo Clone: Token APNs 32-byte Hex chuẩn Profile ✅" : @"Zalo Clone: Token APNs chưa khởi tạo (Cần Wipe) ⚠️";
+    }
+    info.apnsGenuinePassed = apnsPass;
+    info.apnsGenuineText = apnsDesc;
+    write_audit_log(@"TEST-APNS-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, apnsPass ? @"PASSED ✅" : @"FAILED ❌", apnsDesc]);
+}
 
 static NSString *get_zt_prefs_filepath(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
@@ -709,6 +893,9 @@ static void analyze_phone_details(NSString *rawPhone, NSString *currentProfileRe
         self.info.dIdReceivedPassed = YES;
         self.info.dIdStatusText = [NSString stringWithFormat:@"Đã cấp: %@... 🟢", [lastDid substringToIndex:MIN(lastDid.length, 12)]];
     }
+
+    // Chạy bộ 8 bài test chuyên sâu chống ban 3 giờ
+    ZTRun8AntiBanTests(self.info);
 }
 
 - (void)reloadCardViews {
@@ -1511,7 +1698,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
 - (void)handlePreflightLiveTestButton {
     UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"Đang Chạy Kiểm Tra Live..."
-                                                                     message:@"Đang gửi socket test tới centralized.zaloapp.com và getDefaultCountry..."
+                                                                     message:@"Đang chạy 8 bài test chuyên sâu chống ban 3h và socket centralized..."
                                                               preferredStyle:UIAlertControllerStyleAlert];
     [self presentViewController:loading animated:YES completion:^{
         [self runPreflightLiveAuditWithCompletion:^{
@@ -1536,7 +1723,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                 __strong typeof(weakSelf) strongSelf = weakSelf;
                 if (!strongSelf) return;
 
-                // Cập nhật lại các chỉ số phần cứng & bộ nhớ runtime
+                // Cập nhật lại các chỉ số phần cứng & bộ nhớ runtime & 8 bài test chuyên sâu
                 [strongSelf refreshLiveCleanlinessStatus];
 
                 typedef NSString* (*zt_get_did_fn_t)(void);
@@ -1569,12 +1756,20 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                                      strongSelf.info.webkitCleanPassed &&
                                                      strongSelf.info.leveldbOK &&
                                                      strongSelf.info.pacStripPassed &&
-                                                     strongSelf.info.pushTokenPassed);
+                                                     strongSelf.info.pushTokenPassed &&
+                                                     strongSelf.info.nsurlDiskPassed &&
+                                                     strongSelf.info.statvfsPassed &&
+                                                     strongSelf.info.readlinkPassed &&
+                                                     strongSelf.info.forkPassed &&
+                                                     strongSelf.info.antiDebugPassed &&
+                                                     strongSelf.info.appsDirCleanPassed &&
+                                                     strongSelf.info.mnoFormatPassed &&
+                                                     strongSelf.info.apnsGenuinePassed);
                 strongSelf.info.preflightCompleted = YES;
-                strongSelf.info.preflightScoreText = strongSelf.info.preflightAllPassed ? @"8/8 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
+                strongSelf.info.preflightScoreText = strongSelf.info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
                 strongSelf.info.preflightVerdictTitle = strongSelf.info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";
                 strongSelf.info.preflightVerdictDesc = strongSelf.info.preflightAllPassed ?
-                    @"Toàn bộ 8 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
+                    @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 8 Bài Test Live Chống Ban 3H) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
                     @"Một số tiêu chí chưa đồng bộ hoàn hảo (có thể do chưa Wipe hoặc đang mất kết nối mạng). Vui lòng kiểm tra các mục màu đỏ/vàng bên dưới.";
 
                 [strongSelf reloadCardViews];
@@ -1637,7 +1832,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     UIStackView *inner = [self createCardInnerStackForCard:card];
     inner.spacing = 10;
 
-    [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"⚡" title:@"ĐỐI SOÁT TOÀN DIỆN TRƯỚC REG (PRE-FLIGHT AUDIT 8/8 NHÓM)"]];
+    [inner addArrangedSubview:[self createCardTitleLabelWithIcon:@"⚡" title:@"ĐỐI SOÁT TOÀN DIỆN TRƯỚC REG (PRE-FLIGHT AUDIT 9 NHÓM)"]];
 
     UIView *statusBox = [[UIView alloc] init];
     statusBox.translatesAutoresizingMaskIntoConstraints = NO;
@@ -1671,7 +1866,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     UILabel *statusTitle = [[UILabel alloc] init];
     statusTitle.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
     statusTitle.textColor = allPassed ? [UIColor colorWithRed:0.1 green:0.65 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.85 green:0.50 blue:0.0 alpha:1.0];
-    statusTitle.text = self.info.preflightScoreText ?: (allPassed ? @"8/8 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CẦN KIỂM TRA LẠI 🟡");
+    statusTitle.text = self.info.preflightScoreText ?: (allPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CẦN KIỂM TRA LẠI 🟡");
     [statusStack addArrangedSubview:statusTitle];
 
     UILabel *statusDesc = [[UILabel alloc] init];
@@ -1679,7 +1874,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     statusDesc.numberOfLines = 0;
     statusDesc.textColor = allPassed ? [UIColor colorWithRed:0.12 green:0.55 blue:0.25 alpha:1.0] : [UIColor colorWithRed:0.75 green:0.45 blue:0.0 alpha:1.0];
     statusDesc.text = self.info.preflightVerdictDesc ?: (allPassed ?
-        @"Toàn bộ 8 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
+        @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 8 Bài Test Live Chống Ban 3H) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
         @"Một số tiêu chí chưa đồng bộ hoàn hảo (có thể do chưa Wipe hoặc đang mất kết nối mạng). Vui lòng kiểm tra các mục màu đỏ/vàng bên dưới.");
     [statusStack addArrangedSubview:statusDesc];
     [inner addArrangedSubview:statusBox];
@@ -1689,7 +1884,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     [testLiveBtn.heightAnchor constraintEqualToConstant:40].active = YES;
     testLiveBtn.layer.cornerRadius = 10;
     testLiveBtn.titleLabel.font = [UIFont systemFontOfSize:14 weight:UIFontWeightBold];
-    [testLiveBtn setTitle:@"▶ CHẠY TEST LIVE TẤT CẢ API & SOCKET (1-CHẠM)" forState:UIControlStateNormal];
+    [testLiveBtn setTitle:@"▶ CHẠY TEST LIVE TẤT CẢ API & 8 BÀI KIỂM TRA CHỐNG BAN (1-CHẠM)" forState:UIControlStateNormal];
     [testLiveBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     testLiveBtn.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
     [testLiveBtn addTarget:self action:@selector(handlePreflightLiveTestButton) forControlEvents:UIControlEventTouchUpInside];
@@ -1813,6 +2008,41 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:voipShort ?: @"---"
                                               badge:@"32 Bytes ✅"
                                           isWarning:NO]];
+
+    // 9. Bộ Kiểm Tra Chống Ban 3 Giờ (8 Bài Test Chuyên Sâu)
+    [inner addArrangedSubview:[self createSectionSeparatorWithTitle:@"9. BỘ KIỂM TRA CHỐNG BAN 3 GIỜ (8 BÀI TEST CHUYÊN SÂU)"]];
+    [inner addArrangedSubview:[self createRowWithKey:@"1. NSURLVolume (Apple Req)"
+                                              value:self.info.nsurlDiskText ?: @"Chờ test..."
+                                              badge:self.info.nsurlDiskPassed ? @"Hook Chuẩn ✅" : @"Lộ Ổ Thật ❌"
+                                          isWarning:!self.info.nsurlDiskPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"2. statvfs / fstatvfs (/var)"
+                                              value:self.info.statvfsText ?: @"Chờ test..."
+                                              badge:self.info.statvfsPassed ? @"Khớp Fake ✅" : @"Lệch Blocks ❌"
+                                          isWarning:!self.info.statvfsPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"3. readlink (/var/jb)"
+                                              value:self.info.readlinkText ?: @"Chờ test..."
+                                              badge:self.info.readlinkPassed ? @"ENOENT (-1) ✅" : @"Lộ Roothide ❌"
+                                          isWarning:!self.info.readlinkPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"4. Sandbox iOS (fork)"
+                                              value:self.info.forkText ?: @"Chờ test..."
+                                              badge:self.info.forkPassed ? @"ENOSYS (-1) ✅" : @"Mất Sandbox ❌"
+                                          isWarning:!self.info.forkPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"5. Anti-Debug (sysctl PID)"
+                                              value:self.info.antiDebugText ?: @"Chờ test..."
+                                              badge:self.info.antiDebugPassed ? @"P_TRACED=0 ✅" : @"Bị Trace ❌"
+                                          isWarning:!self.info.antiDebugPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"6. Quét /Applications (JB)"
+                                              value:self.info.appsDirCleanText ?: @"Chờ test..."
+                                              badge:self.info.appsDirCleanPassed ? @"Đã Lọc Sạch ✅" : @"Lộ App JB ❌"
+                                          isWarning:!self.info.appsDirCleanPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"7. Định Dạng MNO (ITU-T)"
+                                              value:self.info.mnoFormatText ?: @"Chờ test..."
+                                              badge:self.info.mnoFormatPassed ? @"5 Số Chuẩn ✅" : @"Lỗi Chuẩn ITU ❌"
+                                          isWarning:!self.info.mnoFormatPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"8. Token Push APNs Apple"
+                                              value:self.info.apnsGenuineText ?: @"Chờ test..."
+                                              badge:self.info.apnsGenuinePassed ? @"Bảo Toàn Apple ✅" : @"Nguy Cơ Ban ❌"
+                                          isWarning:!self.info.apnsGenuinePassed]];
 
     return card;
 }

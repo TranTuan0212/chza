@@ -10,6 +10,7 @@
 @import Darwin.POSIX.sys.stat;
 #endif
 #import <sys/stat.h>
+#import <sys/statvfs.h>
 #import <fcntl.h>
 #import <unistd.h>
 #import <CFNetwork/CFNetwork.h>
@@ -2375,7 +2376,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     // 8. Push Tokens
     info.pushTokensSummary = @"APNs (32B) & VoIP (32B)";
 
-    // Đánh giá Tổng quan
+    // 9. Bộ Kiểm Tra Chống Ban 3 Giờ (8 Bài Test Chuyên Sâu)
+    ZTRun8AntiBanTests(info);
+
+    // Đánh giá Tổng quan (9/9 Nhóm)
     info.preflightAllPassed = (info.socketCellularPassed &&
                                info.ifaddrsCleanPassed &&
                                info.qosPassed &&
@@ -2388,12 +2392,20 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
                                info.webkitCleanPassed &&
                                info.leveldbOK &&
                                info.pacStripPassed &&
-                               info.pushTokenPassed);
+                               info.pushTokenPassed &&
+                               info.nsurlDiskPassed &&
+                               info.statvfsPassed &&
+                               info.readlinkPassed &&
+                               info.forkPassed &&
+                               info.antiDebugPassed &&
+                               info.appsDirCleanPassed &&
+                               info.mnoFormatPassed &&
+                               info.apnsGenuinePassed);
     info.preflightCompleted = YES;
-    info.preflightScoreText = info.preflightAllPassed ? @"8/8 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
+    info.preflightScoreText = info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
     info.preflightVerdictTitle = info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";
     info.preflightVerdictDesc = info.preflightAllPassed ?
-        @"Toàn bộ 8 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
+        @"Toàn bộ 9 nhóm chỉ số (Socket 4G/Wifi, Centralized ID, Carrier MNO, 3-Clock Uptime, device_id, Hardware, Anti-Detection, Push Token, 8 Bài Test Live Chống Ban 3H) đã được đối soát sạch sẽ. Sẵn sàng nhập số điện thoại để đăng ký an toàn!" :
         @"Một số tiêu chí chưa đồng bộ hoàn hảo (có thể do chưa Wipe hoặc đang mất kết nối mạng). Vui lòng kiểm tra các mục màu đỏ/vàng bên dưới.";
 
     return info;

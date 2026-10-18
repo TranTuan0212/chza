@@ -10,25 +10,31 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS public.licenses (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     license_key TEXT NOT NULL UNIQUE,                       -- Mã key (VD: ZT-TRIAL-8899, ZT-PRO-1234)
+    duration_days INT DEFAULT 1 NOT NULL,                   -- Số ngày sử dụng (tính từ thời điểm kích hoạt)
+    activated_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,     -- Thời điểm bắt đầu kích hoạt lần đầu
+    expires_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,       -- Thời điểm hết hạn (tính tự động khi kích hoạt)
     bound_udid TEXT DEFAULT NULL,                           -- Khóa theo UDID phần cứng thật (NULL: chưa kích hoạt)
     device_model TEXT DEFAULT NULL,                         -- Tên dòng máy kích hoạt (VD: iPhone14,2)
-    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,           -- Thời điểm hết hạn chính xác
     is_active BOOLEAN DEFAULT TRUE NOT NULL,                -- Cho phép bật/tắt (khóa key khẩn cấp)
     last_verified_at TIMESTAMP WITH TIME ZONE DEFAULT NULL, -- Thời điểm máy ping kiểm tra gần nhất
     note TEXT DEFAULT NULL,                                 -- Ghi chú (VD: Khách Nam - 0988xxx - Gói 30 ngày)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
+-- Cập nhật bảng nếu đã tồn tại từ trước (Migration)
+ALTER TABLE public.licenses ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE public.licenses ADD COLUMN IF NOT EXISTS duration_days INT DEFAULT 1;
+ALTER TABLE public.licenses ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP WITH TIME ZONE DEFAULT NULL;
+
 -- Tạo chỉ mục tìm kiếm nhanh cho license_key và bound_udid
 CREATE INDEX IF NOT EXISTS idx_licenses_key ON public.licenses(license_key);
 CREATE INDEX IF NOT EXISTS idx_licenses_udid ON public.licenses(bound_udid);
 
 -- 3. Thiết lập bảo mật Row Level Security (RLS)
--- Chặn tuyệt đối người dùng lạ đọc trộm bảng licenses qua API REST
 ALTER TABLE public.licenses ENABLE ROW LEVEL SECURITY;
 
--- 4. Tạo hàm RPC Xác Thực & Tự Động Khóa 1 Máy (verify_license)
--- Hàm này có quyền SECURITY DEFINER, chạy trực tiếp từ server Supabase an toàn tuyệt đối
+-- 4. Tạo hàm RPC Xác Thực & Tự Động Kích Hoạt (verify_license)
+-- Tự động tính thời hạn sử dụng ngay từ lúc máy đầu tiên nhập key
 CREATE OR REPLACE FUNCTION public.verify_license(
     p_license_key TEXT,
     p_udid TEXT,
@@ -88,8 +94,8 @@ BEGIN
         );
     END IF;
 
-    -- 3. Nếu Key đã hết hạn
-    IF v_now > v_rec.expires_at THEN
+    -- 3. Nếu Key đã từng kích hoạt và đã hết hạn
+    IF v_rec.expires_at IS NOT NULL AND v_now > v_rec.expires_at THEN
         RETURN jsonb_build_object(
             'valid', false,
             'error_code', 'EXPIRED',
@@ -98,14 +104,21 @@ BEGIN
         );
     END IF;
 
-    -- 4. Kiểm tra ràng buộc UDID (Chỉ cho phép duy nhất 1 máy)
+    -- 4. Kiểm tra ràng buộc UDID & Kích hoạt lần đầu
     IF v_rec.bound_udid IS NULL OR TRIM(v_rec.bound_udid) = '' THEN
-        -- Lần đầu kích hoạt -> Tự động khóa vĩnh viễn vào UDID này!
+        -- LẦN ĐẦU KÍCH HOẠT: BẮT ĐẦU TÍNH GIỜ TỪ ĐÂY
+        IF v_rec.expires_at IS NULL THEN
+            v_rec.expires_at := v_now + (COALESCE(v_rec.duration_days, 1) * INTERVAL '1 day');
+        END IF;
+
         UPDATE public.licenses
         SET bound_udid = v_clean_udid,
             device_model = p_model,
+            activated_at = COALESCE(v_rec.activated_at, v_now),
+            expires_at = v_rec.expires_at,
             last_verified_at = v_now
         WHERE id = v_rec.id;
+
     ELSIF LOWER(TRIM(v_rec.bound_udid)) <> v_clean_udid THEN
         -- Key đã bị kích hoạt trên máy khác
         RETURN jsonb_build_object(
@@ -147,17 +160,22 @@ GRANT EXECUTE ON FUNCTION public.verify_license(TEXT, TEXT, TEXT) TO anon;
 GRANT EXECUTE ON FUNCTION public.verify_license(TEXT, TEXT, TEXT) TO authenticated;
 
 -- ==============================================================================
--- DỮ LIỆU MẪU ĐỂ BẠN TEST NGAY (Gói Dùng Thử 1 Ngày)
+-- CÁC CÂU LỆNH MẪU QUẢN LÝ KEY (TÍNH GIỜ TỪ LÚC KÍCH HOẠT)
 -- ==============================================================================
 
--- Key dùng thử 1 năm & Key VIP vĩnh viễn để test không lo quá hạn
-INSERT INTO public.licenses (license_key, expires_at, note)
-VALUES ('ZT-TRIAL-1DAY', NOW() + INTERVAL '365 days', 'Key dùng thử 1 năm')
+-- 1. Tạo hoặc Reset Key Dùng Thử 1 Ngày (Chưa tính giờ, khi nào khách nhập máy mới bắt đầu đếm 24h)
+INSERT INTO public.licenses (license_key, duration_days, note)
+VALUES ('ZT-TRIAL-1DAY', 1, 'Key dùng thử 1 ngày')
 ON CONFLICT (license_key) DO UPDATE
-SET expires_at = NOW() + INTERVAL '365 days', bound_udid = NULL, is_active = TRUE;
+SET duration_days = 1,
+    activated_at = NULL,
+    expires_at = NULL,
+    bound_udid = NULL,
+    device_model = NULL,
+    last_verified_at = NULL,
+    is_active = TRUE,
+    note = 'Key dùng thử 1 ngày (Đã reset)';
 
-INSERT INTO public.licenses (license_key, expires_at, note)
-VALUES ('ZT-VIP-2026', NOW() + INTERVAL '3650 days', 'Key VIP 10 Năm')
-ON CONFLICT (license_key) DO UPDATE
-SET expires_at = NOW() + INTERVAL '3650 days', bound_udid = NULL, is_active = TRUE;
-
+-- 2. Tạo Key VIP 30 ngày (Bắt đầu đếm 30 ngày từ lúc nhập máy)
+-- INSERT INTO public.licenses (license_key, duration_days, note)
+-- VALUES ('ZT-VIP-30DAYS', 30, 'Key VIP 1 Tháng');

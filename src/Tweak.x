@@ -41,6 +41,7 @@ __attribute__((visibility("default"))) NSInteger zt_get_last_centralized_status(
 __attribute__((visibility("default"))) NSString *zt_get_last_centralized_did(void);
 __attribute__((visibility("default"))) NSInteger zt_get_qos_error_count(void);
 __attribute__((visibility("default"))) int zt_get_masked_ifaddrs(struct ifaddrs **ifap);
+__attribute__((visibility("default"))) void zt_log_audit(NSString *category, NSString *detail);
 
 static void (*dynamic_MSHookFunction)(void *symbol, void *replace, void **result) = NULL;
 #if __has_feature(ptrauth_calls)
@@ -4041,6 +4042,10 @@ __attribute__((visibility("default"))) void zt_reset_runtime_counters(void) {
     s_runtime_last_centralized_status = 0;
     s_runtime_last_centralized_did = nil;
     s_runtime_qos_error_count = 0;
+}
+
+__attribute__((visibility("default"))) void zt_log_audit(NSString *category, NSString *detail) {
+    logAudit(category, detail);
 }
 
 static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {

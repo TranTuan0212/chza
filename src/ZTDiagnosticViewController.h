@@ -166,6 +166,24 @@ NS_ASSUME_NONNULL_BEGIN
 // Nhóm 8: Push Notification Tokens (APNs & VoIP)
 @property (nonatomic, copy, nullable) NSString *pushTokensSummary;
 
+// Nhóm 9: Bộ Kiểm Tra Chống Ban 3 Giờ (Anti-Detection Live Tests)
+@property (nonatomic, assign) BOOL nsurlDiskPassed;
+@property (nonatomic, copy, nullable) NSString *nsurlDiskText;
+@property (nonatomic, assign) BOOL statvfsPassed;
+@property (nonatomic, copy, nullable) NSString *statvfsText;
+@property (nonatomic, assign) BOOL readlinkPassed;
+@property (nonatomic, copy, nullable) NSString *readlinkText;
+@property (nonatomic, assign) BOOL forkPassed;
+@property (nonatomic, copy, nullable) NSString *forkText;
+@property (nonatomic, assign) BOOL antiDebugPassed;
+@property (nonatomic, copy, nullable) NSString *antiDebugText;
+@property (nonatomic, assign) BOOL appsDirCleanPassed;
+@property (nonatomic, copy, nullable) NSString *appsDirCleanText;
+@property (nonatomic, assign) BOOL mnoFormatPassed;
+@property (nonatomic, copy, nullable) NSString *mnoFormatText;
+@property (nonatomic, assign) BOOL apnsGenuinePassed;
+@property (nonatomic, copy, nullable) NSString *apnsGenuineText;
+
 // Tổng kết Pre-flight
 @property (nonatomic, assign) BOOL preflightCompleted;
 @property (nonatomic, assign) BOOL preflightAllPassed;
@@ -174,6 +192,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *preflightVerdictDesc;
 
 @end
+
+FOUNDATION_EXPORT void ZTRun8AntiBanTests(ZTDiagnosticInfo *info);
 
 @interface ZTDiagnosticViewController : UIViewController
 
