@@ -21,6 +21,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *spoofedWifiMAC;    // Wi-Fi MAC Address
 @property (nonatomic, copy) NSString *spoofedBluetoothMAC;// Bluetooth MAC Address
 @property (nonatomic, copy) NSString *carrierName;        // Nhà mạng (Viettel, T-Mobile...)
+@property (nonatomic, copy, nullable) NSString *actualCarrier; // Tên nhà mạng thực tế trước khi ẩn CTCarrier trên iOS 16.4+
 @property (nonatomic, copy) NSString *carrierMCC;         // Mobile Country Code (452, 310...)
 @property (nonatomic, copy) NSString *carrierMNC;         // Mobile Network Code (04, 260...)
 @property (nonatomic, copy) NSString *carrierCountryCode; // Country ISO ("vn", "us"...)

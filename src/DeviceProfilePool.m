@@ -515,6 +515,8 @@ static NSString *detect_real_system_machine(void) {
         profile.timeZoneName = @"Asia/Ho_Chi_Minh";
     }
 
+    profile.actualCarrier = profile.carrierName;
+
     // Áp dụng giới hạn bảo mật và hành vi thực tế của Apple theo phiên bản iOS:
     BOOL is_ios16_plus = (chosenOS->major >= 16);
     BOOL is_ios16_4_plus = (chosenOS->major >= 17);

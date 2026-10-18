@@ -1932,12 +1932,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     if (!s.hasConfiguredProfile) {
         info.currentIDFV = @"Chưa cấp (Cần Wipe)";
-        info.serial = @"";
-        info.wifiMAC = @"";
+        info.serial = @"Không khả dụng";
+        info.wifiMAC = @"02:00:00:00:00:00";
     } else {
         info.currentIDFV = [[[UIDevice currentDevice] identifierForVendor] UUIDString];
-        info.serial = s.spoofedSerial;
-        info.wifiMAC = s.spoofedWifiMAC;
+        info.serial = @"Không khả dụng";
+        info.wifiMAC = @"02:00:00:00:00:00";
     }
 
     info.idfa = @"00000000-0000-0000-0000-000000000000";
@@ -1946,6 +1946,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
                            ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
                            ([s.regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
     info.regionName = regionDesc;
+    info.preferredCarrier = s.preferredCarrier;
     info.carrierName = s.carrierName ?: @"Viettel";
     info.carrierMCC = s.carrierMCC ?: @"452";
     info.carrierMNC = s.carrierMNC ?: @"04";

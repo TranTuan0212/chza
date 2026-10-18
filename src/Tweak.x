@@ -1055,6 +1055,9 @@ NSString *generate_random_mac(void) {
     self.carrierMCC = p.carrierMCC;
     self.carrierMNC = p.carrierMNC;
     self.carrierCountryCode = p.carrierCountryCode;
+    if (p.actualCarrier.length > 0) {
+        self.preferredCarrier = p.actualCarrier;
+    }
     self.l2cacheSize = p.l2cacheSize;
     self.localeIdentifier = p.localeIdentifier;
     self.preferredLanguages = p.preferredLanguages;

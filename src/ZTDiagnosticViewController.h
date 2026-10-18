@@ -23,6 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSString *wifiMAC;
 @property (nonatomic, copy) NSString *regionName;
 @property (nonatomic, copy) NSString *carrierName;
+@property (nonatomic, copy, nullable) NSString *preferredCarrier;
 @property (nonatomic, copy) NSString *carrierMCC;
 @property (nonatomic, copy) NSString *carrierMNC;
 @property (nonatomic, copy, nullable) NSString *carrierCountryCode;

@@ -59,6 +59,7 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     NSString *mcc = @"452";
     NSString *mnc = @"04";
     NSString *spoofedIDFV = nil;
+    NSString *sysVer = @"";
     BOOL hasProfile = NO;
     if (s) {
         id valTotal = [s valueForKey:@"diskTotalSize"];
@@ -73,6 +74,12 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
         if ([valIdfv isKindOfClass:[NSString class]] && [(NSString *)valIdfv length] > 0) spoofedIDFV = (NSString *)valIdfv;
         id valProf = [s valueForKey:@"hasConfiguredProfile"];
         if (valProf) hasProfile = [valProf boolValue];
+        id valVer = [s valueForKey:@"systemVersion"];
+        if ([valVer isKindOfClass:[NSString class]]) sysVer = (NSString *)valVer;
+        id valPrefCarrier = [s valueForKey:@"preferredCarrier"];
+        if ([valPrefCarrier isKindOfClass:[NSString class]] && [(NSString *)valPrefCarrier length] > 0) {
+            info.preferredCarrier = (NSString *)valPrefCarrier;
+        }
     }
 
     // 1. Test NSURLVolumeTotalCapacityKey & NSURLVolumeAvailableCapacityKey (Apple Required Reason API)
@@ -169,10 +176,28 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     // 7. Test MNO ITU 5-digit format
     NSString *mnoCode = [NSString stringWithFormat:@"%@%@", mcc, mnc];
     NSCharacterSet *notDigits = [[NSCharacterSet decimalDigitCharacterSet] invertedSet];
-    BOOL mnoPass = (mnoCode.length == 5 && [mnoCode rangeOfCharacterFromSet:notDigits].location == NSNotFound);
+    BOOL isIOS16_4Plus = NO;
+    if (sysVer.length > 0) {
+        NSArray *comp = [sysVer componentsSeparatedByString:@"."];
+        if (comp.count > 0 && [comp[0] integerValue] >= 17) {
+            isIOS16_4Plus = YES;
+        } else if (comp.count >= 2 && [comp[0] integerValue] == 16 && [comp[1] integerValue] >= 4) {
+            isIOS16_4Plus = YES;
+        }
+    }
+    BOOL isPlaceholder = ([mcc isEqualToString:@"65535"] && [mnc isEqualToString:@"65535"]);
+    BOOL mnoPass = NO;
+    NSString *mnoDesc = nil;
+    if (isIOS16_4Plus && isPlaceholder) {
+        mnoPass = YES;
+        mnoDesc = @"MNO bảo mật iOS 16.4+: CTCarrier ẩn (MCC: 65535, MNC: 65535 ✅)";
+    } else {
+        mnoPass = (mnoCode.length == 5 && [mnoCode rangeOfCharacterFromSet:notDigits].location == NSNotFound);
+        mnoDesc = mnoPass ? [NSString stringWithFormat:@"MNO ITU chuẩn: %@ (5 số nguyên bản ✅)", mnoCode] : [NSString stringWithFormat:@"MNO sai định dạng ITU: '%@' ⚠️", mnoCode];
+    }
     info.mnoFormatPassed = mnoPass;
-    info.mnoFormatText = mnoPass ? [NSString stringWithFormat:@"MNO ITU chuẩn: %@ (5 số nguyên bản ✅)", mnoCode] : [NSString stringWithFormat:@"MNO sai định dạng ITU: '%@' ⚠️", mnoCode];
-    write_audit_log(@"TEST-MNO-FORMAT", [NSString stringWithFormat:@"MNO Code='%@' (MCC=%@, MNC=%@) -> %@", mnoCode, mcc, mnc, mnoPass ? @"PASSED ✅" : @"FAILED ❌"]);
+    info.mnoFormatText = mnoDesc;
+    write_audit_log(@"TEST-MNO-FORMAT", [NSString stringWithFormat:@"MNO Code='%@' (MCC=%@, MNC=%@, is16_4=%d) -> %@", mnoCode, mcc, mnc, isIOS16_4Plus, mnoPass ? @"PASSED ✅" : @"FAILED ❌"]);
 
     // 8. Test genuine Apple APNs Token preservation
     NSString *mainBid = [[NSBundle mainBundle] bundleIdentifier];
@@ -1594,7 +1619,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             // Đối Chiếu Nhà Mạng Viễn Thông (Carrier Match)
             if (strongSelf.info.phoneCheckCompleted) {
                 NSString *phoneBrand = extract_carrier_brand(strongSelf.info.phoneCarrierName);
-                NSString *simBrand = extract_carrier_brand(strongSelf.info.carrierName);
+                NSString *simCarrierStr = strongSelf.info.preferredCarrier.length > 0 ? strongSelf.info.preferredCarrier : strongSelf.info.carrierName;
+                NSString *simBrand = extract_carrier_brand(simCarrierStr);
                 if (phoneBrand.length > 0 && simBrand.length > 0) {
                     if ([phoneBrand isEqualToString:simBrand]) {
                         strongSelf.info.matchCarrierPassed = YES;
@@ -2095,10 +2121,16 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"Đã nhận diện ✅"
                                           isWarning:NO]];
 
-    NSString *carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
-                                self.info.carrierName ?: @"Viettel",
-                                self.info.carrierMCC ?: @"452",
-                                self.info.carrierMNC ?: @"04"];
+    NSString *carrierDetails = nil;
+    NSString *carrierBrand = self.info.preferredCarrier.length > 0 ? self.info.preferredCarrier : self.info.carrierName;
+    if ([self.info.carrierMCC isEqualToString:@"65535"] || [self.info.carrierName isEqualToString:@"--"]) {
+        carrierDetails = [NSString stringWithFormat:@"%@ (4G/5G) | CTCarrier: -- (65535/65535)", carrierBrand ?: @"Viettel"];
+    } else {
+        carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
+                                    self.info.carrierName ?: @"Viettel",
+                                    self.info.carrierMCC ?: @"452",
+                                    self.info.carrierMNC ?: @"04"];
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"SIM Ảo Trong Máy"
                                               value:carrierDetails
                                               badge:@"Đang cắm 📱"
@@ -2433,7 +2465,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     if (self.info.phoneCheckCompleted) {
         NSString *phoneBrand = extract_carrier_brand(self.info.phoneCarrierName);
-        NSString *simBrand = extract_carrier_brand(self.info.carrierName);
+        NSString *simCarrierStr = self.info.preferredCarrier.length > 0 ? self.info.preferredCarrier : self.info.carrierName;
+        NSString *simBrand = extract_carrier_brand(simCarrierStr);
         NSString *carrierDisplay = [NSString stringWithFormat:@"SĐT: [%@] ⟷ SIM Máy: [%@]", phoneBrand.length > 0 ? phoneBrand : @"---", simBrand.length > 0 ? simBrand : @"---"];
         [inner addArrangedSubview:[self createRowWithKey:@"Đồng Bộ Nhà Mạng"
                                                   value:carrierDisplay
@@ -2462,7 +2495,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               isWarning:NO]];
     }
 
-    NSString *carrierDetails = [NSString stringWithFormat:@"%@ (%@-%@)", self.info.carrierName ?: @"Viettel", self.info.carrierMCC ?: @"452", self.info.carrierMNC ?: @"04"];
+    NSString *carrierDetails = nil;
+    NSString *carrierBrand = self.info.preferredCarrier.length > 0 ? self.info.preferredCarrier : self.info.carrierName;
+    if ([self.info.carrierMCC isEqualToString:@"65535"] || [self.info.carrierName isEqualToString:@"--"]) {
+        carrierDetails = [NSString stringWithFormat:@"%@ (4G/5G) | CTCarrier: --", carrierBrand ?: @"Viettel"];
+    } else {
+        carrierDetails = [NSString stringWithFormat:@"%@ (%@-%@)", self.info.carrierName ?: @"Viettel", self.info.carrierMCC ?: @"452", self.info.carrierMNC ?: @"04"];
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"SIM Ảo Trong Máy"
                                               value:carrierDetails
                                               badge:@"Đã cấp ✅"
@@ -2587,10 +2626,16 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               badge:@"Đồng bộ ✅"
                                           isWarning:NO]];
 
-    NSString *carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
-                                self.info.carrierName ?: @"Viettel",
-                                self.info.carrierMCC ?: @"452",
-                                self.info.carrierMNC ?: @"04"];
+    NSString *carrierDetails = nil;
+    NSString *carrierBrand = self.info.preferredCarrier.length > 0 ? self.info.preferredCarrier : self.info.carrierName;
+    if ([self.info.carrierMCC isEqualToString:@"65535"] || [self.info.carrierName isEqualToString:@"--"]) {
+        carrierDetails = [NSString stringWithFormat:@"%@ (4G/5G) | CTCarrier: -- (65535/65535)", carrierBrand ?: @"Viettel"];
+    } else {
+        carrierDetails = [NSString stringWithFormat:@"%@ (MCC: %@ | MNC: %@)",
+                                    self.info.carrierName ?: @"Viettel",
+                                    self.info.carrierMCC ?: @"452",
+                                    self.info.carrierMNC ?: @"04"];
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"Nhà Mạng Di Động (SIM)"
                                               value:carrierDetails
                                               badge:@"Hợp lệ ✅"
