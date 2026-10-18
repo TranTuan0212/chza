@@ -2648,6 +2648,17 @@ static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFS
                     }
                 }
             }
+        } else if (CFStringCompare(key, CFSTR("NSLocalNetworkUsageDescription"), 0) == kCFCompareEqualTo) {
+            CFBundleRef mb = CFBundleGetMainBundle();
+            if (bundle == mb || !bundle) {
+                CFTypeRef res = orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL;
+                if (res) {
+                    s_in_c_bundle_hook = NO;
+                    return res;
+                }
+                s_in_c_bundle_hook = NO;
+                return CFSTR("Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu");
+            }
         }
     }
     CFTypeRef res = orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
@@ -3610,24 +3621,27 @@ static BOOL s_in_bundle_hook = NO;
 }
 
 - (id)objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle] && key && [key isEqualToString:@"CFBundleIdentifier"]) {
+    if (self == [NSBundle mainBundle] && key) {
         if (!is_tweak_active()) return %orig;
         if (s_in_bundle_hook) return %orig;
         s_in_bundle_hook = YES;
         BOOL isOrig = is_original_zalo_app();
         s_in_bundle_hook = NO;
-        if (isOrig) {
-            return %orig;
-        }
-        void *caller0 = __builtin_return_address(0);
-        if (!is_network_system_caller(caller0)) {
-            void *caller1 = __builtin_return_address(1);
-            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-                return @"vn.com.vng.zingalo";
+        if (!isOrig) {
+            if ([key isEqualToString:@"CFBundleIdentifier"]) {
+                void *caller0 = __builtin_return_address(0);
+                if (!is_network_system_caller(caller0)) {
+                    void *caller1 = __builtin_return_address(1);
+                    if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
+                        logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
+                        return @"vn.com.vng.zingalo";
+                    }
+                }
+            } else if ([key isEqualToString:@"NSLocalNetworkUsageDescription"]) {
+                id origVal = %orig;
+                return origVal ?: @"Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu";
             }
         }
-        return %orig;
     }
     return %orig;
 }
@@ -3649,6 +3663,9 @@ static BOOL s_in_bundle_hook = NO;
             if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
                 NSMutableDictionary *mDict = [dict mutableCopy];
                 mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
+                if (!mDict[@"NSLocalNetworkUsageDescription"]) {
+                    mDict[@"NSLocalNetworkUsageDescription"] = @"Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu";
+                }
                 return mDict;
             }
         }
@@ -3751,11 +3768,11 @@ static inline NSString *hex_string_from_data(NSData *data) {
     id val = %orig;
     if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
-            val = hex_string_from_data(get_clone_fake_apns_token_data());
-            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp APNs Token theo Profile cho khoá '%@'", defaultName]);
+            val = nil;
+            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-PROTECT] Zalo Clone: Không cấp APNs Token fake cho '%@' (Tránh BadDeviceToken Apple) ✅", defaultName]);
         } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
-            val = hex_string_from_data(get_clone_fake_voip_token_data());
-            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã cấp VoIP PushKit Token theo Profile cho khoá '%@'", defaultName]);
+            val = nil;
+            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-PROTECT] Zalo Clone: Không cấp VoIP PushKit Token fake cho '%@' ✅", defaultName]);
         }
     }
 
@@ -3780,9 +3797,9 @@ static inline NSString *hex_string_from_data(NSData *data) {
 - (NSString *)stringForKey:(NSString *)defaultName {
     if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
         if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
-            return hex_string_from_data(get_clone_fake_apns_token_data());
+            return nil;
         } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
-            return hex_string_from_data(get_clone_fake_voip_token_data());
+            return nil;
         }
     }
     return %orig;
@@ -3792,14 +3809,14 @@ static inline NSString *hex_string_from_data(NSData *data) {
 
 static void deliver_clone_apns_token_to_delegate(UIApplication *app, id<UIApplicationDelegate> delegate) {
     if (!app || !delegate || !is_tweak_active() || is_original_zalo_app()) return;
-    SEL sel = @selector(application:didRegisterForRemoteNotificationsWithDeviceToken:);
-    if ([delegate respondsToSelector:sel]) {
-        NSData *fakeToken = get_clone_fake_apns_token_data();
+    SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
+    if ([delegate respondsToSelector:failSel]) {
+        NSError *err = [NSError errorWithDomain:@"NSCocoaErrorDomain" code:3010 userInfo:@{NSLocalizedDescriptionKey: @"User denied notification permissions"}];
         #pragma clang diagnostic push
         #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [delegate application:app didRegisterForRemoteNotificationsWithDeviceToken:fakeToken];
+        [delegate application:app didFailToRegisterForRemoteNotificationsWithError:err];
         #pragma clang diagnostic pop
-        logAudit(@"PUSH-TOKEN", @"[PUSH-SPOOF] Đã nạp thành công APNs Device Token 32-byte chuẩn Profile!");
+        logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Zalo Clone: Báo lỗi từ chối thông báo didFailToRegister (Triệt tiêu 100% BadDeviceToken Apple) ✅");
     }
 }
 
@@ -3809,8 +3826,8 @@ static void deliver_clone_apns_token_to_delegate(UIApplication *app, id<UIApplic
     if (is_tweak_active() && !is_original_zalo_app()) {
         if (completionHandler) {
             dispatch_async(dispatch_get_main_queue(), ^{
-                completionHandler(YES, nil);
-                [[UIApplication sharedApplication] registerForRemoteNotifications];
+                completionHandler(NO, nil);
+                logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Zalo Clone: Giả lập người dùng bấm 'Từ chối thông báo' (granted=NO)");
             });
         }
         return;
@@ -3827,7 +3844,7 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
 
 - (NSData *)token {
     if (is_tweak_active() && !is_original_zalo_app()) {
-        return get_clone_fake_voip_token_data();
+        return nil;
     }
     NSData *orig = %orig;
     if (orig) return orig;
@@ -3841,63 +3858,31 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
     if (orig) return orig;
     NSString *assoc = objc_getAssociatedObject(self, kZTVoIPTypeAssocKey);
     if (assoc) return assoc;
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        return @"PKPushTypeVoIP";
-    }
     return orig;
 }
 
 %end
 
 static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
-    if (!registry || !delegate || !is_tweak_active() || is_original_zalo_app()) return;
-    SEL sel = @selector(pushRegistry:didUpdatePushCredentials:forType:);
-    if ([delegate respondsToSelector:sel]) {
-        Class credCls = NSClassFromString(@"PKPushCredentials");
-        if (credCls) {
-            id creds = [[credCls alloc] init];
-            if (creds) {
-                NSData *voipToken = get_clone_fake_voip_token_data();
-                objc_setAssociatedObject(creds, kZTVoIPTokenAssocKey, voipToken, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                objc_setAssociatedObject(creds, kZTVoIPTypeAssocKey, @"PKPushTypeVoIP", OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                @try {
-                    [delegate pushRegistry:registry didUpdatePushCredentials:creds forType:@"PKPushTypeVoIP"];
-                    logAudit(@"PUSH-TOKEN", @"[PUSH-SPOOF] Đã nạp thành công VoIP PushKit Token 32-byte chuẩn Profile!");
-                } @catch (NSException *e) {}
-            }
-        }
-    }
+    // Không nạp token fake cho Zalo Clone
+    return;
 }
 
 %hook PKPushRegistry
 
 - (NSData *)pushTokenForType:(NSString *)type {
     if (is_tweak_active() && !is_original_zalo_app()) {
-        return get_clone_fake_voip_token_data();
+        return nil;
     }
     return %orig;
 }
 
 - (void)setDesiredPushTypes:(NSSet *)types {
     %orig;
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            @try {
-                id regObj = (id)self;
-                id del = [regObj valueForKey:@"delegate"];
-                deliver_clone_voip_token_to_registry(regObj, del);
-            } @catch (NSException *e) {}
-        });
-    }
 }
 
 - (void)setDelegate:(id)delegate {
     %orig;
-    if (delegate && is_tweak_active() && !is_original_zalo_app()) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            deliver_clone_voip_token_to_registry(self, delegate);
-        });
-    }
 }
 
 %end
@@ -3906,18 +3891,22 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
 - (BOOL)isRegisteredForRemoteNotifications {
     if (is_tweak_active()) {
-        return YES;
+        if (!is_original_zalo_app()) {
+            return NO;
+        }
+        return %orig;
     }
     return %orig;
 }
 
 - (void)registerForRemoteNotifications {
-    %orig;
     if (is_tweak_active() && !is_original_zalo_app()) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             deliver_clone_apns_token_to_delegate(self, self.delegate);
         });
+        return;
     }
+    %orig;
 }
 
 - (void)setDelegate:(id<UIApplicationDelegate>)delegate {
@@ -3932,29 +3921,19 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                 typedef void (*OrigDidRegIMP)(id, SEL, UIApplication *, NSData *);
                 OrigDidRegIMP origImp = (OrigDidRegIMP)method_getImplementation(regMethod);
                 IMP customRegImp = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSData *realToken) {
-                    NSData *tokenToPass = realToken;
                     if (!is_original_zalo_app()) {
-                        tokenToPass = get_clone_fake_apns_token_data();
-                    } else {
-                        if (!tokenToPass || tokenToPass.length == 0) {
-                            tokenToPass = realToken;
+                        SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
+                        if ([self_del respondsToSelector:failSel]) {
+                            NSError *err = [NSError errorWithDomain:@"NSCocoaErrorDomain" code:3010 userInfo:@{NSLocalizedDescriptionKey: @"User denied notification permissions"}];
+                            [self_del application:app didFailToRegisterForRemoteNotificationsWithError:err];
                         }
+                        return;
                     }
                     if (origImp) {
-                        origImp(self_del, regSel, app, tokenToPass);
+                        origImp(self_del, regSel, app, realToken);
                     }
                 });
                 method_setImplementation(regMethod, customRegImp);
-            }
-            if (!is_original_zalo_app()) {
-                SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
-                Method m = class_getInstanceMethod(delClass, failSel);
-                if (m) {
-                    IMP noop = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSError *err) {
-                        logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-SPOOF] Đã chặn thông báo lỗi APNs của iOS: %@", err.localizedDescription]);
-                    });
-                    method_setImplementation(m, noop);
-                }
             }
         }
         if (!is_original_zalo_app()) {
@@ -4730,6 +4709,13 @@ static void swizzle_session_delegate_class(Class cls) {
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
     request = sanitize_outbound_zalo_request(request, NULL);
+    if (is_tweak_active() && !is_original_zalo_app() && request && request.URL) {
+        NSString *absUrl = request.URL.absoluteString;
+        if ([absUrl containsString:@"talk-m.zaloapp.com/api/fcm"] && [absUrl containsString:@"method=submitToken"]) {
+            logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
+            return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]]);
+        }
+    }
     NSURLSessionDataTask *task = %orig(request);
     if (task && request) {
         objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -4764,6 +4750,20 @@ static void swizzle_session_delegate_class(Class cls) {
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
     request = sanitize_outbound_zalo_request(request, NULL);
+    if (is_tweak_active() && !is_original_zalo_app() && request && request.URL) {
+        NSString *absUrl = request.URL.absoluteString;
+        if ([absUrl containsString:@"talk-m.zaloapp.com/api/fcm"] && [absUrl containsString:@"method=submitToken"]) {
+            logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
+            NSData *mockResp = [@"{\"error_code\":0,\"error_message\":\"Successful.\",\"data\":1}" dataUsingEncoding:NSUTF8StringEncoding];
+            NSHTTPURLResponse *mockHttp = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type": @"application/json"}];
+            if (completionHandler) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    completionHandler(mockResp, mockHttp, nil);
+                });
+            }
+            return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]], nil);
+        }
+    }
     NSDate *startDate = [NSDate date];
     NSData *reqBody = request.HTTPBody;
 
@@ -5316,14 +5316,11 @@ static void __attribute__((unused)) scan_zalo_security_modules_async(void) {
                       awakeUp, awakeUp / 3600.0,
                       s.diskTotalSize / (1000000000ULL)]);
 
-            NSData *apnsPreviewData = get_clone_fake_apns_token_data();
-            NSData *voipPreviewData = get_clone_fake_voip_token_data();
-            const uint8_t *ab = (const uint8_t *)[apnsPreviewData bytes];
-            const uint8_t *vb = (const uint8_t *)[voipPreviewData bytes];
-            NSString *apnsHex = (apnsPreviewData.length >= 6) ? [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x...", ab[0], ab[1], ab[2], ab[3], ab[4], ab[5]] : @"N/A";
-            NSString *voipHex = (voipPreviewData.length >= 6) ? [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x...", vb[0], vb[1], vb[2], vb[3], vb[4], vb[5]] : @"N/A";
-            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] APNs(32B): %@ | VoIP(32B): %@ | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001",
-                      apnsHex, voipHex]);
+            if (!is_original_zalo_app()) {
+                logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Clone: Đã chặn Token APNs Fake & Triệt tiêu submitToken (Chống Apple BadDeviceToken ban 3h) | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
+            } else {
+                logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Gốc: Bảo toàn Token Apple Gateway | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
+            }
         }
     }
 }

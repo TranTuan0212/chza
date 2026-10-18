@@ -723,8 +723,11 @@ UIViewController *ZTGetTopViewController(void) {
                            ([currentRegion isEqualToString:@"PL"] ? @"🇵🇱 Ba Lan (+48)" : @"🇻🇳 Việt Nam (+84)"));
 
     NSString *oldIdfvStr = (s.lastWipedIDFV.length > 8) ? [NSString stringWithFormat:@"%@...", [s.lastWipedIDFV substringToIndex:8]] : (s.lastWipedIDFV.length > 0 ? s.lastWipedIDFV : @"Chưa có (Lần đầu)");
-    NSString *apnsHex = zt_preview_sha256_token_hex(@"APNS", s.spoofedIDFV);
-    NSString *voipHex = zt_preview_sha256_token_hex(@"VOIP", s.spoofedIDFV);
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    NSString *mainPath = [[NSBundle mainBundle] bundlePath];
+    BOOL isGenuineZalo = [bundleId isEqualToString:@"vn.com.vng.zingalo"] || [mainPath containsString:@"Zalo.app"];
+    NSString *apnsHex = isGenuineZalo ? @"Token Apple Gốc (Bảo toàn) ✅" : @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
+    NSString *voipHex = isGenuineZalo ? @"Token VoIP Gốc (Bảo toàn) ✅" : @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
 
     uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
     uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
@@ -1896,14 +1899,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         info.apnsPushStatus = @"Bảo toàn Token Apple Gốc";
         info.voipPushStatus = @"Bảo toàn Token VoIP Gốc";
         info.pushTokenPassed = YES;
-    } else if (s.hasConfiguredProfile && s.spoofedIDFV.length > 0) {
-        info.apnsPushStatus = zt_preview_sha256_token_hex(@"APNS", s.spoofedIDFV);
-        info.voipPushStatus = zt_preview_sha256_token_hex(@"VOIP", s.spoofedIDFV);
-        info.pushTokenPassed = YES;
     } else {
-        info.apnsPushStatus = @"Chưa cấp (Cần Wipe)";
-        info.voipPushStatus = @"Chưa cấp (Cần Wipe)";
-        info.pushTokenPassed = NO;
+        info.apnsPushStatus = @"Đã vô hiệu hoá Token Fake (Bảo vệ chống ban 3h) ✅";
+        info.voipPushStatus = @"Đã vô hiệu hoá Token Fake (Bảo vệ chống ban 3h) ✅";
+        info.pushTokenPassed = YES;
     }
 
     NSString *liveMNO = s.carrierName ?: @"Viettel";
