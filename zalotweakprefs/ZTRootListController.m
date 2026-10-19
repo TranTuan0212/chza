@@ -1479,6 +1479,9 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 #pragma mark - Audit Log Actions
 
 static NSString *findAuditLogPath(void) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile/Documents/ZaloAudit.log"]) {
+        return @"/var/mobile/Documents/ZaloAudit.log";
+    }
     NSString *home = NSHomeDirectory();
     if (home) {
         NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
@@ -1492,7 +1495,7 @@ static NSString *findAuditLogPath(void) {
             return zaloDoc;
         }
     }
-    return @"/var/mobile/Library/Preferences/ZaloAudit.log";
+    return @"/var/mobile/Documents/ZaloAudit.log";
 }
 
 - (void)viewAuditLogAction:(PSSpecifier *)specifier {
@@ -1814,6 +1817,9 @@ static NSString *findAuditLogPath(void) {
 }
 
 static NSString *findHarPath(void) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile/Documents/ZaloTraffic.har"]) {
+        return @"/var/mobile/Documents/ZaloTraffic.har";
+    }
     NSString *home = NSHomeDirectory();
     if (home) {
         NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
@@ -1827,7 +1833,7 @@ static NSString *findHarPath(void) {
             return zaloDoc;
         }
     }
-    return @"/var/mobile/Library/Preferences/ZaloTraffic.har";
+    return @"/var/mobile/Documents/ZaloTraffic.har";
 }
 
 - (void)exportHarAction:(PSSpecifier *)specifier {
