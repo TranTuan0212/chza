@@ -4008,11 +4008,29 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 }
 
 - (void)registerForRemoteNotifications {
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            deliver_clone_apns_token_to_delegate(self, self.delegate);
-        });
-        return;
+    if (is_tweak_active()) {
+        if (!is_original_zalo_app()) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                deliver_clone_apns_token_to_delegate(self, self.delegate);
+            });
+            return;
+        }
+
+        static BOOL s_unregisteredOnceAfterWipe = NO;
+        if (!s_unregisteredOnceAfterWipe) {
+            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
+            if ([dict[@"wipePending"] boolValue]) {
+                s_unregisteredOnceAfterWipe = YES;
+                logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd để ép Apple cấp Token mới...");
+                if ([self respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
+                    [self unregisterForRemoteNotifications];
+                }
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    %orig;
+                });
+                return;
+            }
+        }
     }
     %orig;
 }
