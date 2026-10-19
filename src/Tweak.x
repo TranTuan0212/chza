@@ -477,6 +477,14 @@ static NSString *get_real_os_version(void) {
     return @"21F90";
 }
 
+static NSString *get_real_product_version(void) {
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/System/Library/CoreServices/SystemVersion.plist"];
+    if (dict && dict[@"ProductVersion"]) {
+        return [dict[@"ProductVersion"] copy];
+    }
+    return @"15.8.3";
+}
+
 static uint64_t get_real_disk_total_size(void) {
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
     NSNumber *total = attrs[NSFileSystemSize];
@@ -793,13 +801,15 @@ static void purge_entire_sandbox_safely(void) {
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
         self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
         self.deviceName = dict[@"deviceName"] ?: @"iPhone";
-        self.systemVersion = dict[@"systemVersion"] ?: [[UIDevice currentDevice] systemVersion];
+        self.systemVersion = dict[@"systemVersion"] ?: get_real_product_version();
         self.kernOsVersion = dict[@"kernOsVersion"] ?: get_real_os_version();
         self.ncpu = [dict[@"ncpu"] unsignedIntValue] ?: (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
         self.memsize = [dict[@"memsize"] unsignedLongLongValue] ?: [[NSProcessInfo processInfo] physicalMemory];
-        self.screenWidth = [dict[@"screenWidth"] doubleValue] ?: [UIScreen mainScreen].bounds.size.width;
-        self.screenHeight = [dict[@"screenHeight"] doubleValue] ?: [UIScreen mainScreen].bounds.size.height;
-        self.screenScale = [dict[@"screenScale"] doubleValue] ?: [UIScreen mainScreen].scale;
+        CGFloat defW = 375.0, defH = 667.0, defS = 2.0;
+        [ZTDeviceProfile getScreenDimensionsForMachine:self.deviceMachine width:&defW height:&defH scale:&defS];
+        self.screenWidth = [dict[@"screenWidth"] doubleValue] ?: defW;
+        self.screenHeight = [dict[@"screenHeight"] doubleValue] ?: defH;
+        self.screenScale = [dict[@"screenScale"] doubleValue] ?: defS;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.birthTimeSec = [dict[@"birthTimeSec"] unsignedLongLongValue] ?: 0;
         self.autoSyncTimezoneWithIP = dict[@"autoSyncTimezoneWithIP"] != nil ? [dict[@"autoSyncTimezoneWithIP"] boolValue] : YES;
@@ -944,14 +954,15 @@ static void purge_entire_sandbox_safely(void) {
         self.deviceMachine = get_real_hardware_machine();
         self.deviceModel = get_real_hardware_model();
         self.deviceName = @"iPhone";
-        self.systemVersion = [[UIDevice currentDevice] systemVersion];
+        self.systemVersion = get_real_product_version();
         self.kernOsVersion = get_real_os_version();
         self.ncpu = (uint32_t)[[NSProcessInfo processInfo] activeProcessorCount];
         self.memsize = [[NSProcessInfo processInfo] physicalMemory];
-        CGRect bounds = [UIScreen mainScreen].bounds;
-        self.screenWidth = bounds.size.width;
-        self.screenHeight = bounds.size.height;
-        self.screenScale = [UIScreen mainScreen].scale;
+        CGFloat defW = 375.0, defH = 667.0, defS = 2.0;
+        [ZTDeviceProfile getScreenDimensionsForMachine:self.deviceMachine width:&defW height:&defH scale:&defS];
+        self.screenWidth = defW;
+        self.screenHeight = defH;
+        self.screenScale = defS;
         self.bootTimeSec = 0;
         self.birthTimeSec = 0;
         self.autoSyncTimezoneWithIP = YES;
@@ -5486,12 +5497,17 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
             chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
         }
 
-        // Khởi tạo In-App Floating Menu (Chỉ hiện khi là Zalo Clone/Sideload hoặc người dùng bật trong Cài đặt, và KHÔNG PHẢI App Extension)
+        // Khởi tạo In-App Floating Menu (Chỉ nạp khi app đã nạp xong UIKit và nhận thông báo DidFinishLaunching)
         if (![[NSBundle mainBundle].bundlePath containsString:@".appex"]) {
-            if ([ZTSettings sharedSettings].showFloatingMenu) {
-                [[ZTMenuManager sharedManager] setupInAppMenu];
-            }
-            start_battery_drain_timer_if_needed();
+            [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+                                                              object:nil
+                                                               queue:[NSOperationQueue mainQueue]
+                                                          usingBlock:^(NSNotification * _Nonnull note) {
+                if ([ZTSettings sharedSettings].showFloatingMenu) {
+                    [[ZTMenuManager sharedManager] setupInAppMenu];
+                }
+                start_battery_drain_timer_if_needed();
+            }];
         }
 
         // Ghi nhận dòng kiểm toán khởi động ban đầu

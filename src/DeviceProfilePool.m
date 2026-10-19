@@ -176,32 +176,34 @@ NSString *generate_apple_mac(void) {
 static NSString *detect_real_system_machine(void) {
     char buf[64] = {0};
     size_t size = sizeof(buf);
-    sysctlbyname("hw.machine", buf, &size, NULL, 0);
-    if (strlen(buf) > 0) {
+    if (sysctlbyname("hw.machine", buf, &size, NULL, 0) == 0 && strlen(buf) > 0) {
         return [NSString stringWithUTF8String:buf];
     }
     struct utsname u;
     if (uname(&u) == 0 && strlen(u.machine) > 0) {
         return [NSString stringWithUTF8String:u.machine];
     }
-    // Đối chiếu theo độ phân giải màn hình vật lý thực tế của thiết bị
-    CGRect b = [UIScreen mainScreen].bounds;
-    CGFloat s = [UIScreen mainScreen].scale;
-    if (b.size.width == 375 && b.size.height == 667 && s == 2.0) {
-        return @"iPhone9,1"; // Màn iPhone 7 / 8 / SE 2 / SE 3
-    } else if (b.size.width == 390 && b.size.height == 844 && s == 3.0) {
-        return @"iPhone14,5"; // Màn iPhone 12 / 12 Pro / 13 / 13 Pro / 14
-    } else if (b.size.width == 414 && b.size.height == 896 && s == 2.0) {
-        return @"iPhone12,1"; // Màn iPhone 11 / XR
-    } else if (b.size.width == 414 && b.size.height == 736 && s == 3.0) {
-        return @"iPhone10,2"; // Màn iPhone 7 Plus / 8 Plus
-    } else if (b.size.width == 428 && b.size.height == 926 && s == 3.0) {
-        return @"iPhone14,3"; // Màn iPhone 13 Pro Max / 14 Plus
-    }
-    return @"iPhone9,1";
+    return [NSString stringWithUTF8String:kAppleDeviceSpecs[0].machine];
 }
 
 @implementation ZTDeviceProfile
+
++ (void)getScreenDimensionsForMachine:(NSString *)machine width:(CGFloat *)outW height:(CGFloat *)outH scale:(CGFloat *)outS {
+    size_t specCount = sizeof(kAppleDeviceSpecs) / sizeof(kAppleDeviceSpecs[0]);
+    if (machine && machine.length > 0) {
+        for (size_t i = 0; i < specCount; i++) {
+            if ([machine isEqualToString:[NSString stringWithUTF8String:kAppleDeviceSpecs[i].machine]]) {
+                if (outW) *outW = kAppleDeviceSpecs[i].width;
+                if (outH) *outH = kAppleDeviceSpecs[i].height;
+                if (outS) *outS = kAppleDeviceSpecs[i].scale;
+                return;
+            }
+        }
+    }
+    if (outW) *outW = kAppleDeviceSpecs[0].width;
+    if (outH) *outH = kAppleDeviceSpecs[0].height;
+    if (outS) *outS = kAppleDeviceSpecs[0].scale;
+}
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region {
     return [self generateRandomProfileForRegion:region baseMachine:nil preferredCarrier:nil];
@@ -226,20 +228,9 @@ static NSString *detect_real_system_machine(void) {
         }
     }
 
-    // Nếu không khớp trực tiếp theo tên machine, dò theo kích thước màn hình vật lý (chỉ khi UIApplication đã khởi chạy)
+    // Nếu không khớp trực tiếp, sử dụng profile đầu tiên làm chuẩn
     if (matchedBaseSpec == NULL) {
-        if ([NSThread isMainThread] && [UIApplication sharedApplication] != nil) {
-            CGRect scrBounds = [UIScreen mainScreen].bounds;
-            CGFloat scrScale = [UIScreen mainScreen].scale;
-            for (size_t i = 0; i < specCount; i++) {
-                if (fabs(kAppleDeviceSpecs[i].width - scrBounds.size.width) < 1.0 &&
-                    fabs(kAppleDeviceSpecs[i].height - scrBounds.size.height) < 1.0 &&
-                    fabs(kAppleDeviceSpecs[i].scale - scrScale) < 0.1) {
-                    matchedBaseSpec = &kAppleDeviceSpecs[i];
-                    break;
-                }
-            }
-        }
+        matchedBaseSpec = &kAppleDeviceSpecs[0];
     }
 
     NSMutableArray *candidateSpecs = [NSMutableArray array];

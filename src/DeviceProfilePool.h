@@ -41,6 +41,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region;
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(nullable NSString *)baseMachine;
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(nullable NSString *)baseMachine preferredCarrier:(nullable NSString *)preferredCarrier;
++ (void)getScreenDimensionsForMachine:(NSString *)machine width:(CGFloat *)outW height:(CGFloat *)outH scale:(CGFloat *)outS;
 
 @end
 
