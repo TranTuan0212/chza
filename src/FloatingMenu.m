@@ -1666,14 +1666,17 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
 }
 
 - (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top {
-    UIAlertController *loading = [UIAlertController alertControllerWithTitle:@"🧹 Đang Dọn Dẹp Dữ Liệu..."
-                                                                   message:@"Đang ghi nhận IP mạng 4G trước khi wipe và làm sạch sandbox..."
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [top presentViewController:loading animated:YES completion:^{
+    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"🧹 ĐANG DEEP WIPE HỆ THỐNG..."
+                                                                           message:@"[0%] Đang ghi nhận IP mạng..."
+                                                                    preferredStyle:UIAlertControllerStyleAlert];
+    [top presentViewController:progressAlert animated:YES completion:^{
         fetch_public_ip(^(NSString *currentIP) {
-            [loading dismissViewControllerAnimated:YES completion:^{
-                [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP];
-            }];
+            dispatch_sync(dispatch_get_main_queue(), ^{
+                progressAlert.message = @"[15%] 📡 Đang hủy đăng ký push & Drain RunLoop (150ms)...";
+            });
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:nil progressAlert:progressAlert];
+            });
         });
     }];
 }
@@ -1736,10 +1739,14 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP {
-    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:nil];
+    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:nil progressAlert:nil];
 }
 
 - (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP targetTimeZone:(nullable NSString *)targetTimeZone {
+    [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:targetTimeZone progressAlert:nil];
+}
+
+- (void)performInAppDeepWipeWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier currentIP:(NSString *)currentIP targetTimeZone:(nullable NSString *)targetTimeZone progressAlert:(nullable UIAlertController *)progressAlert {
     if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
         return;
     }
@@ -1762,12 +1769,22 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     } else {
         dispatch_sync(dispatch_get_main_queue(), doUnregisterPushBlock);
     }
+    if (progressAlert) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = @"[30%] 📡 Đã gửi unregister push & Xả RunLoop 150ms...";
+        });
+    }
 
     // 1. Xóa Clipboard để triệt tiêu mọi token tracking
     [UIPasteboard generalPasteboard].items = @[];
     [UIPasteboard generalPasteboard].string = @"";
     
     // 2. Xóa sạch Keychain của Zalo trong sandbox này
+    if (progressAlert) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = @"[50%] 🔐 Đang làm sạch Keychain & NSUserDefaults App Suites...";
+        });
+    }
     NSArray *secClasses = @[
         (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecClassInternetPassword,
@@ -1891,6 +1908,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     
+    if (progressAlert) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = @"[75%] 🗂️ Đã làm sạch Sandbox Documents, Library & App Groups...";
+        });
+    }
+    
     // 5. Đánh dấu Cold-Boot: Sinh ngay hồ sơ mới + lưu khu vực SIM, IP wipe và cờ needsNewProfile + needsSandboxPurge
     ZTSettings *settings = [ZTSettings sharedSettings];
     NSString *previousIDFV = settings.spoofedIDFV;
@@ -1945,6 +1968,12 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
     sever_all_network_sockets_immediately();
+    if (progressAlert) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = @"[95%] 🎲 Đã sinh Profile mới & Ngắt kết nối socket TCP...";
+        });
+        [NSThread sleepForTimeInterval:0.15];
+    }
 
     // 7. Đóng app êm ái: Suspend trước để SpringBoard thu nhỏ scene về nền, sau đó exit(0) tránh lỗi "Scene client is invalid"
     UIViewController *top = get_top_view_controller();
@@ -1994,15 +2023,33 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         cleanExitBlock();
     }]];
 
-    if (top) {
-        [top presentViewController:doneAlert animated:YES completion:^{
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                cleanExitBlock();
-            });
-        }];
-    } else {
-        cleanExitBlock();
+    if (progressAlert) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = @"[100%] 🎉 Hoàn tất Deep Wipe!";
+        });
+        [NSThread sleepForTimeInterval:0.2];
     }
+
+    void (^presentCompletionBlock)(void) = ^{
+        UIViewController *presenter = get_top_view_controller() ?: top;
+        if (presenter) {
+            [presenter presentViewController:doneAlert animated:YES completion:^{
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    cleanExitBlock();
+                });
+            }];
+        } else {
+            cleanExitBlock();
+        }
+    };
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (progressAlert && progressAlert.presentingViewController) {
+            [progressAlert dismissViewControllerAnimated:YES completion:presentCompletionBlock];
+        } else {
+            presentCompletionBlock();
+        }
+    });
 }
 
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top {

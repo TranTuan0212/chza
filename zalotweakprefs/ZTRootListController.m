@@ -417,7 +417,27 @@ static void kill_all_zalo_processes(void) {
     [NSThread sleepForTimeInterval:0.3];
 }
 
-static void safe_purge_apple_push_cache(void) {
+static BOOL ensure_root_privileges(NSMutableArray<NSString *> *errors) {
+    if (getuid() != 0) {
+        setuid(0);
+        seteuid(0);
+        setgid(0);
+        setegid(0);
+    }
+    if (getuid() == 0 || geteuid() == 0) {
+        NSLog(@"[ZaloTweak-Root] ✅ Đã kích hoạt quyền root thành công! (UID: %d, EUID: %d)", getuid(), geteuid());
+        return YES;
+    } else {
+        NSString *err = [NSString stringWithFormat:@"[Quyền Root] Chưa nâng được lên UID 0 (Hiện tại UID: %d, EUID: %d - errno %d: %s)", getuid(), geteuid(), errno, strerror(errno)];
+        NSLog(@"[ZaloTweak-Root] ⚠️ %@", err);
+        if (errors) [errors addObject:err];
+        return NO;
+    }
+}
+
+static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
+    ensure_root_privileges(errors);
+
     // 1. Dọn dẹp an toàn trong com.apple.apsd.plist (Chỉ xóa riêng token của Zalo, không làm hỏng app khác)
     NSMutableArray *possibleApsdPaths = [NSMutableArray arrayWithArray:@[
         @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
@@ -440,7 +460,9 @@ static void safe_purge_apple_push_cache(void) {
 
         // Kiểm tra quyền ghi trước khi xử lý
         if (access([apsdPath UTF8String], W_OK) != 0) {
-            NSLog(@"[ZaloTweak-APNs] Không có quyền ghi vào %@, bỏ qua an toàn.", apsdPath);
+            NSString *err = [NSString stringWithFormat:@"[apsd.plist] Quyền ghi bị từ chối: %@ (errno %d: %s)", apsdPath, errno, strerror(errno)];
+            NSLog(@"[ZaloTweak-APNs] %@", err);
+            if (errors) [errors addObject:err];
             continue;
         }
 
@@ -488,6 +510,9 @@ static void safe_purge_apple_push_cache(void) {
                 if (outData) {
                     BOOL writeOk = [outData writeToFile:apsdPath atomically:NO];
                     NSLog(@"[ZaloTweak-APNs] Ghi in-place apsd.plist (%@): %d", apsdPath, writeOk);
+                    if (!writeOk && errors) {
+                        [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Ghi thất bại vào %@", apsdPath]];
+                    }
                 }
             }
         }
@@ -506,14 +531,20 @@ static void safe_purge_apple_push_cache(void) {
             for (NSString *bid in get_known_zalo_bundle_ids()) {
                 if ([file containsString:bid]) {
                     NSString *target = [psDir stringByAppendingPathComponent:file];
-                    [fm removeItemAtPath:target error:nil];
-                    NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
+                    NSError *rmErr = nil;
+                    if (![fm removeItemAtPath:target error:&rmErr]) {
+                        NSString *err = [NSString stringWithFormat:@"[PushStore] Lỗi xóa file %@: %@", file, rmErr.localizedDescription];
+                        NSLog(@"[ZaloTweak-APNs] %@", err);
+                        if (errors) [errors addObject:err];
+                    } else {
+                        NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
+                    }
                 }
             }
         }
     }
 
-    // 2. Khởi động lại daemon apsd an toàn
+    // 2. Khởi động lại daemon apsd an toàn (Ưu tiên quyền root qua posix_spawn)
     BOOL restarted = NO;
     const char *launchctlPaths[] = {
         "/var/jb/bin/launchctl",
@@ -568,7 +599,11 @@ static void safe_purge_apple_push_cache(void) {
                     for (int i = 0; i < count; i++) {
                         const char *name = procs[i].kp_proc.p_comm;
                         if (name && (strcmp(name, "apsd") == 0 || strcmp(name, "applepushserviced") == 0)) {
-                            kill(procs[i].kp_proc.p_pid, SIGKILL);
+                            if (kill(procs[i].kp_proc.p_pid, SIGKILL) == 0) {
+                                restarted = YES;
+                            } else if (errors) {
+                                [errors addObject:[NSString stringWithFormat:@"[apsd] Không thể kill PID %d (errno %d: %s)", procs[i].kp_proc.p_pid, errno, strerror(errno)]];
+                            }
                         }
                     }
                 }
@@ -576,9 +611,12 @@ static void safe_purge_apple_push_cache(void) {
             }
         }
     }
+    if (!restarted && errors) {
+        [errors addObject:@"[apsd] Không tìm thấy hoặc không thể khởi động lại daemon apsd"];
+    }
 }
 
-static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot) {
+static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot, NSMutableArray<NSString *> *errors) {
     if (!dirPath || !containerRoot) return;
     char a[PATH_MAX], b[PATH_MAX];
     if (!realpath(dirPath.fileSystemRepresentation, a) ||
@@ -602,7 +640,12 @@ static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot) 
 
     NSError *error = nil;
     NSArray *items = [fm contentsOfDirectoryAtPath:realDir error:&error];
-    if (error || !items) return;
+    if (error || !items) {
+        if (error && errors) {
+            [errors addObject:[NSString stringWithFormat:@"[Đọc Thư Mục] %@: %@", realDir, error.localizedDescription]];
+        }
+        return;
+    }
 
     for (NSString *item in items) {
         if ([item hasPrefix:@".com.apple.mobile_container_manager"]) {
@@ -619,7 +662,12 @@ static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot) 
             continue;
         }
         NSString *fullPath = [realDir stringByAppendingPathComponent:item];
-        [fm removeItemAtPath:fullPath error:nil];
+        NSError *rmErr = nil;
+        if (![fm removeItemAtPath:fullPath error:&rmErr]) {
+            if (rmErr && errors) {
+                [errors addObject:[NSString stringWithFormat:@"[Xóa Sandbox] %@: %@", item, rmErr.localizedDescription]];
+            }
+        }
     }
 }
 
@@ -1214,150 +1262,206 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 }
 
 - (void)performWipeAndApplyWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier {
-    // 1. Tắt toàn bộ tiến trình
-    kill_all_zalo_processes();
+    NSMutableArray<NSString *> *errors = [NSMutableArray array];
 
-    // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
-    safe_purge_apple_push_cache();
-
-    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites của Zalo
-    NSArray *suitesToPurge = @[
-        @"group.vn.com.vng.zingalo",
-        @"group.com.vng.zalo",
-        @"group.com.zing.zalo",
-        @"com.zing.zalo.chatMigrateStore",
-        @"vn.com.vng.zingalo.zalosdk",
-        @"com.zing.zalo",
-        @"vn.com.vng.zingalo"
-    ];
-    for (NSString *suite in suitesToPurge) {
-        NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:suite];
-        if (ud) {
-            NSDictionary *d = [ud dictionaryRepresentation];
-            for (NSString *k in d.allKeys) {
-                [ud removeObjectForKey:k];
-            }
-            [ud synchronize];
-        }
-    }
-
-    // 4. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
-    NSArray *dataContainers = get_zalo_data_container_paths();
-    for (NSString *dataContainer in dataContainers) {
-        if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
-
-        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"], dataContainer);
-        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"], dataContainer);
-
-        NSString *libraryDir = [dataContainer stringByAppendingPathComponent:@"Library"];
-        wipe_directory_contents(libraryDir, dataContainer);
-
-        // Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị lỗi đọc/ghi khi vừa khởi động
-        NSFileManager *fm = [NSFileManager defaultManager];
-        [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"Documents"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"tmp"] withIntermediateDirectories:YES attributes:nil error:nil];
-    }
-
-    // 5. Xóa sạch Shared App Group
-    NSArray *groupContainers = get_zalo_group_container_paths();
-    for (NSString *groupPath in groupContainers) {
-        if (!is_valid_zalo_sandbox_path(groupPath)) continue;
-        wipe_directory_contents(groupPath, groupPath);
-
-        // Tái tạo khung thư mục rỗng chuẩn bên trong App Group để NSUserDefaults và SQLite của Zalo không bị crash
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSString *grpLib = [groupPath stringByAppendingPathComponent:@"Library"];
-        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
-        [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
-    }
-
-    // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
-    NSMutableDictionary *dict = load_current_mutable_prefs_dict();
-
-    NSString *oldIDFV = dict[@"spoofedIDFV"];
-    if (oldIDFV && oldIDFV.length > 0) {
-        dict[@"lastWipedIDFV"] = oldIDFV;
-    }
-    NSString *oldAPNs = dict[@"currentAPNsToken"] ?: dict[@"lastKnownAPNsToken"];
-    if (oldAPNs && oldAPNs.length > 0) {
-        dict[@"lastWipedAPNsToken"] = oldAPNs;
-        NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né: %@", oldAPNs);
-    }
-    dict[@"currentAPNsToken"] = @"";
-    dict[@"apnsRotatedStatus"] = @"WAITING";
-    dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
-
-    NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
-    dict[@"regionMode"] = chosenRegion;
-    dict[@"preferredCarrier"] = preferredCarrier ?: @"";
-    ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine() preferredCarrier:preferredCarrier];
-
-    dict[@"enabled"] = @(YES);
-    dict[@"hasConfiguredProfile"] = @(YES);
-    dict[@"deviceMachine"] = p.deviceMachine;
-    dict[@"deviceModel"] = p.deviceModel;
-    dict[@"ncpu"] = @(p.ncpu);
-    dict[@"memsize"] = @(p.memsize);
-    dict[@"screenWidth"] = @(p.screenWidth);
-    dict[@"screenHeight"] = @(p.screenHeight);
-    dict[@"screenScale"] = @(p.screenScale);
-    dict[@"systemVersion"] = p.systemVersion;
-    dict[@"kernOsVersion"] = p.kernOsVersion;
-    dict[@"diskTotalSize"] = @(p.diskTotalSize);
-    dict[@"diskFreeSize"] = @(p.diskFreeSize);
-    dict[@"deviceName"] = p.deviceName;
-    dict[@"carrierName"] = p.carrierName;
-    dict[@"carrierMCC"] = p.carrierMCC;
-    dict[@"carrierMNC"] = p.carrierMNC;
-    dict[@"carrierCountryCode"] = p.carrierCountryCode;
-    if (p.actualCarrier.length > 0) {
-        dict[@"preferredCarrier"] = p.actualCarrier;
-    }
-    dict[@"batteryLevel"] = @(p.batteryLevel);
-    dict[@"batteryState"] = @(p.batteryState);
-    dict[@"bootTimeSec"] = @(p.bootTimeSec);
-    dict[@"bootSessionUUID"] = p.bootSessionUUID;
-    dict[@"spoofedIDFV"] = p.spoofedIDFV;
-    dict[@"spoofedIDFA"] = @"00000000-0000-0000-0000-000000000000";
-    dict[@"profileId"] = p.profileId;
-    dict[@"spoofedSerial"] = p.spoofedSerial;
-    dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
-    dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
-
-    dict[@"wipePending"] = @(YES);
-    dict[@"needsSandboxPurge"] = @(YES);
-
-    // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
-    save_dict_to_all_locations(dict);
-    sync_license_to_all_locations();
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
-
-    // Truy vấn và lưu IP hiện tại để đối chiếu checklist
-    fetch_public_ip_prefs(^(NSString *ip) {
-        if (ip.length > 0 && ![ip isEqualToString:@"Không xác định"]) {
-            NSMutableDictionary *d = load_current_mutable_prefs_dict();
-            d[@"lastWipedIP"] = ip;
-            save_dict_to_all_locations(d);
-        }
-    });
-
-    // Cập nhật giao diện Settings
-    [self reloadSpecifiers];
-
-    // Thông báo hoàn tất
-    NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo!\n\n- IDFV Mới: %@\n- Serial Number: %@\n- MAC Wi-Fi: %@\n- SIM & Khu Vực: %@\n- Keychain & WebKit: Phân vùng mới riêng biệt\n- Uptime: Cấp Boot Time ngẫu nhiên\n\n✈️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) trong 5 giây để đổi IP 4G trước khi mở lại Zalo.", p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName];
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 Hoàn Tất Tuyệt Đối"
-                                                                           message:msg
+    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"⏳ ĐANG DEEP WIPE HỆ THỐNG..."
+                                                                           message:@"[0%] Đang khởi động chu trình dọn dẹp..."
                                                                     preferredStyle:UIAlertControllerStyleAlert];
-        [doneAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:doneAlert animated:YES completion:nil];
-    });
+
+    void (^updateProgress)(NSString *, double) = ^(NSString *msg, double delaySec) {
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = msg;
+        });
+        if (delaySec > 0) {
+            [NSThread sleepForTimeInterval:delaySec];
+        }
+    };
+
+    [self presentViewController:progressAlert animated:YES completion:^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            // 1. Nâng quyền Root (UID 0) ngay từ đầu & Tắt sạch tiến trình Zalo
+            ensure_root_privileges(errors);
+            kill_all_zalo_processes();
+            updateProgress(@"[15%] 🛡️ Đã kích hoạt quyền Root (UID 0) & Đã tắt toàn bộ tiến trình Zalo...", 0.2);
+
+            // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
+            safe_purge_apple_push_cache(errors);
+            updateProgress(@"[35%] 🔄 Đã purge cache com.apple.apsd.plist & Khởi động lại daemon apsd...", 0.25);
+
+            // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites của Zalo
+            NSArray *suitesToPurge = @[
+                @"group.vn.com.vng.zingalo",
+                @"group.com.vng.zalo",
+                @"group.com.zing.zalo",
+                @"com.zing.zalo.chatMigrateStore",
+                @"vn.com.vng.zingalo.zalosdk",
+                @"com.zing.zalo",
+                @"vn.com.vng.zingalo"
+            ];
+            for (NSString *suite in suitesToPurge) {
+                NSUserDefaults *ud = [[NSUserDefaults alloc] initWithSuiteName:suite];
+                if (ud) {
+                    NSDictionary *d = [ud dictionaryRepresentation];
+                    for (NSString *k in d.allKeys) {
+                        [ud removeObjectForKey:k];
+                    }
+                    [ud synchronize];
+                }
+            }
+            updateProgress(@"[55%] 🧹 Đã dọn sạch NSUserDefaults App Suites của Zalo...", 0.2);
+
+            // 4. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
+            NSArray *dataContainers = get_zalo_data_container_paths();
+            for (NSString *dataContainer in dataContainers) {
+                if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
+
+                wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"], dataContainer, errors);
+                wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"], dataContainer, errors);
+
+                NSString *libraryDir = [dataContainer stringByAppendingPathComponent:@"Library"];
+                wipe_directory_contents(libraryDir, dataContainer, errors);
+
+                // Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị lỗi đọc/ghi khi vừa khởi động
+                NSFileManager *fm = [NSFileManager defaultManager];
+                [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[libraryDir stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"Documents"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"tmp"] withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+
+            // 5. Xóa sạch Shared App Group
+            NSArray *groupContainers = get_zalo_group_container_paths();
+            for (NSString *groupPath in groupContainers) {
+                if (!is_valid_zalo_sandbox_path(groupPath)) continue;
+                wipe_directory_contents(groupPath, groupPath, errors);
+
+                // Tái tạo khung thư mục rỗng chuẩn bên trong App Group để NSUserDefaults và SQLite của Zalo không bị crash
+                NSFileManager *fm = [NSFileManager defaultManager];
+                NSString *grpLib = [groupPath stringByAppendingPathComponent:@"Library"];
+                [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
+                [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
+            }
+            updateProgress(@"[75%] 🗂️ Đã làm sạch toàn bộ Sandbox Data Containers & App Groups...", 0.2);
+
+            // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
+            NSMutableDictionary *dict = load_current_mutable_prefs_dict();
+
+            NSString *oldIDFV = dict[@"spoofedIDFV"];
+            if (oldIDFV && oldIDFV.length > 0) {
+                dict[@"lastWipedIDFV"] = oldIDFV;
+            }
+            NSString *oldAPNs = dict[@"currentAPNsToken"] ?: dict[@"lastKnownAPNsToken"];
+            if (oldAPNs && oldAPNs.length > 0) {
+                dict[@"lastWipedAPNsToken"] = oldAPNs;
+                NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né: %@", oldAPNs);
+            }
+            dict[@"currentAPNsToken"] = @"";
+            dict[@"apnsRotatedStatus"] = @"WAITING";
+            dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
+
+            NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
+            dict[@"regionMode"] = chosenRegion;
+            dict[@"preferredCarrier"] = preferredCarrier ?: @"";
+            ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine() preferredCarrier:preferredCarrier];
+
+            dict[@"enabled"] = @(YES);
+            dict[@"hasConfiguredProfile"] = @(YES);
+            dict[@"deviceMachine"] = p.deviceMachine;
+            dict[@"deviceModel"] = p.deviceModel;
+            dict[@"ncpu"] = @(p.ncpu);
+            dict[@"memsize"] = @(p.memsize);
+            dict[@"screenWidth"] = @(p.screenWidth);
+            dict[@"screenHeight"] = @(p.screenHeight);
+            dict[@"screenScale"] = @(p.screenScale);
+            dict[@"systemVersion"] = p.systemVersion;
+            dict[@"kernOsVersion"] = p.kernOsVersion;
+            dict[@"diskTotalSize"] = @(p.diskTotalSize);
+            dict[@"diskFreeSize"] = @(p.diskFreeSize);
+            dict[@"deviceName"] = p.deviceName;
+            dict[@"carrierName"] = p.carrierName;
+            dict[@"carrierMCC"] = p.carrierMCC;
+            dict[@"carrierMNC"] = p.carrierMNC;
+            dict[@"carrierCountryCode"] = p.carrierCountryCode;
+            if (p.actualCarrier.length > 0) {
+                dict[@"preferredCarrier"] = p.actualCarrier;
+            }
+            dict[@"batteryLevel"] = @(p.batteryLevel);
+            dict[@"batteryState"] = @(p.batteryState);
+            dict[@"bootTimeSec"] = @(p.bootTimeSec);
+            dict[@"bootSessionUUID"] = p.bootSessionUUID;
+            dict[@"spoofedIDFV"] = p.spoofedIDFV;
+            dict[@"spoofedIDFA"] = @"00000000-0000-0000-0000-000000000000";
+            dict[@"profileId"] = p.profileId;
+            dict[@"spoofedSerial"] = p.spoofedSerial;
+            dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
+            dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
+
+            dict[@"wipePending"] = @(YES);
+            dict[@"needsSandboxPurge"] = @(YES);
+
+            // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
+            save_dict_to_all_locations(dict);
+            sync_license_to_all_locations();
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+
+            // Truy vấn và lưu IP hiện tại để đối chiếu checklist
+            fetch_public_ip_prefs(^(NSString *ip) {
+                if (ip.length > 0 && ![ip isEqualToString:@"Không xác định"]) {
+                    NSMutableDictionary *d = load_current_mutable_prefs_dict();
+                    d[@"lastWipedIP"] = ip;
+                    save_dict_to_all_locations(d);
+                }
+            });
+
+            updateProgress(@"[90%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Đồng bộ cấu hình...", 0.2);
+            updateProgress(@"[100%] 🎉 Hoàn tất dọn dẹp sạch sẽ!", 0.25);
+
+            // Hoàn tất: Đóng progress alert và hiển thị kết quả
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [progressAlert dismissViewControllerAnimated:YES completion:^{
+                    [self reloadSpecifiers];
+
+                    if (errors.count > 0) {
+                        NSMutableString *errDetail = [NSMutableString string];
+                        [errDetail appendFormat:@"Phát hiện %lu lỗi trong quá trình Wipe:\n\n", (unsigned long)errors.count];
+                        for (NSUInteger i = 0; i < errors.count; i++) {
+                            [errDetail appendFormat:@"%lu. %@\n", (unsigned long)(i + 1), errors[i]];
+                        }
+                        [errDetail appendString:@"\n(Hãy chụp màn hình hoặc bấm 'Sao Chép Lỗi' để debug)."];
+
+                        UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"⚠️ PHÁT HIỆN LỖI KHI WIPE (DEBUG MODE)"
+                                                                                          message:errDetail
+                                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"📋 Sao Chép Lỗi" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                            [UIPasteboard generalPasteboard].string = errDetail;
+                        }]];
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Đóng" style:UIAlertActionStyleCancel handler:nil]];
+                        [self presentViewController:errAlert animated:YES completion:nil];
+                    } else {
+                        NSString *oldTokenDisplay = (oldAPNs.length > 12) ? [NSString stringWithFormat:@"%@...%@", [oldAPNs substringToIndex:6], [oldAPNs substringFromIndex:oldAPNs.length - 6]] : (oldAPNs ?: @"Chưa ghi nhận");
+                        NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo (0 LỖI)!\n\n"
+                                         @"• IDFV Mới: %@\n"
+                                         @"• Serial Number: %@\n"
+                                         @"• MAC Wi-Fi: %@\n"
+                                         @"• SIM & Khu Vực: %@\n"
+                                         @"• Token APNs Cũ Đã Lưu: %@\n"
+                                         @"• Keychain & WebKit: Phân vùng riêng biệt\n"
+                                         @"• Uptime: Cấp Boot Time ngẫu nhiên\n\n"
+                                         @"✈️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) trong 5 giây để đổi IP 4G trước khi mở lại Zalo.",
+                                         p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName, oldTokenDisplay];
+
+                        UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 DEEP WIPE THÀNH CÔNG 100%"
+                                                                                           message:msg
+                                                                                    preferredStyle:UIAlertControllerStyleAlert];
+                        [doneAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                        [self presentViewController:doneAlert animated:YES completion:nil];
+                    }
+                }];
+            });
+        });
+    }];
 }
 
 - (id)getHardwareMachineValue:(PSSpecifier *)specifier {

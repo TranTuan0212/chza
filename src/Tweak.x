@@ -4111,6 +4111,53 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                         s.apnsRotatedStatus = statusStr;
                         [s saveSettings];
                         chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
+
+                        static NSString *s_lastAlertedAPNsToken = nil;
+                        if (!s_lastAlertedAPNsToken || ![s_lastAlertedAPNsToken isEqualToString:tokenHex]) {
+                            s_lastAlertedAPNsToken = [tokenHex copy];
+                            NSString *capturedHex = [tokenHex copy];
+                            NSString *capturedLastWiped = [lastWiped copy];
+                            NSString *capturedStatus = [statusStr copy];
+
+                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                                UIViewController *topVC = ZTGetTopViewController();
+                                if (!topVC || !topVC.view.window) return;
+
+                                NSString *tokenShort = (capturedHex.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedHex substringToIndex:7], [capturedHex substringFromIndex:capturedHex.length - 7]] : capturedHex;
+                                NSString *oldShort = (capturedLastWiped.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedLastWiped substringToIndex:7], [capturedLastWiped substringFromIndex:capturedLastWiped.length - 7]] : (capturedLastWiped ?: @"(Trống)");
+
+                                if ([capturedStatus isEqualToString:@"ROTATED_NEW"]) {
+                                    NSString *alertMsg = [NSString stringWithFormat:@"Apple đã cấp Token Push mới hoàn toàn!\n\n"
+                                                          @"• Token Mới: %@\n"
+                                                          @"• Token Cũ: %@\n\n"
+                                                          @"✅ AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ TÀI KHOẢN MỚI!", tokenShort, oldShort];
+                                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🟢 APNs TOKEN MỚI (100% SẠCH)"
+                                                                                                   message:alertMsg
+                                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                                    [topVC presentViewController:alert animated:YES completion:nil];
+                                } else if ([capturedStatus isEqualToString:@"DUPLICATE"]) {
+                                    NSString *alertMsg = [NSString stringWithFormat:@"Token Push nhận từ Apple TRÙNG 100%% với nick trước!\n\n"
+                                                          @"• Token Trùng: %@\n\n"
+                                                          @"⚠️ TUYỆT ĐỐI CHƯA ĐĂNG KÝ TÀI KHOẢN MỚI!\n"
+                                                          @"Apple vẫn lưu cache push của máy. Vui lòng bật và tắt Chế Độ Máy Bay trong 5 giây, sau đó vào Cài đặt (Settings) -> ZaloTweak bấm Wipe lại!", tokenShort];
+                                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔴 CẢNH BÁO: TOKEN APNs BỊ TRÙNG!"
+                                                                                                   message:alertMsg
+                                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Rõ (Tôi sẽ Wipe lại)" style:UIAlertActionStyleDestructive handler:nil]];
+                                    [topVC presentViewController:alert animated:YES completion:nil];
+                                } else {
+                                    NSString *alertMsg = [NSString stringWithFormat:@"Đã ghi nhận Token Push ban đầu của thiết bị làm mốc đối chiếu:\n\n"
+                                                          @"• Token: %@\n\n"
+                                                          @"ℹ️ Hãy vào Cài Đặt (Settings) -> ZaloTweak bấm Wipe để cấp máy mới và đổi Token Push.", tokenShort];
+                                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ℹ️ ĐÃ LƯU TOKEN APNs BAN ĐẦU"
+                                                                                                   message:alertMsg
+                                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                                    [topVC presentViewController:alert animated:YES completion:nil];
+                                }
+                            });
+                        }
                     }
                     if (origImp) {
                         origImp(self_del, regSel, app, realToken);
