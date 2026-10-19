@@ -29,6 +29,14 @@ static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
     ];
 }
 
+static inline NSArray<NSString *> *get_known_zalo_group_ids(void) {
+    return @[
+        @"group.vn.com.vng.zingalo",
+        @"group.com.vng.zalo",
+        @"group.com.zing.zalo"
+    ];
+}
+
 static NSString *get_roothide_prefs_path(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
     jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
@@ -353,20 +361,17 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 #pragma mark - Helper Functions: Dọn dẹp dữ liệu Sandbox & Ghi cấu hình xuyên Sandbox
 
 static BOOL is_valid_zalo_sandbox_path(NSString *path) {
-    if (!path || path.length < 35) return NO;
-    // BẮT BUỘC đường dẫn phải nằm trong Data Application hoặc Shared AppGroup của Sandbox
-    if ([path containsString:@"/Containers/Data/Application/"] ||
-        [path containsString:@"/Containers/Shared/AppGroup/"]) {
-        // Tuyệt đối không được là các thư mục gốc
-        if ([path isEqualToString:@"/var/mobile/Containers/Data/Application"] ||
-            [path isEqualToString:@"/var/mobile/Containers/Shared/AppGroup"] ||
-            [path isEqualToString:@"/private/var/mobile/Containers/Data/Application"] ||
-            [path isEqualToString:@"/private/var/mobile/Containers/Shared/AppGroup"] ||
-            [path isEqualToString:@"/var/mobile"] ||
-            [path isEqualToString:@"/private/var/mobile"]) {
-            return NO;
+    if (!path || path.length == 0) return NO;
+    char buf[PATH_MAX];
+    if (!realpath(path.fileSystemRepresentation, buf)) return NO;
+    NSString *real = [NSString stringWithUTF8String:buf];
+    for (NSString *root in @[@"/private/var/mobile/Containers/Data/Application/",
+                             @"/private/var/mobile/Containers/Shared/AppGroup/"]) {
+        if ([real hasPrefix:root]) {
+            NSString *rel = [real substringFromIndex:root.length];
+            NSString *uuid = [rel pathComponents].firstObject;
+            return (uuid.length == 36);
         }
-        return YES;
     }
     return NO;
 }
@@ -387,7 +392,7 @@ static void kill_all_zalo_processes(void) {
         }
     }
 
-    // 2. Chỉ kill đúng tiến trình có tên là "Zalo" (TUYỆT ĐỐI KHÔNG DÙNG "zing" LÀM CHẾT TIẾN TRÌNH HỆ THỐNG)
+    // 2. Chỉ kill đúng tiến trình có tên là "Zalo" (p_comm tối đa 16 ký tự, khớp chính xác Zalo)
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t size = 0;
     if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
@@ -397,8 +402,7 @@ static void kill_all_zalo_processes(void) {
                 int count = (int)(size / sizeof(struct kinfo_proc));
                 for (int i = 0; i < count; i++) {
                     const char *name = procs[i].kp_proc.p_comm;
-                    if (name && (strcasecmp(name, "Zalo") == 0 ||
-                                 strcmp(name, "vn.com.vng.zingalo") == 0)) {
+                    if (name && strcasecmp(name, "Zalo") == 0) {
                         kill(procs[i].kp_proc.p_pid, SIGKILL);
                     }
                 }
@@ -417,58 +421,64 @@ static void safe_purge_apple_push_cache(void) {
     ];
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *apsdPath in possibleApsdPaths) {
-        if ([fm fileExistsAtPath:apsdPath]) {
-            NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:apsdPath];
-            if (dict) {
-                BOOL changed = NO;
-                NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
-                for (NSString *envKey in envKeys) {
-                    id envObj = dict[envKey];
-                    if ([envObj isKindOfClass:[NSDictionary class]]) {
-                        NSMutableDictionary *tokens = [envObj mutableCopy];
-                        for (NSString *bid in get_known_zalo_bundle_ids()) {
-                            if (tokens[bid]) {
-                                [tokens removeObjectForKey:bid];
-                                changed = YES;
-                            }
-                        }
-                        if (changed) {
-                            dict[envKey] = tokens;
+        if (![fm fileExistsAtPath:apsdPath]) continue;
+
+        // Kiểm tra quyền ghi trước khi xử lý (nếu Settings sandbox không có quyền ghi thì bỏ qua an toàn)
+        if (access([apsdPath UTF8String], W_OK) != 0) {
+            NSLog(@"[ZaloTweak-APNs] Không có quyền ghi vào %@, bỏ qua an toàn.", apsdPath);
+            continue;
+        }
+
+        NSData *plistData = [NSData dataWithContentsOfFile:apsdPath];
+        if (!plistData) continue;
+
+        NSPropertyListFormat format = NSPropertyListBinaryFormat_v1_0;
+        NSMutableDictionary *dict = [NSPropertyListSerialization propertyListWithData:plistData
+                                                                              options:NSPropertyListMutableContainersAndLeaves
+                                                                               format:&format
+                                                                                error:nil];
+        if ([dict isKindOfClass:[NSMutableDictionary class]]) {
+            BOOL anyChanged = NO;
+            NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
+            for (NSString *envKey in envKeys) {
+                id envObj = dict[envKey];
+                if ([envObj isKindOfClass:[NSDictionary class]]) {
+                    NSMutableDictionary *tokens = [envObj mutableCopy];
+                    BOOL keyChanged = NO;
+                    for (NSString *bid in get_known_zalo_bundle_ids()) {
+                        if (tokens[bid]) {
+                            [tokens removeObjectForKey:bid];
+                            keyChanged = YES;
                         }
                     }
-                }
-                for (NSString *bid in get_known_zalo_bundle_ids()) {
-                    if (dict[bid]) {
-                        [dict removeObjectForKey:bid];
-                        changed = YES;
+                    if (keyChanged) {
+                        dict[envKey] = tokens;
+                        anyChanged = YES;
                     }
                 }
-                if (changed) {
-                    [dict writeToFile:apsdPath atomically:YES];
-                } else {
-                    // Xóa file an toàn để apsd tự động tái tạo
-                    [fm removeItemAtPath:apsdPath error:nil];
+            }
+            for (NSString *bid in get_known_zalo_bundle_ids()) {
+                if (dict[bid]) {
+                    [dict removeObjectForKey:bid];
+                    anyChanged = YES;
                 }
-            } else {
-                [fm removeItemAtPath:apsdPath error:nil];
+            }
+
+            // Ghi in-place atomically:NO để giữ nguyên inode, owner và permissions gốc của file
+            if (anyChanged) {
+                NSData *outData = [NSPropertyListSerialization dataWithPropertyList:dict
+                                                                             format:format
+                                                                            options:0
+                                                                              error:nil];
+                if (outData) {
+                    BOOL writeOk = [outData writeToFile:apsdPath atomically:NO];
+                    NSLog(@"[ZaloTweak-APNs] Ghi in-place apsd.plist: %d", writeOk);
+                }
             }
         }
     }
 
-    // 2. Xóa push token cũ trong Keychain an toàn qua API chính chủ SecItemDelete
-    // (TUYỆT ĐỐI KHÔNG XÓA file keychain-2.db để bảo vệ an toàn 100% cho máy!)
-    NSArray *secClasses = @[
-        (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecClassInternetPassword
-    ];
-    for (id secClass in secClasses) {
-        NSMutableDictionary *query = [NSMutableDictionary dictionary];
-        query[(__bridge id)kSecClass] = secClass;
-        query[(__bridge id)kSecAttrService] = @"com.apple.pushservice";
-        SecItemDelete((__bridge CFDictionaryRef)query);
-    }
-
-    // 3. Khởi động lại daemon apsd an toàn bằng sysctl C BSD
+    // 2. Khởi động lại daemon apsd an toàn bằng sysctl C BSD
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t size = 0;
     if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
@@ -489,17 +499,30 @@ static void safe_purge_apple_push_cache(void) {
     system("killall -9 apsd 2>/dev/null; /var/jb/usr/bin/killall -9 apsd 2>/dev/null; /usr/bin/killall -9 apsd 2>/dev/null");
 }
 
-static void wipe_directory_contents(NSString *dirPath) {
-    // CHỐT CHẶN AN TOÀN TUYỆT ĐỐI: Từ chối xóa ngay nếu không phải thư mục sandbox Zalo!
-    if (!is_valid_zalo_sandbox_path(dirPath)) {
+static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot) {
+    if (!dirPath || !containerRoot) return;
+    char a[PATH_MAX], b[PATH_MAX];
+    if (!realpath(dirPath.fileSystemRepresentation, a) ||
+        !realpath(containerRoot.fileSystemRepresentation, b)) {
+        return;
+    }
+    NSString *realDir = [NSString stringWithUTF8String:a];
+    NSString *realRoot = [NSString stringWithUTF8String:b];
+
+    // Chốt 1: Container gốc phải đúng chuẩn iOS Sandbox UUID 36 ký tự
+    if (!is_valid_zalo_sandbox_path(realRoot)) return;
+
+    // Chốt 2: Thư mục cần xóa BẮT BUỘC phải nằm bên trong containerRoot đã resolve
+    if (![realDir isEqualToString:realRoot] &&
+        ![realDir hasPrefix:[realRoot stringByAppendingString:@"/"]]) {
         return;
     }
 
     NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:dirPath]) return;
+    if (![fm fileExistsAtPath:realDir]) return;
 
     NSError *error = nil;
-    NSArray *items = [fm contentsOfDirectoryAtPath:dirPath error:&error];
+    NSArray *items = [fm contentsOfDirectoryAtPath:realDir error:&error];
     if (error || !items) return;
 
     for (NSString *item in items) {
@@ -516,7 +539,7 @@ static void wipe_directory_contents(NSString *dirPath) {
             [lower containsString:@"com.sonhu.zalotweak"]) {
             continue;
         }
-        NSString *fullPath = [dirPath stringByAppendingPathComponent:item];
+        NSString *fullPath = [realDir stringByAppendingPathComponent:item];
         [fm removeItemAtPath:fullPath error:nil];
     }
 }
@@ -524,7 +547,7 @@ static void wipe_directory_contents(NSString *dirPath) {
 static NSArray<NSString *> *get_zalo_data_container_paths(void) {
     NSMutableArray *paths = [NSMutableArray array];
 
-    // Quét trực tiếp qua metadata trong thư mục Sandbox thực tế (Không dùng LSApplicationProxy containerURL)
+    // Quét trực tiếp qua metadata trong thư mục Sandbox thực tế (Khớp chính xác Whitelist Bundle ID)
     NSArray *baseDirs = @[@"/var/mobile/Containers/Data/Application", @"/private/var/mobile/Containers/Data/Application"];
     for (NSString *baseDir in baseDirs) {
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -534,12 +557,15 @@ static NSArray<NSString *> *get_zalo_data_container_paths(void) {
             NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
             NSString *ident = meta[@"MCMMetadataIdentifier"];
             if (ident) {
-                NSString *lower = [ident lowercaseString];
-                if ([lower containsString:@"zalo"] || [lower containsString:@"zingalo"] || [get_known_zalo_bundle_ids() containsObject:ident]) {
+                if ([get_known_zalo_bundle_ids() containsObject:ident]) {
                     NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
                     if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
                         [paths addObject:fullP];
                     }
+                } else if ([ident.lowercaseString containsString:@"zalo"] &&
+                           ![ident.lowercaseString containsString:@"zalopay"]) {
+                    // CHỈ GHI LOG ĐỂ THEO DÕI CONTAINER LẠ, TUYỆT ĐỐI KHÔNG XÓA
+                    NSLog(@"[ZaloTweak-Discovery] Phát hiện Data Container Zalo chưa có trong whitelist: %@", ident);
                 }
             }
         }
@@ -559,12 +585,16 @@ static NSArray<NSString *> *get_zalo_group_container_paths(void) {
             NSString *metaPath = [baseDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/.com.apple.mobile_container_manager.metadata.plist", uuid]];
             NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:metaPath];
             NSString *identifier = meta[@"MCMMetadataIdentifier"];
-            if (identifier && ([identifier containsString:@"zingalo"] ||
-                               [identifier containsString:@"com.zing.zalo"] ||
-                               [identifier containsString:@"com.vng.zalo"])) {
-                NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
-                if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
-                    [paths addObject:fullP];
+            if (identifier) {
+                if ([get_known_zalo_group_ids() containsObject:identifier]) {
+                    NSString *fullP = [baseDir stringByAppendingPathComponent:uuid];
+                    if (is_valid_zalo_sandbox_path(fullP) && ![paths containsObject:fullP]) {
+                        [paths addObject:fullP];
+                    }
+                } else if ([identifier.lowercaseString containsString:@"zalo"] &&
+                           ![identifier.lowercaseString containsString:@"zalopay"]) {
+                    // CHỈ GHI LOG ĐỂ THEO DÕI CONTAINER LẠ, TUYỆT ĐỐI KHÔNG XÓA
+                    NSLog(@"[ZaloTweak-Discovery] Phát hiện Group Container Zalo chưa có trong whitelist: %@", identifier);
                 }
             }
         }
@@ -1111,7 +1141,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
     safe_purge_apple_push_cache();
 
-    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites của Zalo
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.com.vng.zalo",
@@ -1131,23 +1161,17 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             [ud synchronize];
         }
     }
-    NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
-    NSDictionary *stdDict = [stdUD dictionaryRepresentation];
-    for (NSString *k in stdDict.allKeys) {
-        [stdUD removeObjectForKey:k];
-    }
-    [stdUD synchronize];
 
-    // 3. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
+    // 4. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
     NSArray *dataContainers = get_zalo_data_container_paths();
     for (NSString *dataContainer in dataContainers) {
         if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
 
-        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"]);
-        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"]);
+        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"Documents"], dataContainer);
+        wipe_directory_contents([dataContainer stringByAppendingPathComponent:@"tmp"], dataContainer);
 
         NSString *libraryDir = [dataContainer stringByAppendingPathComponent:@"Library"];
-        wipe_directory_contents(libraryDir);
+        wipe_directory_contents(libraryDir, dataContainer);
 
         // Tái tạo sẵn khung thư mục rỗng chuẩn để Zalo không bị lỗi đọc/ghi khi vừa khởi động
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -1158,11 +1182,11 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
         [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"tmp"] withIntermediateDirectories:YES attributes:nil error:nil];
     }
 
-    // 4. Xóa sạch Shared App Group
+    // 5. Xóa sạch Shared App Group
     NSArray *groupContainers = get_zalo_group_container_paths();
     for (NSString *groupPath in groupContainers) {
         if (!is_valid_zalo_sandbox_path(groupPath)) continue;
-        wipe_directory_contents(groupPath);
+        wipe_directory_contents(groupPath, groupPath);
 
         // Tái tạo khung thư mục rỗng chuẩn bên trong App Group để NSUserDefaults và SQLite của Zalo không bị crash
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -1171,10 +1195,6 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
         [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
         [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
     }
-
-    // 5. Xóa sạch Clipboard hệ thống để tránh tracking token
-    [UIPasteboard generalPasteboard].items = @[];
-    [UIPasteboard generalPasteboard].string = @"";
 
     // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
     NSMutableDictionary *dict = load_current_mutable_prefs_dict();
