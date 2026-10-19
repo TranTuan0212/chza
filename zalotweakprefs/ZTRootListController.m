@@ -496,7 +496,6 @@ static void safe_purge_apple_push_cache(void) {
             free(procs);
         }
     }
-    system("killall -9 apsd 2>/dev/null; /var/jb/usr/bin/killall -9 apsd 2>/dev/null; /usr/bin/killall -9 apsd 2>/dev/null");
 }
 
 static void wipe_directory_contents(NSString *dirPath, NSString *containerRoot) {

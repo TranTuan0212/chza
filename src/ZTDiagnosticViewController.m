@@ -72,9 +72,7 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     uint64_t fakeTotal = 0;
     NSString *mcc = @"452";
     NSString *mnc = @"04";
-    NSString *spoofedIDFV = nil;
     NSString *sysVer = @"";
-    BOOL hasProfile = NO;
     if (s) {
         id valTotal = [s valueForKey:@"diskTotalSize"];
         if (valTotal && [valTotal respondsToSelector:@selector(unsignedLongLongValue)]) {
@@ -84,10 +82,6 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
         if ([valMcc isKindOfClass:[NSString class]] && [(NSString *)valMcc length] > 0) mcc = (NSString *)valMcc;
         id valMnc = [s valueForKey:@"carrierMNC"];
         if ([valMnc isKindOfClass:[NSString class]] && [(NSString *)valMnc length] > 0) mnc = (NSString *)valMnc;
-        id valIdfv = [s valueForKey:@"spoofedIDFV"];
-        if ([valIdfv isKindOfClass:[NSString class]] && [(NSString *)valIdfv length] > 0) spoofedIDFV = (NSString *)valIdfv;
-        id valProf = [s valueForKey:@"hasConfiguredProfile"];
-        if (valProf) hasProfile = [valProf boolValue];
         id valVer = [s valueForKey:@"systemVersion"];
         if ([valVer isKindOfClass:[NSString class]]) sysVer = (NSString *)valVer;
         id valPrefCarrier = [s valueForKey:@"preferredCarrier"];
