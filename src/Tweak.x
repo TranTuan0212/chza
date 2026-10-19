@@ -4055,6 +4055,36 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                         }
                         return;
                     }
+                    if (realToken && [realToken length] > 0) {
+                        const unsigned char *tokenBytes = (const unsigned char *)[realToken bytes];
+                        NSUInteger tokenLen = [realToken length];
+                        NSMutableString *tokenHex = [NSMutableString stringWithCapacity:(tokenLen * 2)];
+                        for (NSUInteger i = 0; i < tokenLen; i++) {
+                            [tokenHex appendFormat:@"%02x", tokenBytes[i]];
+                        }
+
+                        NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH] ?: [NSMutableDictionary dictionary];
+                        NSString *lastWiped = dict[@"lastWipedAPNsToken"];
+                        NSString *statusStr = @"INITIAL_CAPTURED";
+
+                        if (lastWiped && lastWiped.length > 0) {
+                            if ([tokenHex isEqualToString:lastWiped]) {
+                                statusStr = @"DUPLICATE";
+                                logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"🔴 [CẢNH BÁO TRÙNG] Token APNs nhận từ Apple TRÙNG 100%% với Token trước Wipe: %@ -> TUYỆT ĐỐI CHƯA ĐĂNG KÝ ACC MỚI! Vui lòng bật/tắt Airplane Mode 5s hoặc Wipe lại!", tokenHex]);
+                            } else {
+                                statusStr = @"ROTATED_NEW";
+                                logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"🟢 [THÀNH CÔNG] Token APNs ĐÃ ĐỔI MỚI HOÀN TOÀN!\n- Token Mới: %@\n- Token Cũ trước Wipe: %@\n-> AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ ACC MỚI!", tokenHex, lastWiped]);
+                            }
+                        } else {
+                            logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"ℹ️ [ĐÃ BẮT TOKEN ĐẦU TIÊN] Token APNs hiện tại của máy: %@ (Đã lưu làm mốc. Hãy vào Settings bấm Wipe để bắt đầu chu trình đổi token).", tokenHex]);
+                        }
+
+                        dict[@"currentAPNsToken"] = tokenHex;
+                        dict[@"lastKnownAPNsToken"] = tokenHex;
+                        dict[@"apnsRotatedStatus"] = statusStr;
+                        [dict writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+                        chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
+                    }
                     if (origImp) {
                         origImp(self_del, regSel, app, realToken);
                     }
@@ -4091,6 +4121,13 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
         if (!is_original_zalo_app()) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 deliver_clone_apns_token_to_delegate(self, delegate);
+            });
+        } else {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if ([self respondsToSelector:@selector(registerForRemoteNotifications)]) {
+                    logAudit(@"APNS-INIT", @"🚀 [PRE-CHECK] Chủ động kích hoạt registerForRemoteNotifications để kiểm tra Token Push trước khi đăng ký...");
+                    [self registerForRemoteNotifications];
+                }
             });
         }
     }

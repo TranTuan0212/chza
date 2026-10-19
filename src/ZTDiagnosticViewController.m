@@ -215,14 +215,33 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     info.mnoFormatText = mnoDesc;
     write_audit_log(@"TEST-MNO-FORMAT", [NSString stringWithFormat:@"MNO Code='%@' (MCC=%@, MNC=%@, is16_4=%d) -> %@", mnoCode, mcc, mnc, isIOS16_4Plus, mnoPass ? @"PASSED ✅" : @"FAILED ❌"]);
 
-    // 8. Test genuine Apple APNs Token preservation
+    // 8. Test genuine Apple APNs Token preservation & rotation
     NSString *mainPath = [[NSBundle mainBundle] bundlePath];
     BOOL isOrigApp = (!info.isCloneApp && ([mainBid isEqualToString:@"vn.com.vng.zingalo"] || [info.bundleId isEqualToString:@"vn.com.vng.zingalo"] || [mainPath containsString:@"Zalo.app"]));
     BOOL apnsPass = NO;
     NSString *apnsDesc = nil;
     if (isOrigApp) {
-        apnsPass = YES;
-        apnsDesc = @"Zalo gốc: Giữ nguyên Token Apple APNs Gateway (Tránh BadDeviceToken ban 3h) ✅";
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        NSString *currToken = dict[@"currentAPNsToken"];
+        NSString *wipedToken = dict[@"lastWipedAPNsToken"];
+        NSString *rotStatus = dict[@"apnsRotatedStatus"];
+        if ([rotStatus isEqualToString:@"ROTATED_NEW"] || (wipedToken.length > 0 && currToken.length > 0 && ![currToken isEqualToString:wipedToken])) {
+            apnsPass = YES;
+            NSString *shortCurr = currToken.length > 12 ? [currToken substringToIndex:12] : currToken;
+            NSString *shortOld = wipedToken.length > 12 ? [wipedToken substringToIndex:12] : wipedToken;
+            apnsDesc = [NSString stringWithFormat:@"🟢 Token MỚI ĐÃ ĐỔI: %@... (Khác mã cũ: %@... - AN TOÀN REG ACC) ✅", shortCurr, shortOld];
+        } else if ([rotStatus isEqualToString:@"DUPLICATE"] || (wipedToken.length > 0 && currToken.length > 0 && [currToken isEqualToString:wipedToken])) {
+            apnsPass = NO;
+            NSString *shortCurr = currToken.length > 12 ? [currToken substringToIndex:12] : currToken;
+            apnsDesc = [NSString stringWithFormat:@"🔴 CẢNH BÁO: TRÙNG TOKEN CŨ (%@...) - BẬT MÁY BAY 5S HOẶC WIPE LẠI!", shortCurr];
+        } else if (currToken.length > 0) {
+            apnsPass = YES;
+            NSString *shortCurr = currToken.length > 12 ? [currToken substringToIndex:12] : currToken;
+            apnsDesc = [NSString stringWithFormat:@"ℹ️ Token hiện tại: %@... (Lần đầu, hãy Wipe để làm mốc) ✅", shortCurr];
+        } else {
+            apnsPass = YES;
+            apnsDesc = @"Zalo gốc: Đang kết nối Apple cấp Token Push Gateway... ⏳";
+        }
     } else {
         apnsPass = YES;
         apnsDesc = @"Zalo Clone: Chặn Token Fake & Giả lập từ chối Push (Triệt tiêu 100% BadDeviceToken Apple) ✅";

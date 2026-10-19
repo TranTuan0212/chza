@@ -247,6 +247,14 @@
             <key>cell</key>
             <string>PSTitleValueCell</string>
             <key>label</key>
+            <string>Token APNs (Apple Push)</string>
+            <key>get</key>
+            <string>getCurrentAPNsTokenValue:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSTitleValueCell</string>
+            <key>label</key>
             <string>Profile Keychain</string>
             <key>get</key>
             <string>getSpoofedProfileIdValue:</string>

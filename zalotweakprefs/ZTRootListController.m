@@ -1202,6 +1202,13 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     if (oldIDFV && oldIDFV.length > 0) {
         dict[@"lastWipedIDFV"] = oldIDFV;
     }
+    NSString *oldAPNs = dict[@"currentAPNsToken"] ?: dict[@"lastKnownAPNsToken"];
+    if (oldAPNs && oldAPNs.length > 0) {
+        dict[@"lastWipedAPNsToken"] = oldAPNs;
+        NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né: %@", oldAPNs);
+    }
+    dict[@"currentAPNsToken"] = @"";
+    dict[@"apnsRotatedStatus"] = @"WAITING";
     dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
 
     NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
@@ -1364,6 +1371,24 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
         return @"Chưa có lịch sử 🟢";
     }
     return [NSString stringWithFormat:@"%@ (Lần trước)", lastIP];
+}
+
+- (id)getCurrentAPNsTokenValue:(PSSpecifier *)specifier {
+    NSDictionary *dict = load_current_prefs_dict();
+    NSString *curr = dict[@"currentAPNsToken"];
+    NSString *last = dict[@"lastWipedAPNsToken"];
+    NSString *rot = dict[@"apnsRotatedStatus"];
+    if (!curr || curr.length == 0) {
+        return @"Chờ mở Zalo cấp Token ⏳";
+    }
+    NSString *shortCurr = (curr.length > 16) ? [NSString stringWithFormat:@"%@...%@", [curr substringToIndex:8], [curr substringFromIndex:curr.length - 6]] : curr;
+    if ([rot isEqualToString:@"DUPLICATE"] || (last.length > 0 && [curr isEqualToString:last])) {
+        return [NSString stringWithFormat:@"%@ (TRÙNG 🔴)", shortCurr];
+    }
+    if ([rot isEqualToString:@"ROTATED_NEW"] || (last.length > 0 && ![curr isEqualToString:last])) {
+        return [NSString stringWithFormat:@"%@ (Mới Tinh 🟢)", shortCurr];
+    }
+    return [NSString stringWithFormat:@"%@ (Đã Bắt Token ℹ️)", shortCurr];
 }
 
 - (id)getSpoofedProfileIdValue:(PSSpecifier *)specifier {

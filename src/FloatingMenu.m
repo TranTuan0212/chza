@@ -758,7 +758,24 @@ UIViewController *ZTGetTopViewController(void) {
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
     NSString *mainPath = [[NSBundle mainBundle] bundlePath];
     BOOL isGenuineZalo = [bundleId isEqualToString:@"vn.com.vng.zingalo"] || [mainPath containsString:@"Zalo.app"];
-    NSString *apnsHex = isGenuineZalo ? @"Token Apple Gốc (Bảo toàn) ✅" : @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
+    NSString *apnsHex = nil;
+    if (isGenuineZalo) {
+        NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        NSString *curr = prefsD[@"currentAPNsToken"];
+        NSString *wiped = prefsD[@"lastWipedAPNsToken"];
+        NSString *rot = prefsD[@"apnsRotatedStatus"];
+        if ([rot isEqualToString:@"ROTATED_NEW"] || (wiped.length > 0 && curr.length > 0 && ![curr isEqualToString:wiped])) {
+            apnsHex = [NSString stringWithFormat:@"🟢 ĐÃ ĐỔI MỚI: %@... (Khác cũ: %@...) ✅", [curr substringToIndex:MIN(curr.length, 10)], [wiped substringToIndex:MIN(wiped.length, 10)]];
+        } else if ([rot isEqualToString:@"DUPLICATE"] || (wiped.length > 0 && curr.length > 0 && [curr isEqualToString:wiped])) {
+            apnsHex = [NSString stringWithFormat:@"🔴 TRÙNG CŨ: %@... (CẢNH BÁO) ⚠️", [curr substringToIndex:MIN(curr.length, 10)]];
+        } else if (curr.length > 0) {
+            apnsHex = [NSString stringWithFormat:@"ℹ️ Hiện tại: %@... (Lần đầu) ✅", [curr substringToIndex:MIN(curr.length, 10)]];
+        } else {
+            apnsHex = @"Đang chờ Apple cấp Token... ⏳";
+        }
+    } else {
+        apnsHex = @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
+    }
     NSString *voipHex = isGenuineZalo ? @"Token VoIP Gốc (Bảo toàn) ✅" : @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
 
     uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
