@@ -1750,8 +1750,17 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     NSFileManager *fm = [NSFileManager defaultManager];
     
     // 0. Hủy đăng ký push notification với Apple Gateway
-    if ([UIApplication instancesRespondToSelector:@selector(unregisterForRemoteNotifications)]) {
-        [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+    void (^doUnregisterPushBlock)(void) = ^{
+        if ([[UIApplication sharedApplication] respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
+            [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+            NSLog(@"[ZaloTweak-APNs] 📡 Đã gửi yêu cầu unregisterForRemoteNotifications đến Apple Push Daemon (apsd)");
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+        }
+    };
+    if ([NSThread isMainThread]) {
+        doUnregisterPushBlock();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), doUnregisterPushBlock);
     }
 
     // 1. Xóa Clipboard để triệt tiêu mọi token tracking

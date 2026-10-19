@@ -15,6 +15,10 @@
 #import <dlfcn.h>
 #import <CommonCrypto/CommonCrypto.h>
 #import <Security/Security.h>
+#import <spawn.h>
+#import <sys/wait.h>
+
+extern char **environ;
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
@@ -415,15 +419,26 @@ static void kill_all_zalo_processes(void) {
 
 static void safe_purge_apple_push_cache(void) {
     // 1. Dọn dẹp an toàn trong com.apple.apsd.plist (Chỉ xóa riêng token của Zalo, không làm hỏng app khác)
-    NSArray *possibleApsdPaths = @[
+    NSMutableArray *possibleApsdPaths = [NSMutableArray arrayWithArray:@[
         @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
-        @"/private/var/wireless/Library/Preferences/com.apple.apsd.plist"
-    ];
+        @"/private/var/wireless/Library/Preferences/com.apple.apsd.plist",
+        @"/var/mobile/Library/Preferences/com.apple.apsd.plist",
+        @"/private/var/mobile/Library/Preferences/com.apple.apsd.plist"
+    ]];
+    typedef const char* (*jbroot_fn_t)(const char*);
+    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
+    if (jbroot_fn) {
+        const char *jbWireless = jbroot_fn("/var/wireless/Library/Preferences/com.apple.apsd.plist");
+        if (jbWireless) [possibleApsdPaths addObject:[NSString stringWithUTF8String:jbWireless]];
+        const char *jbMobile = jbroot_fn("/var/mobile/Library/Preferences/com.apple.apsd.plist");
+        if (jbMobile) [possibleApsdPaths addObject:[NSString stringWithUTF8String:jbMobile]];
+    }
+
     NSFileManager *fm = [NSFileManager defaultManager];
     for (NSString *apsdPath in possibleApsdPaths) {
         if (![fm fileExistsAtPath:apsdPath]) continue;
 
-        // Kiểm tra quyền ghi trước khi xử lý (nếu Settings sandbox không có quyền ghi thì bỏ qua an toàn)
+        // Kiểm tra quyền ghi trước khi xử lý
         if (access([apsdPath UTF8String], W_OK) != 0) {
             NSLog(@"[ZaloTweak-APNs] Không có quyền ghi vào %@, bỏ qua an toàn.", apsdPath);
             continue;
@@ -472,28 +487,93 @@ static void safe_purge_apple_push_cache(void) {
                                                                               error:nil];
                 if (outData) {
                     BOOL writeOk = [outData writeToFile:apsdPath atomically:NO];
-                    NSLog(@"[ZaloTweak-APNs] Ghi in-place apsd.plist: %d", writeOk);
+                    NSLog(@"[ZaloTweak-APNs] Ghi in-place apsd.plist (%@): %d", apsdPath, writeOk);
                 }
             }
         }
     }
 
-    // 2. Khởi động lại daemon apsd an toàn bằng sysctl C BSD
-    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
-    size_t size = 0;
-    if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
-        struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
-        if (procs) {
-            if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
-                int count = (int)(size / sizeof(struct kinfo_proc));
-                for (int i = 0; i < count; i++) {
-                    const char *name = procs[i].kp_proc.p_comm;
-                    if (name && (strcmp(name, "apsd") == 0 || strcmp(name, "applepushserviced") == 0)) {
-                        kill(procs[i].kp_proc.p_pid, SIGKILL);
-                    }
+    // 1.1. Xóa bản ghi cache riêng của Zalo trong PushStore
+    NSArray *pushStoreDirs = @[
+        @"/var/mobile/Library/SpringBoard/PushStore",
+        @"/private/var/mobile/Library/SpringBoard/PushStore",
+        @"/var/mobile/Library/PushStore"
+    ];
+    for (NSString *psDir in pushStoreDirs) {
+        if (![fm fileExistsAtPath:psDir]) continue;
+        NSArray *files = [fm contentsOfDirectoryAtPath:psDir error:nil];
+        for (NSString *file in files) {
+            for (NSString *bid in get_known_zalo_bundle_ids()) {
+                if ([file containsString:bid]) {
+                    NSString *target = [psDir stringByAppendingPathComponent:file];
+                    [fm removeItemAtPath:target error:nil];
+                    NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
                 }
             }
-            free(procs);
+        }
+    }
+
+    // 2. Khởi động lại daemon apsd an toàn
+    BOOL restarted = NO;
+    const char *launchctlPaths[] = {
+        "/var/jb/bin/launchctl",
+        "/var/jb/usr/bin/launchctl",
+        "/bin/launchctl",
+        "/usr/bin/launchctl",
+        NULL
+    };
+    for (int i = 0; launchctlPaths[i] != NULL; i++) {
+        if (access(launchctlPaths[i], X_OK) == 0) {
+            pid_t p = 0;
+            const char *argv[] = {launchctlPaths[i], "kickstart", "-k", "system/com.apple.apsd", NULL};
+            if (posix_spawn(&p, launchctlPaths[i], NULL, NULL, (char *const *)argv, environ) == 0) {
+                int status = 0;
+                waitpid(p, &status, 0);
+                restarted = YES;
+                NSLog(@"[ZaloTweak-APNs] Đã gọi launchctl kickstart com.apple.apsd thành công!");
+                break;
+            }
+        }
+    }
+    if (!restarted) {
+        const char *killallPaths[] = {
+            "/var/jb/usr/bin/killall",
+            "/usr/bin/killall",
+            NULL
+        };
+        for (int i = 0; killallPaths[i] != NULL; i++) {
+            if (access(killallPaths[i], X_OK) == 0) {
+                pid_t p = 0;
+                const char *argv[] = {killallPaths[i], "-9", "apsd", NULL};
+                if (posix_spawn(&p, killallPaths[i], NULL, NULL, (char *const *)argv, environ) == 0) {
+                    int status = 0;
+                    waitpid(p, &status, 0);
+                    restarted = YES;
+                    NSLog(@"[ZaloTweak-APNs] Đã gọi killall -9 apsd thành công!");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fallback bằng POSIX sysctl + kill C BSD
+    if (!restarted) {
+        int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+        size_t size = 0;
+        if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
+            struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+            if (procs) {
+                if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
+                    int count = (int)(size / sizeof(struct kinfo_proc));
+                    for (int i = 0; i < count; i++) {
+                        const char *name = procs[i].kp_proc.p_comm;
+                        if (name && (strcmp(name, "apsd") == 0 || strcmp(name, "applepushserviced") == 0)) {
+                            kill(procs[i].kp_proc.p_pid, SIGKILL);
+                        }
+                    }
+                }
+                free(procs);
+            }
         }
     }
 }
