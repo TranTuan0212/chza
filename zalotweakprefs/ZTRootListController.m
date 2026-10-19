@@ -1503,6 +1503,14 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 #pragma mark - Audit Log Actions
 
 static NSString *findAuditLogPath(void) {
+    // 1. Quét Data Container của Zalo trước (nơi Zalo ghi nhật ký thực tế)
+    for (NSString *zaloData in get_zalo_data_container_paths()) {
+        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
+            return zaloDoc;
+        }
+    }
+    // 2. Thử vị trí toàn cục nếu Zalo ghi ra ngoài hoặc từ bài test
     if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile/Documents/ZaloAudit.log"]) {
         return @"/var/mobile/Documents/ZaloAudit.log";
     }
@@ -1511,12 +1519,6 @@ static NSString *findAuditLogPath(void) {
         NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
         if ([[NSFileManager defaultManager] fileExistsAtPath:doc]) {
             return doc;
-        }
-    }
-    for (NSString *zaloData in get_zalo_data_container_paths()) {
-        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloAudit.log"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
-            return zaloDoc;
         }
     }
     return @"/var/mobile/Documents/ZaloAudit.log";
@@ -1841,6 +1843,14 @@ static NSString *findAuditLogPath(void) {
 }
 
 static NSString *findHarPath(void) {
+    // 1. Quét Data Container của Zalo trước (nơi Zalo lưu file HAR thực tế)
+    for (NSString *zaloData in get_zalo_data_container_paths()) {
+        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
+            return zaloDoc;
+        }
+    }
+    // 2. Thử vị trí toàn cục nếu Zalo copy ra ngoài
     if ([[NSFileManager defaultManager] fileExistsAtPath:@"/var/mobile/Documents/ZaloTraffic.har"]) {
         return @"/var/mobile/Documents/ZaloTraffic.har";
     }
@@ -1849,12 +1859,6 @@ static NSString *findHarPath(void) {
         NSString *doc = [home stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
         if ([[NSFileManager defaultManager] fileExistsAtPath:doc]) {
             return doc;
-        }
-    }
-    for (NSString *zaloData in get_zalo_data_container_paths()) {
-        NSString *zaloDoc = [zaloData stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:zaloDoc]) {
-            return zaloDoc;
         }
     }
     return @"/var/mobile/Documents/ZaloTraffic.har";
@@ -1895,11 +1899,12 @@ static NSString *findHarPath(void) {
         return;
     }
 
-    NSString *logPath = findAuditLogPath();
-    [[NSFileManager defaultManager] removeItemAtPath:logPath error:nil];
-
-    NSString *harPath = findHarPath();
-    [[NSFileManager defaultManager] removeItemAtPath:harPath error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Documents/ZaloAudit.log" error:nil];
+    [[NSFileManager defaultManager] removeItemAtPath:@"/var/mobile/Documents/ZaloTraffic.har" error:nil];
+    for (NSString *zaloData in get_zalo_data_container_paths()) {
+        [[NSFileManager defaultManager] removeItemAtPath:[zaloData stringByAppendingPathComponent:@"Documents/ZaloAudit.log"] error:nil];
+        [[NSFileManager defaultManager] removeItemAtPath:[zaloData stringByAppendingPathComponent:@"Documents/ZaloTraffic.har"] error:nil];
+    }
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Đã Xóa Sạch"
                                                                    message:@"Toàn bộ lịch sử nhật ký kiểm toán (ZaloAudit.log) và gói tin mạng (ZaloTraffic.har) đã được xóa."
