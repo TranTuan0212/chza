@@ -797,6 +797,10 @@ static void purge_entire_sandbox_safely(void) {
         self.proxyUser = dict[@"proxyUser"] ?: @"";
         self.proxyPass = dict[@"proxyPass"] ?: @"";
         self.centralizedDid = dict[@"centralizedDid"] ?: @"";
+        self.currentAPNsToken = dict[@"currentAPNsToken"] ?: @"";
+        self.lastWipedAPNsToken = dict[@"lastWipedAPNsToken"] ?: @"";
+        self.lastKnownAPNsToken = dict[@"lastKnownAPNsToken"] ?: @"";
+        self.apnsRotatedStatus = dict[@"apnsRotatedStatus"] ?: @"";
 
         self.deviceMachine = dict[@"deviceMachine"] ?: get_real_hardware_machine();
         self.deviceModel = dict[@"deviceModel"] ?: get_real_hardware_model();
@@ -945,6 +949,10 @@ static void purge_entire_sandbox_safely(void) {
         self.proxyUser = @"";
         self.proxyPass = @"";
         self.centralizedDid = @"";
+        self.currentAPNsToken = @"";
+        self.lastWipedAPNsToken = @"";
+        self.lastKnownAPNsToken = @"";
+        self.apnsRotatedStatus = @"";
         self.spoofedSerial = @"";
         self.spoofedWifiMAC = @"";
         self.spoofedBluetoothMAC = @"";
@@ -982,7 +990,8 @@ static void purge_entire_sandbox_safely(void) {
 }
 
 - (void)saveSettings {
-    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+    NSString *path = getConfigPath();
+    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
     dict[@"enabled"] = @(self.enabled);
     dict[@"enableAuditLog"] = @(self.enableAuditLog);
     dict[@"hasConfiguredProfile"] = @(self.hasConfiguredProfile);
@@ -993,6 +1002,10 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"proxyUser"] = self.proxyUser ?: @"";
     dict[@"proxyPass"] = self.proxyPass ?: @"";
     if (self.centralizedDid) dict[@"centralizedDid"] = self.centralizedDid;
+    if (self.currentAPNsToken) dict[@"currentAPNsToken"] = self.currentAPNsToken;
+    if (self.lastWipedAPNsToken) dict[@"lastWipedAPNsToken"] = self.lastWipedAPNsToken;
+    if (self.lastKnownAPNsToken) dict[@"lastKnownAPNsToken"] = self.lastKnownAPNsToken;
+    if (self.apnsRotatedStatus) dict[@"apnsRotatedStatus"] = self.apnsRotatedStatus;
     dict[@"deviceMachine"] = self.deviceMachine;
     dict[@"deviceModel"] = self.deviceModel;
     dict[@"deviceName"] = self.deviceName;
@@ -1035,7 +1048,6 @@ static void purge_entire_sandbox_safely(void) {
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
 
-    NSString *path = getConfigPath();
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
     [dict writeToFile:path atomically:YES];
     chmod([path UTF8String], 0666);
@@ -4074,8 +4086,12 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                             [tokenHex appendFormat:@"%02x", tokenBytes[i]];
                         }
 
-                        NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH] ?: [NSMutableDictionary dictionary];
-                        NSString *lastWiped = dict[@"lastWipedAPNsToken"];
+                        ZTSettings *s = [ZTSettings sharedSettings];
+                        NSString *lastWiped = s.lastWipedAPNsToken;
+                        if (!lastWiped || lastWiped.length == 0) {
+                            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
+                            lastWiped = dict[@"lastWipedAPNsToken"];
+                        }
                         NSString *statusStr = @"INITIAL_CAPTURED";
 
                         if (lastWiped && lastWiped.length > 0) {
@@ -4090,10 +4106,10 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                             logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"ℹ️ [ĐÃ BẮT TOKEN ĐẦU TIÊN] Token APNs hiện tại của máy: %@ (Đã lưu làm mốc. Hãy vào Settings bấm Wipe để bắt đầu chu trình đổi token).", tokenHex]);
                         }
 
-                        dict[@"currentAPNsToken"] = tokenHex;
-                        dict[@"lastKnownAPNsToken"] = tokenHex;
-                        dict[@"apnsRotatedStatus"] = statusStr;
-                        [dict writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+                        s.currentAPNsToken = tokenHex;
+                        s.lastKnownAPNsToken = tokenHex;
+                        s.apnsRotatedStatus = statusStr;
+                        [s saveSettings];
                         chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
                     }
                     if (origImp) {

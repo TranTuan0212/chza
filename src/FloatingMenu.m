@@ -760,10 +760,16 @@ UIViewController *ZTGetTopViewController(void) {
     BOOL isGenuineZalo = [bundleId isEqualToString:@"vn.com.vng.zingalo"] || [mainPath containsString:@"Zalo.app"];
     NSString *apnsHex = nil;
     if (isGenuineZalo) {
-        NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
-        NSString *curr = prefsD[@"currentAPNsToken"];
-        NSString *wiped = prefsD[@"lastWipedAPNsToken"];
-        NSString *rot = prefsD[@"apnsRotatedStatus"];
+        ZTSettings *s = [ZTSettings sharedSettings];
+        NSString *curr = s.currentAPNsToken;
+        NSString *wiped = s.lastWipedAPNsToken;
+        NSString *rot = s.apnsRotatedStatus;
+        if (!curr || curr.length == 0) {
+            NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+            curr = prefsD[@"currentAPNsToken"];
+            if (!wiped || wiped.length == 0) wiped = prefsD[@"lastWipedAPNsToken"];
+            if (!rot || rot.length == 0) rot = prefsD[@"apnsRotatedStatus"];
+        }
         if ([rot isEqualToString:@"ROTATED_NEW"] || (wiped.length > 0 && curr.length > 0 && ![curr isEqualToString:wiped])) {
             apnsHex = [NSString stringWithFormat:@"🟢 ĐÃ ĐỔI MỚI: %@... (Khác cũ: %@...) ✅", [curr substringToIndex:MIN(curr.length, 10)], [wiped substringToIndex:MIN(wiped.length, 10)]];
         } else if ([rot isEqualToString:@"DUPLICATE"] || (wiped.length > 0 && curr.length > 0 && [curr isEqualToString:wiped])) {
@@ -1884,6 +1890,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.preferredCarrier = preferredCarrier ?: @"";
     [settings generateNewProfile];
     settings.lastWipedIDFV = previousIDFV;
+    NSString *oldAPNs = (settings.currentAPNsToken.length > 0) ? settings.currentAPNsToken : settings.lastKnownAPNsToken;
+    if (oldAPNs && oldAPNs.length > 0) {
+        settings.lastWipedAPNsToken = oldAPNs;
+        NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né từ Floating Menu: %@", oldAPNs);
+    }
+    settings.currentAPNsToken = @"";
+    settings.apnsRotatedStatus = @"WAITING";
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
     }

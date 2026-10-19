@@ -56,6 +56,10 @@
 @property (nonatomic, strong) NSString *proxyUser;         // Tài khoản Proxy (tuỳ chọn)
 @property (nonatomic, strong) NSString *proxyPass;         // Mật khẩu Proxy (tuỳ chọn)
 @property (nonatomic, strong) NSString *centralizedDid;       // Central Device ID từ centralized.zaloapp.com
+@property (nonatomic, strong) NSString *currentAPNsToken;      // Token APNs hiện tại của Zalo
+@property (nonatomic, strong) NSString *lastWipedAPNsToken;    // Token APNs trước lần Wipe gần nhất
+@property (nonatomic, strong) NSString *lastKnownAPNsToken;    // Token APNs đã biết gần nhất
+@property (nonatomic, strong) NSString *apnsRotatedStatus;     // Trạng thái xoay vòng APNs (@"WAITING", @"ROTATED_NEW", @"DUPLICATE", @"INITIAL_CAPTURED")
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;
