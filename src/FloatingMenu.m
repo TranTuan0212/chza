@@ -1726,6 +1726,11 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     
     NSFileManager *fm = [NSFileManager defaultManager];
     
+    // 0. Hủy đăng ký push notification với Apple Gateway
+    if ([UIApplication instancesRespondToSelector:@selector(unregisterForRemoteNotifications)]) {
+        [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+    }
+
     // 1. Xóa Clipboard để triệt tiêu mọi token tracking
     [UIPasteboard generalPasteboard].items = @[];
     [UIPasteboard generalPasteboard].string = @"";

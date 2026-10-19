@@ -14,6 +14,7 @@
 #import <stdlib.h>
 #import <dlfcn.h>
 #import <CommonCrypto/CommonCrypto.h>
+#import <Security/Security.h>
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
 static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
@@ -406,6 +407,85 @@ static void kill_all_zalo_processes(void) {
         }
     }
     [NSThread sleepForTimeInterval:0.3];
+}
+
+static void safe_purge_apple_push_cache(void) {
+    // 1. Dọn dẹp an toàn trong com.apple.apsd.plist (Chỉ xóa riêng token của Zalo, không làm hỏng app khác)
+    NSArray *possibleApsdPaths = @[
+        @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
+        @"/private/var/wireless/Library/Preferences/com.apple.apsd.plist"
+    ];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *apsdPath in possibleApsdPaths) {
+        if ([fm fileExistsAtPath:apsdPath]) {
+            NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:apsdPath];
+            if (dict) {
+                BOOL changed = NO;
+                NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
+                for (NSString *envKey in envKeys) {
+                    id envObj = dict[envKey];
+                    if ([envObj isKindOfClass:[NSDictionary class]]) {
+                        NSMutableDictionary *tokens = [envObj mutableCopy];
+                        for (NSString *bid in get_known_zalo_bundle_ids()) {
+                            if (tokens[bid]) {
+                                [tokens removeObjectForKey:bid];
+                                changed = YES;
+                            }
+                        }
+                        if (changed) {
+                            dict[envKey] = tokens;
+                        }
+                    }
+                }
+                for (NSString *bid in get_known_zalo_bundle_ids()) {
+                    if (dict[bid]) {
+                        [dict removeObjectForKey:bid];
+                        changed = YES;
+                    }
+                }
+                if (changed) {
+                    [dict writeToFile:apsdPath atomically:YES];
+                } else {
+                    // Xóa file an toàn để apsd tự động tái tạo
+                    [fm removeItemAtPath:apsdPath error:nil];
+                }
+            } else {
+                [fm removeItemAtPath:apsdPath error:nil];
+            }
+        }
+    }
+
+    // 2. Xóa push token cũ trong Keychain an toàn qua API chính chủ SecItemDelete
+    // (TUYỆT ĐỐI KHÔNG XÓA file keychain-2.db để bảo vệ an toàn 100% cho máy!)
+    NSArray *secClasses = @[
+        (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecClassInternetPassword
+    ];
+    for (id secClass in secClasses) {
+        NSMutableDictionary *query = [NSMutableDictionary dictionary];
+        query[(__bridge id)kSecClass] = secClass;
+        query[(__bridge id)kSecAttrService] = @"com.apple.pushservice";
+        SecItemDelete((__bridge CFDictionaryRef)query);
+    }
+
+    // 3. Khởi động lại daemon apsd an toàn bằng sysctl C BSD
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t size = 0;
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
+        struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+        if (procs) {
+            if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
+                int count = (int)(size / sizeof(struct kinfo_proc));
+                for (int i = 0; i < count; i++) {
+                    const char *name = procs[i].kp_proc.p_comm;
+                    if (name && (strcmp(name, "apsd") == 0 || strcmp(name, "applepushserviced") == 0)) {
+                        kill(procs[i].kp_proc.p_pid, SIGKILL);
+                    }
+                }
+            }
+            free(procs);
+        }
+    }
 }
 
 static void wipe_directory_contents(NSString *dirPath) {
@@ -1027,7 +1107,10 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     // 1. Tắt toàn bộ tiến trình
     kill_all_zalo_processes();
 
-    // 2. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
+    safe_purge_apple_push_cache();
+
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.com.vng.zalo",
