@@ -60,6 +60,32 @@
             <string>getRuntimeEnvironmentDisplayValue:</string>
         </dict>
 
+        <!-- GROUP: SAO LƯU & PHỤC HỒI (BACKUP & RESTORE) -->
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
+            <string>SAO LƯU &amp; PHỤC HỒI (BACKUP &amp; RESTORE)</string>
+            <key>footerText</key>
+            <string>Khôi phục trực tiếp file backup (.adbk của Apps Manager hoặc .zip) vào Zalo, tự động nạp đúng 100% IDFV/DID cũ và hủy mọi cờ Wipe.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>📦 Khôi Phục Tài Khoản Từ File (.adbk / .zip)</string>
+            <key>action</key>
+            <string>restoreFromBackupAction:</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSButtonCell</string>
+            <key>label</key>
+            <string>💾 Sao Lưu Tài Khoản Hiện Tại (Xuất .adbk)</string>
+            <key>action</key>
+            <string>createBackupAction:</string>
+        </dict>
+
         <!-- GROUP 2: BẢN QUYỀN THIẾT BỊ (DRM) -->
         <dict>
             <key>cell</key>

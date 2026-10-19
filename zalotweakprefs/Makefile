@@ -7,14 +7,16 @@ include $(THEOS)/makefiles/common.mk
 
 BUNDLE_NAME = ZaloTweakPrefs
 
-ZaloTweakPrefs_FILES = ZTRootListController.m ../src/SecurityManager.m ../src/DeviceProfilePool.m ../src/ZTDiagnosticViewController.m
+ZaloTweakPrefs_FILES = ZTRootListController.m ../src/SecurityManager.m ../src/DeviceProfilePool.m ../src/ZTDiagnosticViewController.m ../src/BackupManager.m
 ZaloTweakPrefs_FRAMEWORKS = UIKit Foundation Security CFNetwork
 ZaloTweakPrefs_PRIVATE_FRAMEWORKS = Preferences
 ZaloTweakPrefs_INSTALL_PATH = /Library/PreferenceBundles
-ZaloTweakPrefs_CFLAGS = -fobjc-arc -I../src -Wno-deprecated-declarations -Wno-error
+ZaloTweakPrefs_CFLAGS = -fobjc-arc -I../src -Wno-deprecated-declarations -Wno-error -fvisibility=hidden -fvisibility-inlines-hidden
 ifeq ($(THEOS_PACKAGE_SCHEME),roothide)
 ZaloTweakPrefs_CFLAGS += -DTHEOS_PACKAGE_SCHEME_ROOTHIDE=1
 endif
+ZaloTweakPrefs_LDFLAGS = -Wl,-dead_strip -Wl,-x -Wl,-S
+ZaloTweakPrefs_LIBRARIES = z
 
 include $(THEOS_MAKE_PATH)/bundle.mk
 

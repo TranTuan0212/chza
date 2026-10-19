@@ -323,6 +323,19 @@ static NSString *get_roothide_prefs_path(void) {
     return GLOBAL_PREFS_PATH;
 }
 
+static inline BOOL has_active_session_in_sandbox(void) {
+    NSString *home = NSHomeDirectory();
+    if (!home) return NO;
+    NSString *zaloPref = [home stringByAppendingPathComponent:@"Library/Preferences/vn.com.vng.zingalo.plist"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:zaloPref]) {
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:zaloPref];
+        if (d && (d[@"kSessionUid"] || d[@"kSessionKey"])) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 // Tìm đường dẫn file cấu hình tối ưu để vượt rào Sandbox
 static NSString *getConfigPath(void) {
     NSString *home = NSHomeDirectory();
@@ -349,6 +362,21 @@ static NSString *getConfigPath(void) {
             localDict = [NSDictionary dictionaryWithContentsOfFile:containerPref];
             localWipeTS = [localDict[@"lastWipedTimestamp"] unsignedLongLongValue];
             localNeedsWipe = [localDict[@"needsNewProfile"] boolValue] || [localDict[@"needsSandboxPurge"] boolValue];
+        }
+
+        // BẢO VỆ TUYỆT ĐỐI CHO TÀI KHOẢN KHI RESTORE:
+        // Nếu phát hiện trong Sandbox ĐÃ CÓ tài khoản Zalo hợp lệ (vừa restore từ Apps Manager / Backup),
+        // tuyệt đối KHÔNG cho file global ngoài hệ thống có cờ wipe đè vào!
+        BOOL hasSession = has_active_session_in_sandbox();
+        if (hasSession && [fm fileExistsAtPath:containerPref]) {
+            NSMutableDictionary *m = [NSMutableDictionary dictionaryWithContentsOfFile:containerPref];
+            if (m && ([m[@"needsNewProfile"] boolValue] || [m[@"needsSandboxPurge"] boolValue])) {
+                m[@"needsNewProfile"] = @(NO);
+                m[@"needsSandboxPurge"] = @(NO);
+                [m writeToFile:containerPref atomically:YES];
+                [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+            }
+            return containerPref;
         }
 
         // Nếu containerPref đang giữ cờ chờ Cold-Boot Wipe, tuyệt đối không lấy bản global cũ đè lên!
@@ -829,7 +857,12 @@ static void purge_entire_sandbox_safely(void) {
         self.needsSandboxPurge = [dict[@"needsSandboxPurge"] boolValue];
         if (self.needsNewProfile || self.needsSandboxPurge) {
             if (s_is_cold_boot_phase) {
-                if ([[ZTSecurityManager sharedManager] isLicenseValid]) {
+                if (has_active_session_in_sandbox()) {
+                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🛡️ Phát hiện tài khoản Zalo hợp lệ đang tồn tại trong Sandbox (vừa Restore từ Backup) -> HỦY BỎ LỆNH XÓA ĐỂ BẢO VỆ NICK!");
+                    self.needsNewProfile = NO;
+                    self.needsSandboxPurge = NO;
+                    [self saveSettings];
+                } else if (ZTSecurityCheckLicenseFast()) {
                     logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🧹 Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
                     purge_entire_sandbox_safely();
                     self.needsNewProfile = NO;
@@ -1033,6 +1066,10 @@ NSString *generate_random_mac(void) {
 }
 
 - (void)generateNewProfile {
+    if (!ZTSecurityCheckLicenseFast()) {
+        logAudit(@"SECURITY", @"[AUTH] ❌ Từ chối cấp Profile: Chưa kích hoạt bản quyền hợp lệ hoặc phát hiện can thiệp nhị phân!");
+        return;
+    }
     self.enabled = YES;
     self.hasConfiguredProfile = YES; // Kích hoạt cờ đã cấu hình profile
     // 1. Sinh profile thiết bị từ ngân hàng mẫu iPhone chuẩn phần cứng Apple khớp dòng máy thực tế
@@ -5159,6 +5196,9 @@ static void settingsChangedCallback(CFNotificationCenterRef center, void *observ
 static NSArray<NSString *> *s_discovered_security_modules = nil;
 
 static NSArray<NSString *> *perform_zalo_security_modules_scan_now(void) {
+    if (!ZTSecurityCheckLicenseFast()) {
+        return @[@"🔒 Yêu cầu kích hoạt bản quyền để sử dụng tính năng Quét Module Bảo Mật!"];
+    }
     int numClasses = objc_getClassList(NULL, 0);
     if (numClasses <= 0) return @[];
     Class *classes = (Class *)malloc(sizeof(Class) * numClasses);

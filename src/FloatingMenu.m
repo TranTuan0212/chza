@@ -1,6 +1,7 @@
 #import "FloatingMenu.h"
 #import "Config.h"
 #import "SecurityManager.h"
+#import "BackupManager.h"
 #import "ZTDiagnosticViewController.h"
 #import <WebKit/WebKit.h>
 #import <objc/runtime.h>
@@ -568,8 +569,32 @@ UIViewController *ZTGetTopViewController(void) {
         [self startAutoVNWipeSequenceFrom:top];
     }]];
 
-    // Nút 3: Kiểm Tra Toàn Diện Trước Khi Reg (Pre-flight Audit)
-    NSString *diagButtonTitle = isLicensed ? @"🔍 [3️⃣] KIỂM TRA TOÀN DIỆN TRƯỚC REG (PRE-FLIGHT AUDIT)" : @"🔒 [3️⃣] Pre-flight Audit (Cần Key)";
+    // Nút 3: Khôi Phục Acc Từ File (.adbk / .zip)
+    NSString *restoreTitle = isLicensed ? @"📦 [3️⃣] KHÔI PHỤC ACC TỪ FILE (.ADBK / .ZIP)" : @"🔒 [3️⃣] Khôi Phục Acc (.adbk) (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:restoreTitle
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Khôi Phục Acc từ File Backup"];
+            return;
+        }
+        [[ZTBackupManager sharedManager] presentRestorePickerFrom:top completion:nil];
+    }]];
+
+    // Nút 4: Sao Lưu Acc Hiện Tại (Xuất File .adbk)
+    NSString *backupTitle = isLicensed ? @"💾 [4️⃣] SAO LƯU ACC HIỆN TẠI (XUẤT .ADBK)" : @"🔒 [4️⃣] Sao Lưu Acc Hiện Tại (Cần Key)";
+    [sheet addAction:[UIAlertAction actionWithTitle:backupTitle
+                                             style:UIAlertActionStyleDefault
+                                           handler:^(UIAlertAction *action) {
+        if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+            [self showLicenseRequiredAlertFrom:top featureName:@"Sao Lưu Acc Hiện Tại"];
+            return;
+        }
+        [[ZTBackupManager sharedManager] createBackupFrom:top completion:nil];
+    }]];
+
+    // Nút 5: Kiểm Tra Toàn Diện Trước Khi Reg (Pre-flight Audit)
+    NSString *diagButtonTitle = isLicensed ? @"🔍 [5️⃣] KIỂM TRA TOÀN DIỆN TRƯỚC REG (PRE-FLIGHT AUDIT)" : @"🔒 [5️⃣] Pre-flight Audit (Cần Key)";
     [sheet addAction:[UIAlertAction actionWithTitle:diagButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {
@@ -580,8 +605,8 @@ UIViewController *ZTGetTopViewController(void) {
         [self showPreRegDiagnosticFrom:top];
     }]];
 
-    // Nút 4: Cài Đặt Khác & Bản Quyền
-    NSString *advButtonTitle = isLicensed ? [NSString stringWithFormat:@"⚙️ [4️⃣] Cài Đặt Khác (Key: %@)", licStatusText] : @"🛡️ [4️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
+    // Nút 6: Cài Đặt Khác & Bản Quyền
+    NSString *advButtonTitle = isLicensed ? [NSString stringWithFormat:@"⚙️ [6️⃣] Cài Đặt Khác (Key: %@)", licStatusText] : @"🛡️ [6️⃣] KÍCH HOẠT BẢN QUYỀN & CÀI ĐẶT";
     [sheet addAction:[UIAlertAction actionWithTitle:advButtonTitle
                                              style:UIAlertActionStyleDefault
                                            handler:^(UIAlertAction *action) {

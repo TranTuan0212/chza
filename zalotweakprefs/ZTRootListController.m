@@ -1,5 +1,6 @@
 #import "ZTRootListController.h"
 #import "SecurityManager.h"
+#import "BackupManager.h"
 #import "DeviceProfilePool.h"
 #import "ZTDiagnosticViewController.h"
 #import <UIKit/UIKit.h>
@@ -887,6 +888,34 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     [alert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
 
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)restoreFromBackupAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                        message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng tính năng Khôi Phục Tài Khoản."
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [[ZTBackupManager sharedManager] presentRestorePickerFrom:self completion:^(BOOL success, NSString *message) {
+        if (success) {
+            [self reloadSpecifiers];
+        }
+    }];
+}
+
+- (void)createBackupAction:(PSSpecifier *)specifier {
+    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
+                                                                        message:@"Vui lòng kích hoạt License Key hợp lệ ở phía dưới trước khi sử dụng tính năng Sao Lưu Tài Khoản."
+                                                                 preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    [[ZTBackupManager sharedManager] createBackupFrom:self completion:nil];
 }
 
 - (void)applyAndWipeCleanSequence:(PSSpecifier *)specifier {

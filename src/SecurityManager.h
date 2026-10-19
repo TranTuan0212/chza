@@ -34,4 +34,18 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Kiểm tra bản quyền thời gian thực ở tầng C (Bypass qua Objective-C runtime, miễn nhiễm Flex 3 / Frida)
+BOOL ZTSecurityCheckLicenseFast(void);
+
+// Kiểm tra phát hiện can thiệp/bẻ khóa (Debug, Swizzle, ARM64 Hook)
+BOOL ZTSecurityDetectTampering(void);
+
+#ifdef __cplusplus
+}
+#endif
+
 NS_ASSUME_NONNULL_END

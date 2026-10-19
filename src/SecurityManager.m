@@ -1,4 +1,5 @@
 #import "SecurityManager.h"
+#import "Obfuscation.h"
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <sys/sysctl.h>
@@ -6,16 +7,16 @@
 #import <CommonCrypto/CommonHMAC.h>
 #import <CommonCrypto/CommonDigest.h>
 
-#define SUPABASE_RPC_URL @"https://litfhujpobscqwpuhzvv.supabase.co/rest/v1/rpc/verify_license"
-#define SUPABASE_API_KEY @"sb_publishable_4FuIC_rnNLkbihAIiTLUaA_f15jK9f3"
-#define SHARED_SECRET_SALT @"ZaloTweakSecuredSalt2026!@#$"
-#define LICENSE_STORAGE_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist"
+#define SUPABASE_RPC_URL        GET_SUPABASE_RPC_URL()
+#define SUPABASE_API_KEY        GET_SUPABASE_API_KEY()
+#define SHARED_SECRET_SALT      GET_SHARED_SECRET_SALT()
+#define LICENSE_STORAGE_PATH    GET_LICENSE_STORAGE_PATH()
 
 static NSString *get_roothide_license_path(void) {
     typedef const char* (*jbroot_fn_t)(const char*);
     jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
     if (jbroot_fn) {
-        const char *p = jbroot_fn("/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist");
+        const char *p = jbroot_fn([LICENSE_STORAGE_PATH UTF8String]);
         if (p) return [NSString stringWithUTF8String:p];
     }
     return LICENSE_STORAGE_PATH;
@@ -29,7 +30,20 @@ static NSString *get_roothide_license_path(void) {
 @property (nonatomic, assign) NSTimeInterval lastCheckTime;
 @end
 
+static uint64_t s_cached_guard_token = 0;
+static IMP s_expected_isLicenseValid_imp = NULL;
+
 @implementation ZTSecurityManager
+
++ (void)load {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        Method m = class_getInstanceMethod([ZTSecurityManager class], @selector(isLicenseValid));
+        if (m) {
+            s_expected_isLicenseValid_imp = method_getImplementation(m);
+        }
+    });
+}
 
 + (instancetype)sharedManager {
     static ZTSecurityManager *instance = nil;
@@ -169,34 +183,34 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
 
     // 5. Fallback đọc từ CFPreferences (cfprefsd - hỗ trợ vượt rào sandbox hoàn hảo)
     if (!dict) {
-        CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
-        CFDictionaryRef cfDict = CFPreferencesCopyMultiple(NULL, CFSTR("com.sonhu.zalotweak.license"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
+        CFPreferencesAppSynchronize((__bridge CFStringRef)GET_PREFS_ID());
+        CFDictionaryRef cfDict = CFPreferencesCopyMultiple(NULL, (__bridge CFStringRef)GET_PREFS_ID(), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
         if (cfDict) {
             dict = [NSDictionary dictionaryWithDictionary:(__bridge NSDictionary *)cfDict];
             CFRelease(cfDict);
-            if (dict.count > 0 && dict[@"license_key"] && dict[@"token"]) {
-                loadedFrom = @"cfprefsd:com.sonhu.zalotweak.license";
+            if (dict.count > 0 && (dict[GET_KEY_LICENSE_KEY()] || dict[@"license_key"]) && (dict[GET_KEY_TOKEN()] || dict[@"token"])) {
+                loadedFrom = [NSString stringWithFormat:@"cfprefsd:%@", GET_PREFS_ID()];
             } else {
                 dict = nil;
             }
         }
     }
     if (!dict) {
-        id k = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("license_key"), CFSTR("com.sonhu.zalotweak.license"));
-        id t = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("token"), CFSTR("com.sonhu.zalotweak.license"));
-        id exp = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("expires_at"), CFSTR("com.sonhu.zalotweak.license"));
-        id chk = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("last_check"), CFSTR("com.sonhu.zalotweak.license"));
-        id rudid = (__bridge_transfer id)CFPreferencesCopyAppValue(CFSTR("real_udid"), CFSTR("com.sonhu.zalotweak.license"));
+        id k = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_LICENSE_KEY(), (__bridge CFStringRef)GET_PREFS_ID());
+        id t = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_TOKEN(), (__bridge CFStringRef)GET_PREFS_ID());
+        id exp = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_EXPIRES_AT(), (__bridge CFStringRef)GET_PREFS_ID());
+        id chk = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_LAST_CHECK(), (__bridge CFStringRef)GET_PREFS_ID());
+        id rudid = (__bridge_transfer id)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_REAL_UDID(), (__bridge CFStringRef)GET_PREFS_ID());
         if (k && t && exp) {
             NSMutableDictionary *m = [NSMutableDictionary dictionaryWithDictionary:@{
-                @"license_key": k,
-                @"token": t,
-                @"expires_at": exp,
-                @"last_check": chk ?: @([[NSDate date] timeIntervalSince1970])
+                GET_KEY_LICENSE_KEY(): k,
+                GET_KEY_TOKEN(): t,
+                GET_KEY_EXPIRES_AT(): exp,
+                GET_KEY_LAST_CHECK(): chk ?: @([[NSDate date] timeIntervalSince1970])
             }];
-            if (rudid) m[@"real_udid"] = rudid;
+            if (rudid) m[GET_KEY_REAL_UDID()] = rudid;
             dict = m;
-            loadedFrom = @"cfprefsd:com.sonhu.zalotweak.license";
+            loadedFrom = [NSString stringWithFormat:@"cfprefsd:%@", GET_PREFS_ID()];
         }
     }
 
@@ -205,10 +219,10 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         return;
     }
 
-    NSString *savedKey = dict[@"license_key"];
-    NSString *savedToken = dict[@"token"];
-    NSString *savedExpiryStr = dict[@"expires_at"];
-    NSTimeInterval savedCheck = [dict[@"last_check"] doubleValue];
+    NSString *savedKey = dict[GET_KEY_LICENSE_KEY()] ?: dict[@"license_key"];
+    NSString *savedToken = dict[GET_KEY_TOKEN()] ?: dict[@"token"];
+    NSString *savedExpiryStr = dict[GET_KEY_EXPIRES_AT()] ?: dict[@"expires_at"];
+    NSTimeInterval savedCheck = [(dict[GET_KEY_LAST_CHECK()] ?: dict[@"last_check"]) doubleValue];
 
     if (!savedKey || !savedToken || !savedExpiryStr) {
         self.isLicenseActive = NO;
@@ -253,10 +267,11 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     }
 
     // Lấy UDID hợp lệ (ưu tiên UDID đã được lưu từ Cài Đặt Settings để vượt rào Sandbox Zalo)
+    // Lấy UDID hợp lệ (ưu tiên UDID đã được lưu từ Cài Đặt Settings để vượt rào Sandbox Zalo)
     NSString *effectiveUDID = self.realUDID;
-    NSString *savedUDID = dict[@"real_udid"];
+    NSString *savedUDID = dict[GET_KEY_REAL_UDID()] ?: dict[@"real_udid"];
     if (!savedUDID || savedUDID.length == 0) {
-        savedUDID = (__bridge_transfer NSString *)CFPreferencesCopyAppValue(CFSTR("real_udid"), CFSTR("com.sonhu.zalotweak.license"));
+        savedUDID = (__bridge_transfer NSString *)CFPreferencesCopyAppValue((__bridge CFStringRef)GET_KEY_REAL_UDID(), (__bridge CFStringRef)GET_PREFS_ID());
     }
     if (savedUDID && savedUDID.length >= 16) {
         effectiveUDID = [savedUDID lowercaseString];
@@ -272,6 +287,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         self.expiryDate = expDate;
         self.lastCheckTime = savedCheck;
         self.realUDID = effectiveUDID;
+        s_cached_guard_token = (uint64_t)[expDate timeIntervalSince1970] ^ 0xA5A55A5ADEADBEEFULL;
 
         // Nếu file được đọc từ nguồn khác (ví dụ Global hay AppGroup), tự động copy lưu vào container hiện tại để truy xuất nhanh
         if (loadedFrom && ![loadedFrom isEqualToString:path]) {
@@ -281,17 +297,18 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
         }
     } else {
         self.isLicenseActive = NO; // Token bị can thiệp!
+        s_cached_guard_token = 0;
     }
 }
 
 // 4. LƯU THÔNG TIN BẢN QUYỀN
 - (void)saveLicenseWithKey:(NSString *)key expiresAt:(NSString *)expiryStr token:(NSString *)token {
     NSMutableDictionary *dict = [NSMutableDictionary dictionary];
-    dict[@"license_key"] = key;
-    dict[@"expires_at"] = expiryStr;
-    dict[@"token"] = token;
-    dict[@"real_udid"] = self.realUDID ?: @"";
-    dict[@"last_check"] = @([[NSDate date] timeIntervalSince1970]);
+    dict[GET_KEY_LICENSE_KEY()] = key;
+    dict[GET_KEY_EXPIRES_AT()] = expiryStr;
+    dict[GET_KEY_TOKEN()] = token;
+    dict[GET_KEY_REAL_UDID()] = self.realUDID ?: @"";
+    dict[GET_KEY_LAST_CHECK()] = @([[NSDate date] timeIntervalSince1970]);
 
     // 1. Lưu tại getLicenseFilePath
     NSString *path = [self getLicenseFilePath];
@@ -332,12 +349,12 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     }
 
     // 5. Lưu vào CFPreferences để cfprefsd đồng bộ xuyên sandbox
-    CFPreferencesSetAppValue(CFSTR("license_key"), (__bridge CFPropertyListRef)key, CFSTR("com.sonhu.zalotweak.license"));
-    CFPreferencesSetAppValue(CFSTR("expires_at"), (__bridge CFPropertyListRef)expiryStr, CFSTR("com.sonhu.zalotweak.license"));
-    CFPreferencesSetAppValue(CFSTR("token"), (__bridge CFPropertyListRef)token, CFSTR("com.sonhu.zalotweak.license"));
-    if (self.realUDID) CFPreferencesSetAppValue(CFSTR("real_udid"), (__bridge CFPropertyListRef)self.realUDID, CFSTR("com.sonhu.zalotweak.license"));
-    CFPreferencesSetAppValue(CFSTR("last_check"), (__bridge CFPropertyListRef)@([[NSDate date] timeIntervalSince1970]), CFSTR("com.sonhu.zalotweak.license"));
-    CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak.license"));
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_LICENSE_KEY(), (__bridge CFPropertyListRef)key, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_EXPIRES_AT(), (__bridge CFPropertyListRef)expiryStr, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_TOKEN(), (__bridge CFPropertyListRef)token, (__bridge CFStringRef)GET_PREFS_ID());
+    if (self.realUDID) CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_REAL_UDID(), (__bridge CFPropertyListRef)self.realUDID, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_LAST_CHECK(), (__bridge CFPropertyListRef)@([[NSDate date] timeIntervalSince1970]), (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesAppSynchronize((__bridge CFStringRef)GET_PREFS_ID());
 
     [self loadCachedLicense];
 }
@@ -353,14 +370,69 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
 
 // 5. KIỂM TRA BẢN QUYỀN REALTIME (ĐƯỢC GỌI TỪ TWEAK.X)
 - (BOOL)isLicenseValid {
-    if (!self.isLicenseActive || !self.expiryDate) {
+    return ZTSecurityCheckLicenseFast();
+}
+
+// ==============================================================================
+// C-LEVEL FAST LICENSE CHECK & ANTI-TAMPER IMPLEMENTATION
+// ==============================================================================
+
+BOOL ZTSecurityDetectTampering(void) {
+    // 1. Kiểm tra debugger (LLDB, DebugServer, GDB, IDA Pro)
+    if (zt_is_debugger_attached()) {
+        return YES;
+    }
+
+    // 2. Kiểm tra ARM64 function prologue của hàm kiểm tra bản quyền (Anti-Dobby/Anti-Substrate/Anti-Frida/Anti-HexPatch)
+    if (!zt_verify_code_prologue((const void *)&ZTSecurityCheckLicenseFast)) {
+        return YES;
+    }
+
+    // 3. Kiểm tra Flex 3 / Frida swizzling trên -[ZTSecurityManager isLicenseValid]
+    if (s_expected_isLicenseValid_imp) {
+        Method m = class_getInstanceMethod([ZTSecurityManager class], @selector(isLicenseValid));
+        if (m) {
+            IMP cur = method_getImplementation(m);
+#if defined(__has_feature)
+#if __has_feature(ptrauth_calls)
+            cur = (IMP)__builtin_ptrauth_strip((void *)cur, 0);
+            IMP exp = (IMP)__builtin_ptrauth_strip((void *)s_expected_isLicenseValid_imp, 0);
+            if (cur != exp) return YES;
+#else
+            if (cur != s_expected_isLicenseValid_imp) return YES;
+#endif
+#else
+            if (cur != s_expected_isLicenseValid_imp) return YES;
+#endif
+        }
+    }
+    return NO;
+}
+
+BOOL ZTSecurityCheckLicenseFast(void) {
+    // Nếu phát hiện can thiệp debug, hook, hay swizzle -> từ chối bản quyền
+    if (ZTSecurityDetectTampering()) {
         return NO;
     }
-    // Đảm bảo thời gian hiện tại chưa vượt quá expiryDate
-    if ([[NSDate date] compare:self.expiryDate] == NSOrderedDescending) {
-        self.isLicenseActive = NO;
+
+    ZTSecurityManager *mgr = [ZTSecurityManager sharedManager];
+    if (!mgr.isLicenseActive || !mgr.expiryDate) {
         return NO;
     }
+
+    // Kiểm tra guard token để chống cracker can thiệp sửa trực tiếp property isLicenseActive = YES
+    uint64_t expected_guard = (uint64_t)[mgr.expiryDate timeIntervalSince1970] ^ 0xA5A55A5ADEADBEEFULL;
+    if (s_cached_guard_token != expected_guard) {
+        return NO;
+    }
+
+    // Kiểm tra hết hạn thời gian thực
+    if ([[NSDate date] compare:mgr.expiryDate] == NSOrderedDescending) {
+        mgr.isLicenseActive = NO;
+        s_cached_guard_token = 0;
+        return NO;
+    }
+
     return YES;
 }
 
@@ -427,8 +499,8 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:SUPABASE_RPC_URL]];
     [request setHTTPMethod:@"POST"];
     [request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-    [request setValue:SUPABASE_API_KEY forHTTPHeaderField:@"apikey"];
-    [request setValue:[NSString stringWithFormat:@"Bearer %@", SUPABASE_API_KEY] forHTTPHeaderField:@"Authorization"];
+    [request setValue:SUPABASE_API_KEY forHTTPHeaderField:GET_APIKEY_HEADER()];
+    [request setValue:[NSString stringWithFormat:@"%@%@", GET_BEARER_PREFIX(), SUPABASE_API_KEY] forHTTPHeaderField:GET_AUTH_HEADER()];
     [request setHTTPBody:postData];
     [request setTimeoutInterval:15.0];
 
@@ -484,6 +556,7 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
     self.isLicenseActive = NO;
     self.currentLicenseKey = nil;
     self.expiryDate = nil;
+    s_cached_guard_token = 0;
 
     NSString *path = [self getLicenseFilePath];
     [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
@@ -503,6 +576,11 @@ static NSString *computeHMACSHA256(NSString *data, NSString *key) {
             [[NSFileManager defaultManager] removeItemAtPath:grpFile error:nil];
         }
     }
+
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_LICENSE_KEY(), NULL, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_EXPIRES_AT(), NULL, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesSetAppValue((__bridge CFStringRef)GET_KEY_TOKEN(), NULL, (__bridge CFStringRef)GET_PREFS_ID());
+    CFPreferencesAppSynchronize((__bridge CFStringRef)GET_PREFS_ID());
 }
 
 @end
