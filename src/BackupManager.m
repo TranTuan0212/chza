@@ -816,7 +816,7 @@ static void zt_add_directory_to_zip(FILE *zipFp, NSFileManager *fm, NSString *di
             *(uint16_t *)(cdHead + 32) = 0; // Comment len
             *(uint16_t *)(cdHead + 34) = 0; // Disk start
             *(uint16_t *)(cdHead + 36) = 0; // Internal attr
-            *(uint32_t *)(cdHead + 38) = 081A40000; // External attr (0644)
+            *(uint32_t *)(cdHead + 38) = 0x81A40000; // External attr (0644 in hex)
             *(uint32_t *)(cdHead + 42) = entry.local_offset;
 
             fwrite(cdHead, 1, 46, zipFp);
