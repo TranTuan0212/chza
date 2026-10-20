@@ -36,7 +36,12 @@ jobs:
         run: |
           make clean
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1
-          mv packages/*.deb output/ZaloTweak_rootless.deb
+          DEB_ROOTLESS=$(ls packages/*.deb | head -n 1)
+          mkdir -p /tmp/repack_rootless
+          dpkg-deb -R "$DEB_ROOTLESS" /tmp/repack_rootless
+          # Đảm bảo trường Architecture trong control của bản Rootless luôn là iphoneos-arm64
+          sed -i '' 's/^Architecture:.*/Architecture: iphoneos-arm64/' /tmp/repack_rootless/DEBIAN/control
+          dpkg-deb -b /tmp/repack_rootless output/ZaloTweak_rootless.deb
           
           # Trích xuất dylib để chích vào Zalo Clone IPA
           find .theos/ -name "Zalotweak.dylib" -exec cp {} output/ \; 2>/dev/null || true
