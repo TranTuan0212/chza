@@ -1937,8 +1937,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         settings.timeZoneName = targetTimeZone;
     }
     settings.enableFakeTimeZone = YES;
-    settings.needsNewProfile = YES;
-    settings.needsSandboxPurge = YES;
+    settings.needsNewProfile = NO;
+    settings.needsSandboxPurge = NO;
     BOOL isJB = NO;
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
     isJB = YES;

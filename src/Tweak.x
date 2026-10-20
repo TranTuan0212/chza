@@ -890,7 +890,9 @@ static void purge_entire_sandbox_safely(void) {
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
                     NSString *savedTZ = dict[@"timeZoneName"];
-                    [self generateNewProfile];
+                    if (!self.hasConfiguredProfile || self.spoofedIDFV.length == 0 || self.spoofedSerial.length == 0) {
+                        [self generateNewProfile];
+                    }
                     if (savedTZ.length > 0) {
                         self.timeZoneName = savedTZ;
                     }

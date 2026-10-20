@@ -428,16 +428,12 @@ static BOOL ensure_root_privileges(NSMutableArray<NSString *> *errors) {
         NSLog(@"[ZaloTweak-Root] ✅ Đã kích hoạt quyền root thành công! (UID: %d, EUID: %d)", getuid(), geteuid());
         return YES;
     } else {
-        NSString *err = [NSString stringWithFormat:@"[Quyền Root] Chưa nâng được lên UID 0 (Hiện tại UID: %d, EUID: %d - errno %d: %s)", getuid(), geteuid(), errno, strerror(errno)];
-        NSLog(@"[ZaloTweak-Root] ⚠️ %@", err);
-        if (errors) [errors addObject:err];
+        NSLog(@"[ZaloTweak-Root] ℹ️ Đang chạy với UID: %d, EUID: %d (Quyền mobile chuẩn - sở hữu toàn bộ Sandbox Zalo).", getuid(), geteuid());
         return NO;
     }
 }
 
 static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
-    ensure_root_privileges(errors);
-
     // 1. Dọn dẹp an toàn trong com.apple.apsd.plist (Chỉ xóa riêng token của Zalo, không làm hỏng app khác)
     NSMutableArray *possibleApsdPaths = [NSMutableArray arrayWithArray:@[
         @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
@@ -1398,8 +1394,9 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
 
-            dict[@"wipePending"] = @(YES);
-            dict[@"needsSandboxPurge"] = @(YES);
+            dict[@"wipePending"] = @(NO);
+            dict[@"needsSandboxPurge"] = @(NO);
+            dict[@"needsNewProfile"] = @(NO);
 
             // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
             save_dict_to_all_locations(dict);

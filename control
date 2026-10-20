@@ -1,7 +1,7 @@
 Package: com.sonhu.zalotweak
 Name: ZaloTweak
 Depends: firmware (>= 14.0)
-Version: 1.0.1
+Version: 1.0.2
 Architecture: iphoneos-arm64
 Description: Device Spoofer & Keychain Isolator for Zalo iOS with Settings Menu
 Maintainer: sonhu
