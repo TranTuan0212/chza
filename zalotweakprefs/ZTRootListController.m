@@ -2011,7 +2011,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
             [fm removeItemAtPath:targetIpa error:nil];
 
-            BOOL zipSuccess = NO;
+            __block BOOL zipSuccess = NO;
             const char *zipBins[] = {"/var/jb/usr/bin/zip", "/var/jb/bin/zip", "/usr/bin/zip", "/bin/zip", NULL};
             for (int i = 0; zipBins[i] != NULL && !zipSuccess; i++) {
                 if (access(zipBins[i], X_OK) == 0) {
