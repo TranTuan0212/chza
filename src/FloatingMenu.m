@@ -538,10 +538,11 @@ UIViewController *ZTGetTopViewController(void) {
     NSString *simDisplay = settings.carrierName.length > 0 ? settings.carrierName : ([settings.regionMode isEqualToString:@"US"] ? @"T-Mobile" : @"Viettel");
     NSString *tzDisplay = settings.timeZoneName.length > 0 ? settings.timeZoneName : ([settings.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
 
-    NSString *vShort = settings.currentVoIPToken.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentVoIPToken substringToIndex:8]] : (settings.currentVoIPToken.length > 0 ? settings.currentVoIPToken : @"Chờ cấp");
-    NSString *zShort = settings.currentZCID.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentZCID substringToIndex:8]] : (settings.currentZCID.length > 0 ? settings.currentZCID : @"Tự sinh");
-    NSString *message = [NSString stringWithFormat:@"📱 THÔNG SỐ ĐANG DÙNG:\n• Khu Vực: %@ | SIM: %@\n• Múi Giờ: %@\n• Thiết Bị: %@\n• PushKit VoIP: %@ | zcid: %@",
-                         regionDisplay, simDisplay, tzDisplay, deviceDisplay, vShort, zShort];
+    NSString *apnsShort = settings.currentAPNsToken.length > 8 ? [NSString stringWithFormat:@"%@... (%lu ký tự)", [settings.currentAPNsToken substringToIndex:8], (unsigned long)settings.currentAPNsToken.length] : (settings.currentAPNsToken.length > 0 ? settings.currentAPNsToken : @"Chờ cấp ⏳");
+    NSString *vShort = settings.currentVoIPToken.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentVoIPToken substringToIndex:8]] : (settings.currentVoIPToken.length > 0 ? settings.currentVoIPToken : @"Chờ cấp ⏳");
+    NSString *zShort = settings.currentZCID.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentZCID substringToIndex:8]] : (settings.currentZCID.length > 0 ? settings.currentZCID : @"Tự sinh ⏳");
+    NSString *message = [NSString stringWithFormat:@"📱 THÔNG SỐ ĐANG DÙNG:\n• Khu Vực: %@ | SIM: %@\n• Múi Giờ: %@\n• Thiết Bị: %@\n• Token APNs: %@\n• PushKit VoIP: %@ | zcid: %@",
+                         regionDisplay, simDisplay, tzDisplay, deviceDisplay, apnsShort, vShort, zShort];
 
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🛡️ ZALOTWEAK - MENU CHÍNH"
                                                                    message:message
@@ -1987,6 +1988,15 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
     settings.currentAPNsToken = @"";
     settings.apnsRotatedStatus = @"WAITING";
+    if (settings.currentZCID.length > 0) {
+        settings.lastWipedZCID = settings.currentZCID;
+    }
+    if (settings.currentVoIPToken.length > 0) {
+        settings.lastWipedVoIPToken = settings.currentVoIPToken;
+    }
+    settings.currentZCID = @"";
+    settings.currentVoIPToken = @"";
+    settings.centralizedDid = @"";
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
     }

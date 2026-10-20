@@ -80,12 +80,19 @@ static NSDictionary *load_current_prefs_dict(void) {
         for (NSString *container in containers) {
             NSString *sandboxPref = [container stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
             NSDictionary *sDict = [NSDictionary dictionaryWithContentsOfFile:sandboxPref];
-            NSString *token = sDict[@"currentAPNsToken"];
-            if (token && token.length > 0) {
-                dict[@"currentAPNsToken"] = token;
-                if (sDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = sDict[@"apnsRotatedStatus"];
-                if (sDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = sDict[@"lastWipedAPNsToken"];
-                break;
+            if (sDict) {
+                NSString *token = sDict[@"currentAPNsToken"];
+                if (token && token.length > 0) {
+                    dict[@"currentAPNsToken"] = token;
+                    if (sDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = sDict[@"apnsRotatedStatus"];
+                    if (sDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = sDict[@"lastWipedAPNsToken"];
+                }
+                if (sDict[@"currentVoIPToken"]) dict[@"currentVoIPToken"] = sDict[@"currentVoIPToken"];
+                if (sDict[@"lastWipedVoIPToken"]) dict[@"lastWipedVoIPToken"] = sDict[@"lastWipedVoIPToken"];
+                if (sDict[@"currentZCID"]) dict[@"currentZCID"] = sDict[@"currentZCID"];
+                if (sDict[@"lastWipedZCID"]) dict[@"lastWipedZCID"] = sDict[@"lastWipedZCID"];
+                if (sDict[@"centralizedDid"]) dict[@"centralizedDid"] = sDict[@"centralizedDid"];
+                if (token && token.length > 0) break;
             }
         }
         if (!dict[@"currentAPNsToken"] || [dict[@"currentAPNsToken"] length] == 0) {
@@ -93,12 +100,19 @@ static NSDictionary *load_current_prefs_dict(void) {
             for (NSString *grp in groups) {
                 NSString *grpPref = [grp stringByAppendingPathComponent:@"com.sonhu.zalotweak.plist"];
                 NSDictionary *gDict = [NSDictionary dictionaryWithContentsOfFile:grpPref];
-                NSString *token = gDict[@"currentAPNsToken"];
-                if (token && token.length > 0) {
-                    dict[@"currentAPNsToken"] = token;
-                    if (gDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = gDict[@"apnsRotatedStatus"];
-                    if (gDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = gDict[@"lastWipedAPNsToken"];
-                    break;
+                if (gDict) {
+                    NSString *token = gDict[@"currentAPNsToken"];
+                    if (token && token.length > 0) {
+                        dict[@"currentAPNsToken"] = token;
+                        if (gDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = gDict[@"apnsRotatedStatus"];
+                        if (gDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = gDict[@"lastWipedAPNsToken"];
+                    }
+                    if (gDict[@"currentVoIPToken"]) dict[@"currentVoIPToken"] = gDict[@"currentVoIPToken"];
+                    if (gDict[@"lastWipedVoIPToken"]) dict[@"lastWipedVoIPToken"] = gDict[@"lastWipedVoIPToken"];
+                    if (gDict[@"currentZCID"]) dict[@"currentZCID"] = gDict[@"currentZCID"];
+                    if (gDict[@"lastWipedZCID"]) dict[@"lastWipedZCID"] = gDict[@"lastWipedZCID"];
+                    if (gDict[@"centralizedDid"]) dict[@"centralizedDid"] = gDict[@"centralizedDid"];
+                    if (token && token.length > 0) break;
                 }
             }
         }
@@ -1359,7 +1373,18 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             if (oldIDFV && oldIDFV.length > 0) {
                 dict[@"lastWipedIDFV"] = oldIDFV;
             }
+            NSString *oldZcid = dict[@"currentZCID"];
+            if (oldZcid && oldZcid.length > 0) {
+                dict[@"lastWipedZCID"] = oldZcid;
+            }
+            NSString *oldVoIP = dict[@"currentVoIPToken"];
+            if (oldVoIP && oldVoIP.length > 0) {
+                dict[@"lastWipedVoIPToken"] = oldVoIP;
+            }
             dict[@"currentAPNsToken"] = @"";
+            dict[@"currentVoIPToken"] = @"";
+            dict[@"currentZCID"] = @"";
+            dict[@"centralizedDid"] = @"";
             dict[@"apnsRotatedStatus"] = @"WAITING";
             dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
 
@@ -1470,10 +1495,16 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedSerial"] = p.spoofedSerial;
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
+            dict[@"birthTimeSec"] = @(p.birthTimeSec);
+            dict[@"l2cacheSize"] = @(p.l2cacheSize);
+            dict[@"localeIdentifier"] = p.localeIdentifier ?: @"vi_VN";
+            dict[@"timeZoneName"] = p.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+            if (p.preferredLanguages) dict[@"preferredLanguages"] = p.preferredLanguages;
+            dict[@"spoofedScreenSize"] = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%dx%d", (int)(p.screenWidth * p.screenScale), (int)(p.screenHeight * p.screenScale)];
 
             dict[@"wipePending"] = @(YES);
             dict[@"needsAPNsUnregister"] = @(YES);
-            dict[@"needsSandboxPurge"] = @(NO);
+            dict[@"needsSandboxPurge"] = @(YES);
             dict[@"needsNewProfile"] = @(NO);
 
             // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
@@ -2029,25 +2060,11 @@ static NSString *findAuditLogPath(void) {
     info.runtimeEnvDesc = [self getRuntimeEnvironmentDisplayValue:nil];
 
     // 6. Push Tokens & Tiêu chuẩn Preflight Kiểm tra Độ sạch
-    NSString *spIdfv = dict[@"spoofedIDFV"];
-    if (hasConfigured && spIdfv.length > 0) {
-        NSString *seedA = [NSString stringWithFormat:@"APNS:%@", spIdfv];
-        const char *cA = [seedA UTF8String];
-        uint8_t digA[CC_SHA256_DIGEST_LENGTH];
-        CC_SHA256(cA, (CC_LONG)strlen(cA), digA);
-        info.apnsPushStatus = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x... (32B SHA256)", digA[0], digA[1], digA[2], digA[3], digA[4], digA[5]];
-
-        NSString *seedV = [NSString stringWithFormat:@"VOIP:%@", spIdfv];
-        const char *cV = [seedV UTF8String];
-        uint8_t digV[CC_SHA256_DIGEST_LENGTH];
-        CC_SHA256(cV, (CC_LONG)strlen(cV), digV);
-        info.voipPushStatus = [NSString stringWithFormat:@"%02x%02x%02x%02x%02x%02x... (32B SHA256)", digV[0], digV[1], digV[2], digV[3], digV[4], digV[5]];
-        info.pushTokenPassed = YES;
-    } else {
-        info.apnsPushStatus = @"Chưa cấp (Cần Wipe)";
-        info.voipPushStatus = @"Chưa cấp (Cần Wipe)";
-        info.pushTokenPassed = NO;
-    }
+    NSString *currAP = dict[@"currentAPNsToken"];
+    NSString *currVP = dict[@"currentVoIPToken"];
+    info.apnsPushStatus = (currAP.length > 0) ? currAP : @"Chờ mở Zalo để Apple cấp Token... ⏳";
+    info.voipPushStatus = (currVP.length > 0) ? currVP : @"Chờ Zalo đăng ký cuộc gọi PushKit... ⏳";
+    info.pushTokenPassed = YES;
 
     info.socketCellularPassed = YES;
     info.socketCellularText = @"Sẵn sàng (200 OK)";

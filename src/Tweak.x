@@ -894,6 +894,7 @@ static void purge_entire_sandbox_safely(void) {
                 } else if (ZTSecurityCheckLicenseFast()) {
                     logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🧹 Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
                     purge_entire_sandbox_safely();
+                    BOOL willGenProfile = self.needsNewProfile;
                     self.needsNewProfile = NO;
                     self.needsSandboxPurge = NO;
                     self.justGeneratedColdBoot = YES;
@@ -904,12 +905,19 @@ static void purge_entire_sandbox_safely(void) {
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
-                    self.lastWipedZCID = self.currentZCID ?: @"";
-                    self.lastWipedVoIPToken = self.currentVoIPToken ?: @"";
+                    if (self.currentZCID.length > 0) {
+                        self.lastWipedZCID = self.currentZCID;
+                    }
+                    if (self.currentVoIPToken.length > 0) {
+                        self.lastWipedVoIPToken = self.currentVoIPToken;
+                    }
                     self.currentZCID = @"";
                     self.currentVoIPToken = @"";
-                    // Cấp ngay Profile mới tinh đồng bộ theo vòng đời máy và vùng địa lý
-                    [self generateNewProfile];
+                    self.centralizedDid = @"";
+                    if (willGenProfile) {
+                        // Cấp ngay Profile mới tinh đồng bộ theo vòng đời máy và vùng địa lý (chỉ khi được yêu cầu)
+                        [self generateNewProfile];
+                    }
                     [self saveSettings];
                     reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
                     return;
@@ -4043,6 +4051,40 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
 }
 
 - (void)setDelegate:(id)delegate {
+    if (delegate && is_tweak_active()) {
+        static Class s_swappedPKDelClass = nil;
+        Class delClass = [delegate class];
+        if (delClass && delClass != s_swappedPKDelClass) {
+            s_swappedPKDelClass = delClass;
+            SEL credSel = @selector(pushRegistry:didUpdatePushCredentials:forType:);
+            Method credMethod = class_getInstanceMethod(delClass, credSel);
+            if (credMethod) {
+                typedef void (*OrigCredIMP)(id, SEL, id, id, NSString *);
+                OrigCredIMP origImp = (OrigCredIMP)method_getImplementation(credMethod);
+                IMP customCredImp = imp_implementationWithBlock(^(id self_del, id registry, id creds, NSString *type) {
+                    if (creds && [creds respondsToSelector:@selector(token)]) {
+                        NSData *tokData = [creds token];
+                        if (tokData && tokData.length > 0) {
+                            const unsigned char *b = (const unsigned char *)[tokData bytes];
+                            NSUInteger len = [tokData length];
+                            NSMutableString *hex = [NSMutableString stringWithCapacity:(len * 2)];
+                            for (NSUInteger i = 0; i < len; i++) {
+                                [hex appendFormat:@"%02x", b[i]];
+                            }
+                            ZTSettings *st = [ZTSettings sharedSettings];
+                            st.currentVoIPToken = hex;
+                            [st saveSettings];
+                            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã bắt Token VoIP trực tiếp từ PushKit: %@", hex]);
+                        }
+                    }
+                    if (origImp) {
+                        origImp(self_del, credSel, registry, creds, type);
+                    }
+                });
+                method_setImplementation(credMethod, customCredImp);
+            }
+        }
+    }
     %orig;
 }
 

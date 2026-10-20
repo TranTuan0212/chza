@@ -284,8 +284,8 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
 
     // 8.1 Test Zalo Client Certificate ID (zcid)
     NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
-    NSString *currZcid = prefDict[@"currentZCID"];
-    NSString *lastWipedZcid = prefDict[@"lastWipedZCID"];
+    NSString *currZcid = prefDict[@"currentZCID"] ?: [ZTSettings sharedSettings].currentZCID;
+    NSString *lastWipedZcid = prefDict[@"lastWipedZCID"] ?: [ZTSettings sharedSettings].lastWipedZCID;
     BOOL zcidPass = NO;
     NSString *zcidDesc = nil;
     if (currZcid.length > 0) {
@@ -2068,6 +2068,17 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.zagidStatusText ?: @"Khớp phiên định danh"
                                               badge:self.info.zagidReceivedPassed ? @"Hợp lệ ✅" : @"Chưa có ⚠️"
                                           isWarning:!self.info.zagidReceivedPassed]];
+    NSString *currZcid = [[ZTSettings sharedSettings] currentZCID];
+    if (!currZcid || currZcid.length == 0) {
+        NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        currZcid = prefDict[@"currentZCID"];
+    }
+    NSString *zcidBadge = (currZcid.length >= 32) ? @"Độc Nhất ✅" : @"Tự Sinh ⏳";
+    NSString *zcidDisplay = (currZcid.length > 20) ? [NSString stringWithFormat:@"%@...%@ (%lu ký tự)", [currZcid substringToIndex:10], [currZcid substringFromIndex:currZcid.length - 8], (unsigned long)currZcid.length] : (currZcid.length > 0 ? currZcid : @"Chờ Zalo tự tạo qua Keychain... ⏳");
+    [inner addArrangedSubview:[self createRowWithKey:@"Định Danh Zalo (zcid)"
+                                              value:zcidDisplay
+                                              badge:zcidBadge
+                                          isWarning:NO]];
     [inner addArrangedSubview:[self createRowWithKey:@"Hàng Đợi Lỗi qos-talk"
                                               value:self.info.qosStatusText ?: @"0 lỗi gửi về qos-talk"
                                               badge:self.info.qosPassed ? @"Ổn Định 100% ✅" : @"Phát hiện lỗi ⚠️"
