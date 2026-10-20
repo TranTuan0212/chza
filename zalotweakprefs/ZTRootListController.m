@@ -1462,6 +1462,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
             dict[@"regionMode"] = chosenRegion;
             dict[@"preferredCarrier"] = preferredCarrier ?: @"";
+            NSString *existingCustomTZ = dict[@"timeZoneName"];
             ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:chosenRegion baseMachine:get_prefs_real_machine() preferredCarrier:preferredCarrier];
 
             dict[@"enabled"] = @(YES);
@@ -1498,7 +1499,15 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"birthTimeSec"] = @(p.birthTimeSec);
             dict[@"l2cacheSize"] = @(p.l2cacheSize);
             dict[@"localeIdentifier"] = p.localeIdentifier ?: @"vi_VN";
-            dict[@"timeZoneName"] = p.timeZoneName ?: @"Asia/Ho_Chi_Minh";
+            BOOL tzMatchesRegion = YES;
+            if ([chosenRegion isEqualToString:@"US"] || [chosenRegion isEqualToString:@"US_STUDENT"]) {
+                tzMatchesRegion = [existingCustomTZ containsString:@"America/"] || [existingCustomTZ containsString:@"US/"] || [existingCustomTZ containsString:@"Pacific/"] || [existingCustomTZ containsString:@"Mountain/"] || [existingCustomTZ containsString:@"Central/"] || [existingCustomTZ containsString:@"Eastern/"];
+            } else if ([chosenRegion isEqualToString:@"PL"]) {
+                tzMatchesRegion = [existingCustomTZ containsString:@"Europe/Warsaw"] || [existingCustomTZ containsString:@"Poland"];
+            } else if ([chosenRegion isEqualToString:@"VN"]) {
+                tzMatchesRegion = [existingCustomTZ containsString:@"Asia/Ho_Chi_Minh"] || [existingCustomTZ containsString:@"Asia/Saigon"] || [existingCustomTZ containsString:@"Asia/Bangkok"];
+            }
+            dict[@"timeZoneName"] = (existingCustomTZ.length > 0 && tzMatchesRegion) ? existingCustomTZ : (p.timeZoneName ?: @"Asia/Ho_Chi_Minh");
             if (p.preferredLanguages) dict[@"preferredLanguages"] = p.preferredLanguages;
             dict[@"spoofedScreenSize"] = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%dx%d", (int)(p.screenWidth * p.screenScale), (int)(p.screenHeight * p.screenScale)];
 
@@ -1547,17 +1556,22 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                         [self presentViewController:errAlert animated:YES completion:nil];
                     } else {
                         NSString *oldTokenDisplay = (oldAPNs.length > 12) ? [NSString stringWithFormat:@"%@...%@", [oldAPNs substringToIndex:6], [oldAPNs substringFromIndex:oldAPNs.length - 6]] : (oldAPNs ?: @"Chưa ghi nhận");
+                        NSString *oldVoIPDisplay = (oldVoIP.length > 12) ? [NSString stringWithFormat:@"%@...%@", [oldVoIP substringToIndex:6], [oldVoIP substringFromIndex:oldVoIP.length - 6]] : (oldVoIP ?: @"Chưa ghi nhận");
+                        NSString *oldZcidDisplay = (oldZcid.length > 12) ? [NSString stringWithFormat:@"%@...", [oldZcid substringToIndex:12]] : (oldZcid ?: @"Chưa ghi nhận");
                         NSString *msg = [NSString stringWithFormat:@"Đã làm sạch 100%% dữ liệu Zalo (0 LỖI)!\n\n"
                                          @"• IDFV Mới: %@\n"
                                          @"• Serial Number: %@\n"
                                          @"• MAC Wi-Fi: %@\n"
                                          @"• SIM & Khu Vực: %@\n"
+                                         @"• Múi Giờ: %@\n"
                                          @"• Token APNs Cũ Đã Lưu: %@\n"
-                                         @"• Keychain & WebKit: Phân vùng riêng biệt\n\n"
+                                         @"• Token VoIP Cũ Đã Lưu: %@\n"
+                                         @"• zcid Cũ Đã Lưu: %@\n"
+                                         @"• Keychain & WebKit: Sạch 100%% (Tự sinh mới khi mở Zalo)\n\n"
                                          @"📲 BƯỚC TIẾP THEO:\n"
                                          @"1. Bật và Tắt Chế Độ Máy Bay trong 5 giây để đổi IP mạng.\n"
-                                         @"2. Mở Zalo để Apple cấp Token APNs mới và xem Bảng Báo Xanh!",
-                                         p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName, oldTokenDisplay];
+                                         @"2. Mở Zalo để Apple cấp Token APNs/VoIP mới và tự sinh zcid mới!",
+                                         p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName, dict[@"timeZoneName"], oldTokenDisplay, oldVoIPDisplay, oldZcidDisplay];
 
                         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 DEEP WIPE THÀNH CÔNG 100%"
                                                                                            message:msg
@@ -2105,7 +2119,33 @@ static NSString *findAuditLogPath(void) {
     info.jbHideText = @"/var/jb, cydia_substitute trả về ENOENT";
     info.pushTokensSummary = @"APNs (32B) & VoIP (32B) Sẵn Sàng";
 
-    info.preflightAllPassed = (hasConfigured && info.screenResolutionPassed && info.armCpuPassed && info.deviceIdPassed);
+    // Chạy tự động 10 bài test chống ban chuyên sâu
+    ZTRun8AntiBanTests(info);
+
+    info.preflightAllPassed = (info.socketCellularPassed &&
+                               info.ifaddrsCleanPassed &&
+                               info.qosPassed &&
+                               info.mnoCleanPassed &&
+                               info.uptimeSyncPassed &&
+                               info.deviceIdPassed &&
+                               info.armCpuPassed &&
+                               info.screenResolutionPassed &&
+                               info.keychainCleanPassed &&
+                               info.webkitCleanPassed &&
+                               info.leveldbOK &&
+                               info.pacStripPassed &&
+                               info.pushTokenPassed &&
+                               info.nsurlDiskPassed &&
+                               info.statvfsPassed &&
+                               info.readlinkPassed &&
+                               info.forkPassed &&
+                               info.antiDebugPassed &&
+                               info.appsDirCleanPassed &&
+                               info.mnoFormatPassed &&
+                               info.apnsGenuinePassed &&
+                               info.voipAuditPassed &&
+                               info.zcidAuditPassed &&
+                               info.lifecycleLogPassed);
     info.preflightCompleted = YES;
     info.preflightScoreText = info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
     info.preflightVerdictTitle = info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";
