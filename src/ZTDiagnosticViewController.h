@@ -186,6 +186,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *mnoFormatText;
 @property (nonatomic, assign) BOOL apnsGenuinePassed;
 @property (nonatomic, copy, nullable) NSString *apnsGenuineText;
+@property (nonatomic, assign) BOOL voipAuditPassed;
+@property (nonatomic, copy, nullable) NSString *voipAuditText;
 @property (nonatomic, assign) BOOL lifecycleLogPassed;
 @property (nonatomic, copy, nullable) NSString *lifecycleLogText;
 

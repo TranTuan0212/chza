@@ -2114,14 +2114,25 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     info.isCloneApp = isClone;
     info.realBundleId = isClone ? [NSString stringWithFormat:@"%@ (Clone)", info.bundleId] : @"vn.com.vng.zingalo (Gốc)";
 
-    BOOL isGenuineZalo = [info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
+    BOOL isGenuineZalo = !isClone;
+    NSString *curApns = s.currentAPNsToken;
+    NSString *curVoip = s.currentVoIPToken;
+    if ((!curApns || curApns.length == 0) || (!curVoip || curVoip.length == 0)) {
+        NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        if ((!curApns || curApns.length == 0) && prefDict[@"currentAPNsToken"]) {
+            curApns = prefDict[@"currentAPNsToken"];
+        }
+        if ((!curVoip || curVoip.length == 0) && prefDict[@"currentVoIPToken"]) {
+            curVoip = prefDict[@"currentVoIPToken"];
+        }
+    }
     if (isGenuineZalo) {
-        info.apnsPushStatus = @"Bảo toàn Token Apple Gốc";
-        info.voipPushStatus = @"Bảo toàn Token VoIP Gốc";
+        info.apnsPushStatus = (curApns.length > 0) ? curApns : @"Đang chờ Zalo kết nối APNs...";
+        info.voipPushStatus = (curVoip.length > 0) ? curVoip : @"Đang chờ Zalo đăng ký cuộc gọi...";
         info.pushTokenPassed = YES;
     } else {
-        info.apnsPushStatus = @"Đã vô hiệu hoá Token Fake (Bảo vệ chống ban 3h) ✅";
-        info.voipPushStatus = @"Đã vô hiệu hoá Token Fake (Bảo vệ chống ban 3h) ✅";
+        info.apnsPushStatus = @"Đã vô hiệu hoá trên Clone (Chống ban 3h) ✅";
+        info.voipPushStatus = @"Đã vô hiệu hoá trên Clone (Chống ban 3h) ✅";
         info.pushTokenPassed = YES;
     }
 
@@ -2620,7 +2631,10 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
                                info.antiDebugPassed &&
                                info.appsDirCleanPassed &&
                                info.mnoFormatPassed &&
-                               info.apnsGenuinePassed);
+                               info.apnsGenuinePassed &&
+                               info.voipAuditPassed &&
+                               info.zcidAuditPassed &&
+                               info.lifecycleLogPassed);
     info.preflightCompleted = YES;
     info.preflightScoreText = info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
     info.preflightVerdictTitle = info.preflightAllPassed ? @"✅ THIẾT BỊ 100% SẠCH & ĐỒNG BỘ" : @"⚠️ CẢNH BÁO MÔI TRƯỜNG CHƯA HOÀN HẢO";

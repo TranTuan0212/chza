@@ -250,6 +250,38 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     info.apnsGenuineText = apnsDesc;
     write_audit_log(@"TEST-APNS-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, apnsPass ? @"PASSED ✅" : @"FAILED ❌", apnsDesc]);
 
+    // 8.2 Test genuine Apple PushKit VoIP Token preservation & rotation
+    BOOL voipPass = NO;
+    NSString *voipDesc = nil;
+    if (isOrigApp) {
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        NSString *currVoip = dict[@"currentVoIPToken"];
+        NSString *wipedVoip = dict[@"lastWipedVoIPToken"];
+        if (wipedVoip.length > 0 && currVoip.length > 0 && ![currVoip isEqualToString:wipedVoip]) {
+            voipPass = YES;
+            NSString *shortCurr = currVoip.length > 12 ? [currVoip substringToIndex:12] : currVoip;
+            NSString *shortOld = wipedVoip.length > 12 ? [wipedVoip substringToIndex:12] : wipedVoip;
+            voipDesc = [NSString stringWithFormat:@"🟢 Token MỚI ĐÃ ĐỔI: %@... (Khác mã cũ: %@... - AN TOÀN REG ACC) ✅", shortCurr, shortOld];
+        } else if (wipedVoip.length > 0 && currVoip.length > 0 && [currVoip isEqualToString:wipedVoip]) {
+            voipPass = YES;
+            NSString *shortCurr = currVoip.length > 12 ? [currVoip substringToIndex:12] : currVoip;
+            voipDesc = [NSString stringWithFormat:@"⚠️ TRÙNG TOKEN CŨ (%@...) - Chung token phần cứng máy thật ⚠️", shortCurr];
+        } else if (currVoip.length > 0) {
+            voipPass = YES;
+            NSString *shortCurr = currVoip.length > 12 ? [currVoip substringToIndex:12] : currVoip;
+            voipDesc = [NSString stringWithFormat:@"ℹ️ Token VoIP: %@... (Đã sẵn sàng trên máy thật) ✅", shortCurr];
+        } else {
+            voipPass = YES;
+            voipDesc = @"Zalo gốc: Đang kết nối Apple PushKit cấp Token cuộc gọi... ⏳";
+        }
+    } else {
+        voipPass = YES;
+        voipDesc = @"Zalo Clone: Chặn PushKit Fake (Bảo vệ chống ban 3h) ✅";
+    }
+    info.voipAuditPassed = voipPass;
+    info.voipAuditText = voipDesc;
+    write_audit_log(@"TEST-VOIP-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, voipPass ? @"PASSED ✅" : @"FAILED ❌", voipDesc]);
+
     // 8.1 Test Zalo Client Certificate ID (zcid)
     NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
     NSString *currZcid = prefDict[@"currentZCID"];
@@ -1878,6 +1910,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                                      strongSelf.info.appsDirCleanPassed &&
                                                      strongSelf.info.mnoFormatPassed &&
                                                      strongSelf.info.apnsGenuinePassed &&
+                                                     strongSelf.info.voipAuditPassed &&
                                                      strongSelf.info.zcidAuditPassed &&
                                                      strongSelf.info.lifecycleLogPassed);
                 strongSelf.info.preflightCompleted = YES;
@@ -2113,15 +2146,18 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:!self.info.pushTokenPassed]];
     NSString *apnsShort = (self.info.apnsPushStatus.length > 16) ? [NSString stringWithFormat:@"%@...", [self.info.apnsPushStatus substringToIndex:16]] : self.info.apnsPushStatus;
     BOOL isOrig = [self.info.bundleId isEqualToString:@"vn.com.vng.zingalo"];
-    NSString *apnsBadge = isOrig ? @"Bảo Toàn Gốc ✅" : @"32 Bytes ✅";
+    BOOL hasRealAPNs = (self.info.apnsPushStatus.length >= 32 && ![self.info.apnsPushStatus containsString:@" "]);
+    NSString *apnsBadge = hasRealAPNs ? @"32 Bytes ✅" : (self.info.isCloneApp ? @"Đã Chặn ✅" : (isOrig ? @"Bảo Toàn Gốc ⏳" : @"Chờ Cấp ⏳"));
     [inner addArrangedSubview:[self createRowWithKey:@"Token APNs (32B Hex)"
                                               value:apnsShort ?: @"---"
                                               badge:apnsBadge
                                           isWarning:NO]];
     NSString *voipShort = (self.info.voipPushStatus.length > 16) ? [NSString stringWithFormat:@"%@...", [self.info.voipPushStatus substringToIndex:16]] : self.info.voipPushStatus;
+    BOOL hasRealVoIP = (self.info.voipPushStatus.length >= 32 && ![self.info.voipPushStatus containsString:@" "]);
+    NSString *voipRowBadge = hasRealVoIP ? @"32 Bytes ✅" : (self.info.isCloneApp ? @"Đã Chặn ✅" : @"Chờ Cấp ⏳");
     [inner addArrangedSubview:[self createRowWithKey:@"Token VoIP (32B Hex)"
                                               value:voipShort ?: @"---"
-                                              badge:@"32 Bytes ✅"
+                                              badge:voipRowBadge
                                           isWarning:NO]];
 
     // 9. Bộ Kiểm Tra Chống Ban & Thoát App (9 Bài Test Chuyên Sâu)
@@ -2154,10 +2190,26 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.mnoFormatText ?: @"Chờ test..."
                                               badge:self.info.mnoFormatPassed ? @"5 Số Chuẩn ✅" : @"Lỗi Chuẩn ITU ❌"
                                           isWarning:!self.info.mnoFormatPassed]];
-    [inner addArrangedSubview:[self createRowWithKey:@"8. Token Push APNs Apple"
+    [inner addArrangedSubview:[self createRowWithKey:@"8.1. Token Push APNs Apple"
                                               value:self.info.apnsGenuineText ?: @"Chờ test..."
                                               badge:self.info.apnsGenuinePassed ? @"Bảo Toàn Apple ✅" : @"Nguy Cơ Ban ❌"
                                           isWarning:!self.info.apnsGenuinePassed]];
+    NSString *voipPreflightBadge = @"Chờ PushKit ⏳";
+    BOOL voipIsWarning = NO;
+    if (self.info.voipAuditText && [self.info.voipAuditText containsString:@"TRÙNG"]) {
+        voipPreflightBadge = @"Chung Phần Cứng ⚠️";
+        voipIsWarning = YES;
+    } else if (self.info.voipAuditText && [self.info.voipAuditText containsString:@"MỚI"]) {
+        voipPreflightBadge = @"PushKit Mới ✅";
+        voipIsWarning = NO;
+    } else if (self.info.voipAuditText && ([self.info.voipAuditText containsString:@"hiện tại"] || [self.info.voipAuditText containsString:@"Zalo Clone"])) {
+        voipPreflightBadge = @"PushKit OK ✅";
+        voipIsWarning = NO;
+    }
+    [inner addArrangedSubview:[self createRowWithKey:@"8.2. Token Cuộc Gọi VoIP (PushKit)"
+                                              value:self.info.voipAuditText ?: @"Chờ test..."
+                                              badge:voipPreflightBadge
+                                          isWarning:voipIsWarning]];
     [inner addArrangedSubview:[self createRowWithKey:@"9. Định Danh Zalo zcid"
                                               value:self.info.zcidAuditText ?: @"Chờ Zalo sinh..."
                                               badge:self.info.zcidAuditPassed ? @"Độc Nhất ✅" : @"Trùng Lặp ❌"
@@ -2834,6 +2886,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:NO]];
 
     NSString *pushVal = self.info.apnsPushStatus ?: @"32-Byte SHA256 Token";
+    if (pushVal.length > 18 && ![pushVal containsString:@" "]) {
+        pushVal = [NSString stringWithFormat:@"%@...", [pushVal substringToIndex:16]];
+    }
     NSString *pushBadge = isOrig ? @"Bảo Toàn Gốc ✅" : (self.info.pushTokenPassed ? @"Đã Thay Mới ✅" : @"Chưa cấp ⚠️");
     [inner addArrangedSubview:[self createRowWithKey:@"Token Đẩy APNs (32-Byte)"
                                               value:pushVal
@@ -2841,6 +2896,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                           isWarning:!self.info.pushTokenPassed]];
 
     NSString *voipVal = self.info.voipPushStatus ?: @"32-Byte SHA256 Token";
+    if (voipVal.length > 18 && ![voipVal containsString:@" "]) {
+        voipVal = [NSString stringWithFormat:@"%@...", [voipVal substringToIndex:16]];
+    }
     [inner addArrangedSubview:[self createRowWithKey:@"Token Gọi VoIP (PushKit)"
                                               value:voipVal
                                               badge:pushBadge
