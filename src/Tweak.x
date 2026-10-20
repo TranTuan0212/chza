@@ -4168,12 +4168,20 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                                 NSString *tokenShort = (capturedHex.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedHex substringToIndex:7], [capturedHex substringFromIndex:capturedHex.length - 7]] : capturedHex;
                                 NSString *oldShort = (capturedLastWiped.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedLastWiped substringToIndex:7], [capturedLastWiped substringFromIndex:capturedLastWiped.length - 7]] : (capturedLastWiped ?: @"(Trống)");
 
+                                ZTSettings *st = [ZTSettings sharedSettings];
+                                NSString *curVoip = st.currentVoIPToken;
+                                NSString *curZcid = st.currentZCID;
+                                NSString *voipShort = (curVoip.length > 14) ? [NSString stringWithFormat:@"%@...%@", [curVoip substringToIndex:7], [curVoip substringFromIndex:curVoip.length - 7]] : (curVoip.length > 0 ? curVoip : @"Chờ Zalo đăng ký cuộc gọi...");
+                                NSString *zcidShort = (curZcid.length > 14) ? [NSString stringWithFormat:@"%@...", [curZcid substringToIndex:14]] : (curZcid.length > 0 ? curZcid : @"Tự sinh khi gửi gói tin đầu");
+
                                 UIAlertController *alert = nil;
                                 if ([capturedStatus isEqualToString:@"ROTATED_NEW"]) {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Apple đã cấp Token Push mới hoàn toàn!\n\n"
-                                                          @"• Token Mới: %@\n"
-                                                          @"• Token Cũ: %@\n\n"
-                                                          @"✅ AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ TÀI KHOẢN MỚI!", tokenShort, oldShort];
+                                                          @"• APNs Token Mới: %@\n"
+                                                          @"• APNs Token Cũ: %@\n"
+                                                          @"• PushKit VoIP: %@\n"
+                                                          @"• Định Danh zcid: %@\n\n"
+                                                          @"✅ AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ TÀI KHOẢN MỚI!", tokenShort, oldShort, voipShort, zcidShort];
                                     alert = [UIAlertController alertControllerWithTitle:@"🟢 APNs TOKEN MỚI (100% SẠCH)"
                                                                                 message:alertMsg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
@@ -4182,9 +4190,10 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                                     }]];
                                 } else if ([capturedStatus isEqualToString:@"DUPLICATE"]) {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Token Push nhận từ Apple TRÙNG 100%% với nick trước!\n\n"
-                                                          @"• Token Trùng: %@\n\n"
+                                                          @"• APNs Trùng: %@\n"
+                                                          @"• PushKit VoIP: %@\n\n"
                                                           @"⚠️ TUYỆT ĐỐI CHƯA ĐĂNG KÝ TÀI KHOẢN MỚI!\n"
-                                                          @"Apple vẫn lưu cache push của máy. Vui lòng bật và tắt Chế Độ Máy Bay trong 5 giây, sau đó vào Cài đặt (Settings) -> ZaloTweak bấm Wipe lại!", tokenShort];
+                                                          @"Apple vẫn lưu cache push của máy. Vui lòng bật và tắt Chế Độ Máy Bay trong 5 giây, sau đó vào Cài đặt (Settings) -> ZaloTweak bấm Wipe lại!", tokenShort, voipShort];
                                     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔴 CẢNH BÁO: TOKEN APNs BỊ TRÙNG!"
                                                                                                    message:alertMsg
                                                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -4193,8 +4202,10 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                                     }]];
                                 } else {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Đã ghi nhận Token Push ban đầu của thiết bị làm mốc đối chiếu:\n\n"
-                                                          @"• Token: %@\n\n"
-                                                          @"ℹ️ Hãy vào Cài Đặt (Settings) -> ZaloTweak bấm Wipe để cấp máy mới và đổi Token Push.", tokenShort];
+                                                          @"• APNs Token: %@\n"
+                                                          @"• PushKit VoIP: %@\n"
+                                                          @"• Định Danh zcid: %@\n\n"
+                                                          @"ℹ️ Hãy vào Cài Đặt (Settings) -> ZaloTweak bấm Wipe để cấp máy mới và đổi Token Push.", tokenShort, voipShort, zcidShort];
                                     alert = [UIAlertController alertControllerWithTitle:@"ℹ️ ĐÃ LƯU TOKEN APNs BAN ĐẦU"
                                                                                 message:alertMsg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
@@ -4202,7 +4213,6 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                                         s_isAlertPresenting = NO;
                                     }]];
                                 }
-
                                 __block void (^tryPresentAlert)(void) = nil;
                                 __block int retryCount = 0;
                                 tryPresentAlert = ^{
@@ -5401,7 +5411,9 @@ static void swizzle_session_delegate_class(Class cls) {
                     @"• Tên máy: %@\n"
                     @"• SIM & Vùng: %@ (%@ - MCC %@)\n"
                     @"• IDFV Mới: %@\n"
-                    @"• IDFA: 00000000-0000-0000-0000-000000000000 (Apple ATT Denied)\n\n"
+                    @"• IDFA: 00000000-0000-0000-0000-000000000000 (Apple ATT Denied)\n"
+                    @"• PushKit VoIP: Sẵn sàng nhận token cuộc gọi ⏳\n"
+                    @"• Định Danh zcid: Tự sinh mới khi gửi gói tin đầu ⏳\n\n"
                     @"🟢 Môi trường sạch sẽ 100%%, sẵn sàng Reg Acc an toàn!",
                     s.deviceName, rDesc, s.carrierName, s.carrierMCC, s.spoofedIDFV];
                 

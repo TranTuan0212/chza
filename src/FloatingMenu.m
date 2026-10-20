@@ -538,8 +538,10 @@ UIViewController *ZTGetTopViewController(void) {
     NSString *simDisplay = settings.carrierName.length > 0 ? settings.carrierName : ([settings.regionMode isEqualToString:@"US"] ? @"T-Mobile" : @"Viettel");
     NSString *tzDisplay = settings.timeZoneName.length > 0 ? settings.timeZoneName : ([settings.regionMode isEqualToString:@"US"] ? @"America/New_York" : @"Asia/Ho_Chi_Minh");
 
-    NSString *message = [NSString stringWithFormat:@"📱 THÔNG SỐ ĐANG DÙNG:\n• Khu Vực: %@ | SIM: %@\n• Múi Giờ: %@\n• Thiết Bị: %@",
-                         regionDisplay, simDisplay, tzDisplay, deviceDisplay];
+    NSString *vShort = settings.currentVoIPToken.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentVoIPToken substringToIndex:8]] : (settings.currentVoIPToken.length > 0 ? settings.currentVoIPToken : @"Chờ cấp");
+    NSString *zShort = settings.currentZCID.length > 8 ? [NSString stringWithFormat:@"%@...", [settings.currentZCID substringToIndex:8]] : (settings.currentZCID.length > 0 ? settings.currentZCID : @"Tự sinh");
+    NSString *message = [NSString stringWithFormat:@"📱 THÔNG SỐ ĐANG DÙNG:\n• Khu Vực: %@ | SIM: %@\n• Múi Giờ: %@\n• Thiết Bị: %@\n• PushKit VoIP: %@ | zcid: %@",
+                         regionDisplay, simDisplay, tzDisplay, deviceDisplay, vShort, zShort];
 
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"🛡️ ZALOTWEAK - MENU CHÍNH"
                                                                    message:message
@@ -782,7 +784,45 @@ UIViewController *ZTGetTopViewController(void) {
     } else {
         apnsHex = @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
     }
-    NSString *voipHex = isGenuineZalo ? @"Token VoIP Gốc (Bảo toàn) ✅" : @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
+    NSString *voipHex = nil;
+    if (isGenuineZalo) {
+        NSString *currV = s.currentVoIPToken;
+        NSString *wipedV = s.lastWipedVoIPToken;
+        if (!currV || currV.length == 0) {
+            NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+            currV = prefsD[@"currentVoIPToken"];
+            if (!wipedV || wipedV.length == 0) wipedV = prefsD[@"lastWipedVoIPToken"];
+        }
+        if (wipedV.length > 0 && currV.length > 0 && ![currV isEqualToString:wipedV]) {
+            voipHex = [NSString stringWithFormat:@"🟢 ĐÃ ĐỔI MỚI: %@... (Khác cũ: %@...) ✅", [currV substringToIndex:MIN(currV.length, 10)], [wipedV substringToIndex:MIN(wipedV.length, 10)]];
+        } else if (wipedV.length > 0 && currV.length > 0 && [currV isEqualToString:wipedV]) {
+            voipHex = [NSString stringWithFormat:@"⚠️ TRÙNG CŨ: %@... (Chung phần cứng) ⚠️", [currV substringToIndex:MIN(currV.length, 10)]];
+        } else if (currV.length > 0) {
+            voipHex = [NSString stringWithFormat:@"ℹ️ Hiện tại: %@... (Đã sẵn sàng) ✅", [currV substringToIndex:MIN(currV.length, 10)]];
+        } else {
+            voipHex = @"Đang chờ Zalo đăng ký PushKit... ⏳";
+        }
+    } else {
+        voipHex = @"Đã vô hiệu hoá (Chống BadDeviceToken ban 3h) ✅";
+    }
+
+    NSString *zcidStr = nil;
+    NSString *curZcid = s.currentZCID;
+    NSString *oldZcid = s.lastWipedZCID;
+    if (!curZcid || curZcid.length == 0) {
+        NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+        curZcid = prefsD[@"currentZCID"];
+        if (!oldZcid || oldZcid.length == 0) oldZcid = prefsD[@"lastWipedZCID"];
+    }
+    if (curZcid.length > 0) {
+        if (oldZcid.length > 0 && [curZcid isEqualToString:oldZcid]) {
+            zcidStr = [NSString stringWithFormat:@"🔴 Trùng nick cũ: %@... ❌", [curZcid substringToIndex:MIN(curZcid.length, 10)]];
+        } else {
+            zcidStr = [NSString stringWithFormat:@"🟢 Độc nhất: %@... (Tự sinh mới) ✅", [curZcid substringToIndex:MIN(curZcid.length, 10)]];
+        }
+    } else {
+        zcidStr = @"Sẽ tự sinh mới khi gửi gói tin đầu tiên ⏳";
+    }
 
     uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400ULL ? (s.bootTimeSec - (86400ULL * 15 + 3600 * 4 + 720)) : 1568160000ULL);
     uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
@@ -803,6 +843,7 @@ UIViewController *ZTGetTopViewController(void) {
                       @"• IDFV Mới: %@\n"
                       @"• IDFV Cũ (Trước Wipe): %@\n"
                       @"• Mã device_id (3 Mốc): %@\n"
+                      @"• Định Danh zcid: %@\n"
                       @"• Uptime 3 Clock: Cont %.1fh | Awake %.1fh\n"
                       @"• Token APNs: %@\n"
                       @"• Token VoIP: %@\n"
@@ -821,6 +862,7 @@ UIViewController *ZTGetTopViewController(void) {
                       s.spoofedIDFV,
                       oldIdfvStr,
                       devIdPreview,
+                      zcidStr,
                       contUpSec / 3600.0, awakeUpSec / 3600.0,
                       apnsHex,
                       voipHex,
