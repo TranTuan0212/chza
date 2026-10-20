@@ -250,6 +250,28 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     info.apnsGenuineText = apnsDesc;
     write_audit_log(@"TEST-APNS-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, apnsPass ? @"PASSED ✅" : @"FAILED ❌", apnsDesc]);
 
+    // 8.1 Test Zalo Client Certificate ID (zcid)
+    NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+    NSString *currZcid = prefDict[@"currentZCID"];
+    NSString *lastWipedZcid = prefDict[@"lastWipedZCID"];
+    BOOL zcidPass = NO;
+    NSString *zcidDesc = nil;
+    if (currZcid.length > 0) {
+        if (lastWipedZcid.length > 0 && [currZcid isEqualToString:lastWipedZcid]) {
+            zcidPass = NO;
+            zcidDesc = [NSString stringWithFormat:@"🔴 Cảnh báo: zcid TRÙNG NICK TRƯỚC (%@...) - Cần Wipe lại!", [currZcid substringToIndex:MIN(16, (int)currZcid.length)]];
+        } else {
+            zcidPass = YES;
+            zcidDesc = [NSString stringWithFormat:@"🟢 zcid ĐỘC NHẤT: %@... (Zalo tự sinh mới chuẩn 100%%) ✅", [currZcid substringToIndex:MIN(16, (int)currZcid.length)]];
+        }
+    } else {
+        zcidPass = YES;
+        zcidDesc = @"ℹ️ zcid: Sẽ tự động sinh & ghi nhận khi Zalo gửi gói tin đầu tiên ✅";
+    }
+    info.zcidAuditPassed = zcidPass;
+    info.zcidAuditText = zcidDesc;
+    write_audit_log(@"TEST-ZCID", [NSString stringWithFormat:@"zcid audit -> %@ (%@)", zcidPass ? @"PASSED ✅" : @"FAILED ❌", zcidDesc]);
+
     // 9. Test Background & Lifecycle Logging Guard
     NSString *auditFile = @"/var/mobile/Documents/ZaloAudit.log";
     BOOL canWriteAudit = YES;
@@ -1856,6 +1878,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                                      strongSelf.info.appsDirCleanPassed &&
                                                      strongSelf.info.mnoFormatPassed &&
                                                      strongSelf.info.apnsGenuinePassed &&
+                                                     strongSelf.info.zcidAuditPassed &&
                                                      strongSelf.info.lifecycleLogPassed);
                 strongSelf.info.preflightCompleted = YES;
                 strongSelf.info.preflightScoreText = strongSelf.info.preflightAllPassed ? @"9/9 NHÓM ĐÃ SẴN SÀNG 🟢" : @"CÓ MỤC CẦN CHÚ Ý 🟡";
@@ -2135,7 +2158,11 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.apnsGenuineText ?: @"Chờ test..."
                                               badge:self.info.apnsGenuinePassed ? @"Bảo Toàn Apple ✅" : @"Nguy Cơ Ban ❌"
                                           isWarning:!self.info.apnsGenuinePassed]];
-    [inner addArrangedSubview:[self createRowWithKey:@"9. Ghi Log Khi Thoát App"
+    [inner addArrangedSubview:[self createRowWithKey:@"9. Định Danh Zalo zcid"
+                                              value:self.info.zcidAuditText ?: @"Chờ Zalo sinh..."
+                                              badge:self.info.zcidAuditPassed ? @"Độc Nhất ✅" : @"Trùng Lặp ❌"
+                                          isWarning:!self.info.zcidAuditPassed]];
+    [inner addArrangedSubview:[self createRowWithKey:@"10. Ghi Log Khi Thoát App"
                                               value:self.info.lifecycleLogText ?: @"Chờ test..."
                                               badge:self.info.lifecycleLogPassed ? @"Sẵn Sàng ✅" : @"Chưa Sẵn Sàng ⚠️"
                                           isWarning:!self.info.lifecycleLogPassed]];

@@ -86,6 +86,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL dyldHidePassed;
 @property (nonatomic, copy, nullable) NSString *voipPushStatus;
 @property (nonatomic, assign) BOOL pushTokenPassed;
+@property (nonatomic, copy, nullable) NSString *zcidAuditText;
+@property (nonatomic, assign) BOOL zcidAuditPassed;
 
 // Thông tin Kiểm Tra Mạng & IP Nâng Cao
 @property (nonatomic, copy, nullable) NSString *testedIP;

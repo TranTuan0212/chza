@@ -61,8 +61,10 @@
 @property (nonatomic, strong) NSString *lastKnownAPNsToken;    // Token APNs đã biết gần nhất
 @property (nonatomic, strong) NSString *apnsRotatedStatus;     // Trạng thái xoay vòng APNs (@"WAITING", @"ROTATED_NEW", @"DUPLICATE", @"INITIAL_CAPTURED")
 @property (nonatomic, strong) NSString *spoofedScreenSize;    // Độ phân giải màn hình dạng "750x1334", "828x1792"
-@property (nonatomic, strong) NSString *spoofedZCID;          // 160 hex char Zalo Certificate ID
-@property (nonatomic, strong) NSString *lastVoIPToken;        // Token VoIP PushKit gần nhất để theo dõi
+@property (nonatomic, strong) NSString *currentZCID;          // zcid hiện tại do Zalo tự sinh
+@property (nonatomic, strong) NSString *lastWipedZCID;        // zcid trước lần Wipe gần nhất
+@property (nonatomic, strong) NSString *currentVoIPToken;     // VoIP token hiện tại
+@property (nonatomic, strong) NSString *lastWipedVoIPToken;   // VoIP token trước lần Wipe gần nhất
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

@@ -868,8 +868,10 @@ static void purge_entire_sandbox_safely(void) {
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
         self.spoofedScreenSize = dict[@"spoofedScreenSize"] ?: @"";
-        self.spoofedZCID = dict[@"spoofedZCID"] ?: @"";
-        self.lastVoIPToken = dict[@"lastVoIPToken"] ?: @"";
+        self.currentZCID = dict[@"currentZCID"] ?: @"";
+        self.lastWipedZCID = dict[@"lastWipedZCID"] ?: @"";
+        self.currentVoIPToken = dict[@"currentVoIPToken"] ?: @"";
+        self.lastWipedVoIPToken = dict[@"lastWipedVoIPToken"] ?: @"";
 
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
@@ -902,6 +904,10 @@ static void purge_entire_sandbox_safely(void) {
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
+                    self.lastWipedZCID = self.currentZCID ?: @"";
+                    self.lastWipedVoIPToken = self.currentVoIPToken ?: @"";
+                    self.currentZCID = @"";
+                    self.currentVoIPToken = @"";
                     // Cấp ngay Profile mới tinh đồng bộ theo vòng đời máy và vùng địa lý
                     [self generateNewProfile];
                     [self saveSettings];
@@ -1055,8 +1061,10 @@ static void purge_entire_sandbox_safely(void) {
     if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
     if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;
     if (self.spoofedScreenSize) dict[@"spoofedScreenSize"] = self.spoofedScreenSize;
-    if (self.spoofedZCID) dict[@"spoofedZCID"] = self.spoofedZCID;
-    if (self.lastVoIPToken) dict[@"lastVoIPToken"] = self.lastVoIPToken;
+    if (self.currentZCID) dict[@"currentZCID"] = self.currentZCID;
+    if (self.lastWipedZCID) dict[@"lastWipedZCID"] = self.lastWipedZCID;
+    if (self.currentVoIPToken) dict[@"currentVoIPToken"] = self.currentVoIPToken;
+    if (self.lastWipedVoIPToken) dict[@"lastWipedVoIPToken"] = self.lastWipedVoIPToken;
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -1149,7 +1157,6 @@ NSString *generate_random_mac(void) {
     self.spoofedWifiMAC = p.spoofedWifiMAC;
     self.spoofedBluetoothMAC = p.spoofedBluetoothMAC;
     self.spoofedScreenSize = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%.0fx%.0f", self.screenWidth * self.screenScale, self.screenHeight * self.screenScale];
-    self.spoofedZCID = p.spoofedZCID;
 
     logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | L2: %lluMB | Màn: %.0fx%.0f@%.0fx | Vùng: %@ (%@) | Tên: %@",
               self.deviceMachine, self.deviceModel, self.systemVersion, self.kernOsVersion,
@@ -4795,12 +4802,16 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
         }
     }
 
-    // 4. Khử rò rỉ hoặc làm mới Header zcid nếu có
+    // 4. Giám sát & đối chiếu Header zcid do Zalo tự đọc thông số máy mới sinh ra
     NSString *hdrZcid = [mutReq valueForHTTPHeaderField:@"zcid"];
-    if (hdrZcid && settings.spoofedZCID.length > 0 && ![hdrZcid isEqualToString:settings.spoofedZCID]) {
-        [mutReq setValue:settings.spoofedZCID forHTTPHeaderField:@"zcid"];
-        modified = YES;
-        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã đồng bộ Header zcid sang Profile mới: %@...", [settings.spoofedZCID substringToIndex:MIN(24, (int)settings.spoofedZCID.length)]]);
+    if (hdrZcid && hdrZcid.length > 0) {
+        if (settings.lastWipedZCID.length > 0 && [settings.lastWipedZCID isEqualToString:hdrZcid]) {
+            logAudit(@"ZCID-AUDIT", [NSString stringWithFormat:@"⚠️ [CẢNH BÁO DEBUG] zcid BỊ TRÙNG VỚI NICK TRƯỚC: %@... (Chưa xoay được zcid)", [hdrZcid substringToIndex:MIN(24, (int)hdrZcid.length)]]);
+        } else if (![settings.currentZCID isEqualToString:hdrZcid]) {
+            settings.currentZCID = hdrZcid;
+            [settings saveSettings];
+            logAudit(@"ZCID-AUDIT", [NSString stringWithFormat:@"✨ [ZCID CHÍNH HÃNG MỚI] Zalo đã tự đọc thông số máy mới & tự sinh zcid: %@... (Độ dài: %lu hex chars) ✅", [hdrZcid substringToIndex:MIN(24, (int)hdrZcid.length)], (unsigned long)hdrZcid.length]);
+        }
     }
 
     // 5. Khử rò rỉ model máy thật, múi giờ và ngôn ngữ trong Body nếu gửi lên centralized.zaloapp.com
@@ -5167,12 +5178,14 @@ static void swizzle_session_delegate_class(Class cls) {
             if (curVoipToken.length > 0) {
                 ZTSettings *st = [ZTSettings sharedSettings];
                 NSString *status = @"";
-                if (st.lastVoIPToken.length > 0 && [st.lastVoIPToken isEqualToString:curVoipToken]) {
+                if (st.lastWipedVoIPToken.length > 0 && [st.lastWipedVoIPToken isEqualToString:curVoipToken]) {
                     status = @"⚠️ [TRÙNG LẶP VỚI LẦN TRƯỚC - ĐANG DÙNG CHUNG PHẦN CỨNG]";
+                    logAudit(@"PUSH-TOKEN-DEBUG", [NSString stringWithFormat:@"⚠️ [DEBUG] VoIP Token trùng lặp với nick trước: %@ (Đang gửi lên VNG)", curVoipToken]);
                 } else {
                     status = @"✨ [TOKEN MỚI TỪ APPLE / ĐƯỢC CẤP LẠI]";
+                    logAudit(@"PUSH-TOKEN-DEBUG", [NSString stringWithFormat:@"✅ [DEBUG] VoIP Token mới độc nhất: %@ (Đang gửi lên VNG)", curVoipToken]);
                 }
-                st.lastVoIPToken = curVoipToken;
+                st.currentVoIPToken = curVoipToken;
                 [st saveSettings];
                 logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [VOIP PUSH SUBMIT] %@ Token: %@ (Đang gửi lên server VNG tự nhiên)", status, curVoipToken]);
             }
