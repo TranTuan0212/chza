@@ -506,28 +506,67 @@ static void ensure_root_privileges(void) {
     }
 }
 
+static inline BOOL zt_is_zalo_topic(NSString *s) {
+    if (!s || ![s isKindOfClass:[NSString class]]) return NO;
+    NSString *l = [s lowercaseString];
+    return [l containsString:@"zingalo"] || [l containsString:@"com.vng.zalo"];
+}
+
+static int zt_run_cmd(const char *path, const char *const argv[]) {
+    if (!path || access(path, X_OK) != 0) return -1;
+    pid_t p = 0;
+    if (posix_spawn(&p, path, NULL, NULL, (char *const *)argv, environ) != 0) return -1;
+    int st = 0;
+    waitpid(p, &st, 0);
+    return (WIFEXITED(st)) ? WEXITSTATUS(st) : -1;
+}
+
+static void zt_kill_cfprefsd(void) {
+    const char *killallPaths[] = {
+        "/var/jb/usr/bin/killall",
+        "/usr/bin/killall",
+        "/var/jb/bin/killall",
+        "/bin/killall",
+        NULL
+    };
+    for (int i = 0; killallPaths[i] != NULL; i++) {
+        if (access(killallPaths[i], X_OK) == 0) {
+            // Dùng SIGTERM tiều chuẩn (không dùng -9) để cfprefsd kết thúc sạch sẽ
+            const char *argv[] = {killallPaths[i], "cfprefsd", NULL};
+            if (zt_run_cmd(killallPaths[i], argv) == 0) {
+                NSLog(@"[ZaloTweak-APNs] Đã gửi SIGTERM đến cfprefsd thành công qua %s", killallPaths[i]);
+                return;
+            }
+        }
+    }
+}
+
 static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
-    // 1. Dọn dẹp an toàn trong com.apple.apsd.plist (Chỉ xóa riêng token của Zalo, không làm hỏng app khác)
-    NSMutableArray *possibleApsdPaths = [NSMutableArray arrayWithArray:@[
+    // 1. Thu thập đường dẫn apsd.plist & khử trùng lặp qua realpath + NSMutableOrderedSet
+    NSArray *rawPaths = @[
         @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
         @"/private/var/wireless/Library/Preferences/com.apple.apsd.plist",
         @"/var/mobile/Library/Preferences/com.apple.apsd.plist",
         @"/private/var/mobile/Library/Preferences/com.apple.apsd.plist"
-    ]];
-    typedef const char* (*jbroot_fn_t)(const char*);
-    jbroot_fn_t jbroot_fn = (jbroot_fn_t)dlsym(RTLD_DEFAULT, "jbroot");
-    if (jbroot_fn) {
-        const char *jbWireless = jbroot_fn("/var/wireless/Library/Preferences/com.apple.apsd.plist");
-        if (jbWireless) [possibleApsdPaths addObject:[NSString stringWithUTF8String:jbWireless]];
-        const char *jbMobile = jbroot_fn("/var/mobile/Library/Preferences/com.apple.apsd.plist");
-        if (jbMobile) [possibleApsdPaths addObject:[NSString stringWithUTF8String:jbMobile]];
+    ];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableOrderedSet<NSString *> *targetPaths = [NSMutableOrderedSet orderedSet];
+
+    for (NSString *p in rawPaths) {
+        if (![fm fileExistsAtPath:p]) continue;
+        char realBuf[PATH_MAX];
+        if (realpath([p UTF8String], realBuf)) {
+            NSString *resolved = [NSString stringWithUTF8String:realBuf];
+            if ([fm fileExistsAtPath:resolved]) {
+                [targetPaths addObject:resolved];
+            }
+        } else {
+            [targetPaths addObject:p];
+        }
     }
 
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *apsdPath in possibleApsdPaths) {
-        if (![fm fileExistsAtPath:apsdPath]) continue;
-
-        // Kiểm tra quyền ghi trước khi xử lý
+    // 2. Chỉnh sửa an toàn com.apple.apsd.plist với cơ chế Backup & Verify Rollback
+    for (NSString *apsdPath in targetPaths) {
         if (access([apsdPath UTF8String], W_OK) != 0) {
             NSString *err = [NSString stringWithFormat:@"[apsd.plist] Quyền ghi bị từ chối: %@ (errno %d: %s)", apsdPath, errno, strerror(errno)];
             NSLog(@"[ZaloTweak-APNs] %@", err);
@@ -535,88 +574,94 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
             continue;
         }
 
-        NSData *plistData = [NSData dataWithContentsOfFile:apsdPath];
-        if (!plistData) continue;
+        NSError *readErr = nil;
+        NSData *plistData = [NSData dataWithContentsOfFile:apsdPath options:0 error:&readErr];
+        if (!plistData) {
+            if (errors && readErr) [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Đọc lỗi %@: %@", apsdPath, readErr.localizedDescription]];
+            continue;
+        }
 
         NSPropertyListFormat format = NSPropertyListBinaryFormat_v1_0;
+        NSError *parseErr = nil;
         NSMutableDictionary *dict = [NSPropertyListSerialization propertyListWithData:plistData
                                                                               options:NSPropertyListMutableContainersAndLeaves
                                                                                format:&format
-                                                                                error:nil];
-        if ([dict isKindOfClass:[NSMutableDictionary class]]) {
-            BOOL anyChanged = NO;
-            NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
-            for (NSString *envKey in envKeys) {
-                id envObj = dict[envKey];
-                if ([envObj isKindOfClass:[NSDictionary class]]) {
-                    NSMutableDictionary *tokens = [envObj mutableCopy];
-                    NSMutableArray *keysToRemove = [NSMutableArray array];
-                    for (id k in tokens) {
-                        if ([k isKindOfClass:[NSString class]]) {
-                            NSString *lk = [((NSString *)k) lowercaseString];
-                            if ([lk containsString:@"zingalo"] || [lk containsString:@"zalo"]) {
-                                [keysToRemove addObject:k];
-                            }
-                        }
-                    }
-                    if (keysToRemove.count > 0) {
-                        [tokens removeObjectsForKeys:keysToRemove];
-                        dict[envKey] = tokens;
-                        anyChanged = YES;
-                        NSLog(@"[ZaloTweak-APNs] Đã xóa %lu push topic (APNs & VoIP) trong %@: %@", (unsigned long)keysToRemove.count, envKey, keysToRemove);
-                    }
-                }
-            }
-            NSMutableArray *rootKeysToRemove = [NSMutableArray array];
-            for (id k in dict) {
-                if ([k isKindOfClass:[NSString class]]) {
-                    NSString *lk = [((NSString *)k) lowercaseString];
-                    if ([lk containsString:@"zingalo"] || [lk containsString:@"zalo"]) {
-                        [rootKeysToRemove addObject:k];
-                    }
-                }
-            }
-            if (rootKeysToRemove.count > 0) {
-                [dict removeObjectsForKeys:rootKeysToRemove];
-                anyChanged = YES;
-                NSLog(@"[ZaloTweak-APNs] Đã xóa %lu root push keys trong apsd.plist: %@", (unsigned long)rootKeysToRemove.count, rootKeysToRemove);
-            }
+                                                                                error:&parseErr];
+        if (![dict isKindOfClass:[NSMutableDictionary class]]) {
+            if (errors && parseErr) [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Parse lỗi %@: %@", apsdPath, parseErr.localizedDescription]];
+            continue;
+        }
 
-            // Ghi in-place atomically:NO để giữ nguyên inode, owner và permissions gốc của file
-            if (anyChanged) {
-                NSData *outData = [NSPropertyListSerialization dataWithPropertyList:dict
-                                                                             format:format
-                                                                            options:0
-                                                                              error:nil];
-                if (outData) {
-                    BOOL writeOk = [outData writeToFile:apsdPath atomically:NO];
-                    NSLog(@"[ZaloTweak-APNs] Ghi in-place apsd.plist (%@): %d", apsdPath, writeOk);
-                    if (!writeOk && errors) {
-                        [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Ghi thất bại vào %@", apsdPath]];
+        BOOL anyChanged = NO;
+        NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
+        for (NSString *envKey in envKeys) {
+            id envObj = dict[envKey];
+            if ([envObj isKindOfClass:[NSDictionary class]]) {
+                NSMutableDictionary *tokens = [envObj mutableCopy];
+                NSMutableArray *keysToRemove = [NSMutableArray array];
+                for (id k in tokens) {
+                    if ([k isKindOfClass:[NSString class]] && zt_is_zalo_topic((NSString *)k)) {
+                        [keysToRemove addObject:k];
                     }
+                }
+                if (keysToRemove.count > 0) {
+                    [tokens removeObjectsForKeys:keysToRemove];
+                    dict[envKey] = tokens;
+                    anyChanged = YES;
+                    NSLog(@"[ZaloTweak-APNs] Đã xóa %lu push topic Zalo trong %@: %@", (unsigned long)keysToRemove.count, envKey, keysToRemove);
+                }
+            }
+        }
+        // TUYẾT ĐỐI KHÔNG XÓA ROOT KEYS CỦA HỆ THỐNG
+
+        if (anyChanged) {
+            NSError *serr = nil;
+            NSData *outData = [NSPropertyListSerialization dataWithPropertyList:dict format:format options:0 error:&serr];
+            NSString *bak = [apsdPath stringByAppendingString:@".bak"];
+            [fm removeItemAtPath:bak error:nil];
+            NSError *cerr = nil;
+
+            if (!outData) {
+                if (errors) [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Serialize lỗi: %@", serr.localizedDescription]];
+            } else if (![fm copyItemAtPath:apsdPath toPath:bak error:&cerr]) {
+                if (errors) [errors addObject:[NSString stringWithFormat:@"[apsd.plist] Không tạo được backup: %@", cerr.localizedDescription]];
+            } else {
+                BOOL ok = [outData writeToFile:apsdPath atomically:NO];
+                NSData *chk = ok ? [NSData dataWithContentsOfFile:apsdPath] : nil;
+                id parsed = chk ? [NSPropertyListSerialization propertyListWithData:chk options:0 format:NULL error:nil] : nil;
+                if (!ok || ![parsed isKindOfClass:[NSDictionary class]]) {
+                    NSData *orig = [NSData dataWithContentsOfFile:bak];
+                    if (orig) [orig writeToFile:apsdPath atomically:NO];
+                    if (errors) [errors addObject:@"[apsd.plist] Ghi/verify thất bại, đã rollback an toàn từ .bak"];
+                    NSLog(@"[ZaloTweak-APNs] ⚠️ Ghi hoặc verify thất bại, đã rollback từ file .bak!");
+                } else {
+                    [fm removeItemAtPath:bak error:nil];
+                    NSLog(@"[ZaloTweak-APNs] ✅ Đã ghi và verify thành công apsd.plist (%@)", apsdPath);
                 }
             }
         }
     }
 
-    // 1.1. Xóa bản ghi cache riêng của Zalo (APNs và VoIP) trong PushStore
+    // 3. Xóa cache PushStore an toàn (chỉ các file bắt đầu bằng tiền tố Zalo)
     NSArray *pushStoreDirs = @[
         @"/var/mobile/Library/SpringBoard/PushStore",
-        @"/private/var/mobile/Library/SpringBoard/PushStore",
         @"/var/mobile/Library/PushStore"
     ];
     for (NSString *psDir in pushStoreDirs) {
         if (![fm fileExistsAtPath:psDir]) continue;
-        NSArray *files = [fm contentsOfDirectoryAtPath:psDir error:nil];
+        char realBuf[PATH_MAX];
+        NSString *actualDir = psDir;
+        if (realpath([psDir UTF8String], realBuf)) {
+            actualDir = [NSString stringWithUTF8String:realBuf];
+        }
+        NSArray *files = [fm contentsOfDirectoryAtPath:actualDir error:nil];
         for (NSString *file in files) {
             NSString *lfile = [file lowercaseString];
-            if ([lfile containsString:@"zingalo"] || [lfile containsString:@"zalo"]) {
-                NSString *target = [psDir stringByAppendingPathComponent:file];
+            if ([lfile hasPrefix:@"vn.com.vng.zingalo"] || [lfile hasPrefix:@"com.vng.zalo"]) {
+                NSString *target = [actualDir stringByAppendingPathComponent:file];
                 NSError *rmErr = nil;
                 if (![fm removeItemAtPath:target error:&rmErr]) {
-                    NSString *err = [NSString stringWithFormat:@"[PushStore] Lỗi xóa file %@: %@", file, rmErr.localizedDescription];
-                    NSLog(@"[ZaloTweak-APNs] %@", err);
-                    if (errors) [errors addObject:err];
+                    if (errors) [errors addObject:[NSString stringWithFormat:@"[PushStore] Lỗi xóa file %@: %@", file, rmErr.localizedDescription]];
                 } else {
                     NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
                 }
@@ -624,7 +669,11 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
         }
     }
 
-    // 2. Khởi động lại daemon apsd an toàn (Ưu tiên quyền root qua posix_spawn)
+    // 4. Xả cache cfprefsd bằng SIGTERM trước khi restart apsd
+    zt_kill_cfprefsd();
+    [NSThread sleepForTimeInterval:0.15];
+
+    // 5. Khởi động lại daemon apsd an toàn (kiểm tra chặt chẽ exit code == 0)
     BOOL restarted = NO;
     const char *launchctlPaths[] = {
         "/var/jb/bin/launchctl",
@@ -633,17 +682,11 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
         "/usr/bin/launchctl",
         NULL
     };
-    for (int i = 0; launchctlPaths[i] != NULL; i++) {
-        if (access(launchctlPaths[i], X_OK) == 0) {
-            pid_t p = 0;
-            const char *argv[] = {launchctlPaths[i], "kickstart", "-k", "system/com.apple.apsd", NULL};
-            if (posix_spawn(&p, launchctlPaths[i], NULL, NULL, (char *const *)argv, environ) == 0) {
-                int status = 0;
-                waitpid(p, &status, 0);
-                restarted = YES;
-                NSLog(@"[ZaloTweak-APNs] Đã gọi launchctl kickstart com.apple.apsd thành công!");
-                break;
-            }
+    for (int i = 0; launchctlPaths[i] != NULL && !restarted; i++) {
+        const char *argv[] = {launchctlPaths[i], "kickstart", "-k", "system/com.apple.apsd", NULL};
+        if (zt_run_cmd(launchctlPaths[i], argv) == 0) {
+            restarted = YES;
+            NSLog(@"[ZaloTweak-APNs] Đã kickstart com.apple.apsd thành công!");
         }
     }
     if (!restarted) {
@@ -652,22 +695,15 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
             "/usr/bin/killall",
             NULL
         };
-        for (int i = 0; killallPaths[i] != NULL; i++) {
-            if (access(killallPaths[i], X_OK) == 0) {
-                pid_t p = 0;
-                const char *argv[] = {killallPaths[i], "-9", "apsd", NULL};
-                if (posix_spawn(&p, killallPaths[i], NULL, NULL, (char *const *)argv, environ) == 0) {
-                    int status = 0;
-                    waitpid(p, &status, 0);
-                    restarted = YES;
-                    NSLog(@"[ZaloTweak-APNs] Đã gọi killall -9 apsd thành công!");
-                    break;
-                }
+        for (int i = 0; killallPaths[i] != NULL && !restarted; i++) {
+            const char *argv[] = {killallPaths[i], "-9", "apsd", NULL};
+            if (zt_run_cmd(killallPaths[i], argv) == 0) {
+                restarted = YES;
+                NSLog(@"[ZaloTweak-APNs] Đã gọi killall -9 apsd thành công!");
             }
         }
     }
-
-    // Fallback bằng POSIX sysctl + kill C BSD
+    // Fallback POSIX sysctl + kill C BSD (chuẩn hóa độ dài 16 bytes p_comm)
     if (!restarted) {
         int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
         size_t size = 0;
@@ -678,11 +714,9 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
                     int count = (int)(size / sizeof(struct kinfo_proc));
                     for (int i = 0; i < count; i++) {
                         const char *name = procs[i].kp_proc.p_comm;
-                        if (name && (strcmp(name, "apsd") == 0 || strcmp(name, "applepushserviced") == 0)) {
+                        if (name && (strcmp(name, "apsd") == 0 || strncmp(name, "applepushservice", 16) == 0)) {
                             if (kill(procs[i].kp_proc.p_pid, SIGKILL) == 0) {
                                 restarted = YES;
-                            } else if (errors) {
-                                [errors addObject:[NSString stringWithFormat:@"[apsd] Không thể kill PID %d (errno %d: %s)", procs[i].kp_proc.p_pid, errno, strerror(errno)]];
                             }
                         }
                     }
@@ -693,6 +727,29 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
     }
     if (!restarted && errors) {
         [errors addObject:@"[apsd] Không tìm thấy hoặc không thể khởi động lại daemon apsd"];
+    }
+
+    // 6. Verify sau Restart: Đợi 1.2s để phát hiện race condition nếu apsd tự ghi đè lại
+    [NSThread sleepForTimeInterval:1.2];
+    for (NSString *apsdPath in targetPaths) {
+        NSData *checkData = [NSData dataWithContentsOfFile:apsdPath];
+        if (!checkData) continue;
+        id checkDict = [NSPropertyListSerialization propertyListWithData:checkData options:0 format:NULL error:nil];
+        if ([checkDict isKindOfClass:[NSDictionary class]]) {
+            NSArray *envKeys = @[@"APSDEnvironmentTokens", @"APSDSandboxEnvironmentTokens", @"APSDProductionEnvironmentTokens"];
+            for (NSString *envKey in envKeys) {
+                id envObj = checkDict[envKey];
+                if ([envObj isKindOfClass:[NSDictionary class]]) {
+                    for (id k in (NSDictionary *)envObj) {
+                        if ([k isKindOfClass:[NSString class]] && zt_is_zalo_topic((NSString *)k)) {
+                            NSString *raceWarn = [NSString stringWithFormat:@"⚠️ [Race Condition] apsd đã tự ghi ngược lại topic %@ vào %@", k, envKey];
+                            NSLog(@"[ZaloTweak-APNs] %@", raceWarn);
+                            if (errors) [errors addObject:raceWarn];
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
