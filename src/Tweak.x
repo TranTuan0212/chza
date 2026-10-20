@@ -890,7 +890,7 @@ static void purge_entire_sandbox_safely(void) {
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
                     NSString *savedTZ = dict[@"timeZoneName"];
-                    if (!self.hasConfiguredProfile || self.spoofedIDFV.length == 0 || self.spoofedSerial.length == 0) {
+                    if (!self.hasConfiguredProfile || self.spoofedIDFV.length == 0) {
                         [self generateNewProfile];
                     }
                     if (savedTZ.length > 0) {
@@ -4113,6 +4113,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                         s.apnsRotatedStatus = statusStr;
                         [s saveSettings];
                         chmod([GLOBAL_PREFS_PATH UTF8String], 0666);
+                        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
 
                         static NSString *s_lastAlertedAPNsToken = nil;
                         if (!s_lastAlertedAPNsToken || ![s_lastAlertedAPNsToken isEqualToString:tokenHex]) {

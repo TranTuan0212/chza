@@ -182,7 +182,35 @@ static void fetch_public_ip_prefs(void (^completion)(NSString *ip)) {
 - (NSDictionary *)groupContainerURLs;
 @end
 
+static void on_settings_changed_prefs(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        ZTRootListController *ctrl = (__bridge ZTRootListController *)observer;
+        if (ctrl) {
+            [ctrl reloadSpecifiers];
+        }
+    });
+}
+
 @implementation ZTRootListController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
+                                    (__bridge const void *)(self),
+                                    on_settings_changed_prefs,
+                                    CFSTR("com.sonhu.zalotweak/settingschanged"),
+                                    NULL,
+                                    CFNotificationSuspensionBehaviorDeliverImmediately);
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [self reloadSpecifiers];
+}
+
+- (void)dealloc {
+    CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(self), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL);
+}
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
@@ -417,7 +445,7 @@ static void kill_all_zalo_processes(void) {
     [NSThread sleepForTimeInterval:0.3];
 }
 
-static BOOL ensure_root_privileges(NSMutableArray<NSString *> *errors) {
+static void ensure_root_privileges(void) {
     if (getuid() != 0) {
         setuid(0);
         seteuid(0);
@@ -425,11 +453,9 @@ static BOOL ensure_root_privileges(NSMutableArray<NSString *> *errors) {
         setegid(0);
     }
     if (getuid() == 0 || geteuid() == 0) {
-        NSLog(@"[ZaloTweak-Root] ✅ Đã kích hoạt quyền root thành công! (UID: %d, EUID: %d)", getuid(), geteuid());
-        return YES;
+        NSLog(@"[ZaloTweak-Root] ✅ Quyền root hoạt động (UID: %d, EUID: %d)", getuid(), geteuid());
     } else {
-        NSLog(@"[ZaloTweak-Root] ℹ️ Đang chạy với UID: %d, EUID: %d (Quyền mobile chuẩn - sở hữu toàn bộ Sandbox Zalo).", getuid(), geteuid());
-        return NO;
+        NSLog(@"[ZaloTweak-Root] ℹ️ Đang chạy với quyền user mobile (UID: %d, EUID: %d). Toàn quyền xử lý dữ liệu Zalo.", getuid(), geteuid());
     }
 }
 
@@ -1275,10 +1301,10 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
     [self presentViewController:progressAlert animated:YES completion:^{
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            // 1. Nâng quyền Root (UID 0) ngay từ đầu & Tắt sạch tiến trình Zalo
-            ensure_root_privileges(errors);
+            // 1. Khởi tạo quyền thực thi & Tắt sạch tiến trình Zalo
+            ensure_root_privileges();
             kill_all_zalo_processes();
-            updateProgress(@"[15%] 🛡️ Đã kích hoạt quyền Root (UID 0) & Đã tắt toàn bộ tiến trình Zalo...", 0.2);
+            updateProgress(@"[15%] 🛡️ Khởi tạo quyền thực thi & Đã tắt toàn bộ tiến trình Zalo...", 0.2);
 
             // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
             safe_purge_apple_push_cache(errors);
@@ -1560,7 +1586,11 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     NSString *last = dict[@"lastWipedAPNsToken"];
     NSString *rot = dict[@"apnsRotatedStatus"];
     if (!curr || curr.length == 0) {
-        return @"Chờ mở Zalo cấp Token ⏳";
+        if (last && last.length > 0) {
+            NSString *shortLast = (last.length > 14) ? [NSString stringWithFormat:@"%@...%@", [last substringToIndex:6], [last substringFromIndex:last.length - 6]] : last;
+            return [NSString stringWithFormat:@"Chờ mở Zalo (Né cũ: %@) ⏳", shortLast];
+        }
+        return @"Chờ mở Zalo để Apple cấp mới ⏳";
     }
     NSString *shortCurr = (curr.length > 16) ? [NSString stringWithFormat:@"%@...%@", [curr substringToIndex:8], [curr substringFromIndex:curr.length - 6]] : curr;
     if ([rot isEqualToString:@"DUPLICATE"] || (last.length > 0 && [curr isEqualToString:last])) {
