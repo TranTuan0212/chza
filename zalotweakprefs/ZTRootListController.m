@@ -244,6 +244,8 @@ static void on_settings_changed_prefs(CFNotificationCenterRef center, void *obse
 }
 
 
+static int zt_run_cmd(const char *path, const char *const argv[]);
+
 static void zt_log_to_audit(NSString *tag, NSString *msg) {
     NSLog(@"[ZaloTweak-%@] %@", tag, msg);
     NSDateFormatter *df = [[NSDateFormatter alloc] init];
@@ -2031,7 +2033,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
                 NSURL *stagingURL = [NSURL fileURLWithPath:stagingDir isDirectory:YES];
                 NSURL *destURL = [NSURL fileURLWithPath:targetIpa isDirectory:NO];
-                [coordinator coordinateReadingItemAtURL:stagingURL options:NSFileReadingForUploading error:nil byAccessor:^(NSURL * _Nonnull zippedURL) {
+                [coordinator coordinateReadingItemAtURL:stagingURL options:(NSFileCoordinatorReadingOptions)(1 << 3) error:nil byAccessor:^(NSURL * _Nonnull zippedURL) {
                     [fm removeItemAtURL:destURL error:nil];
                     zipSuccess = [fm moveItemAtURL:zippedURL toURL:destURL error:nil];
                 }];
