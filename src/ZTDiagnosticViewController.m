@@ -8,6 +8,10 @@
 #import <unistd.h>
 #import <fcntl.h>
 
+static NSString *get_zt_prefs_filepath(void);
+static NSString *get_stored_zcid(void);
+static NSString *get_stored_last_wiped_zcid(void);
+
 static void write_audit_log(NSString *category, NSString *detail) {
     typedef void (*zt_log_audit_fn_t)(NSString *, NSString *);
     static zt_log_audit_fn_t fn_audit = NULL;
