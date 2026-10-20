@@ -4064,18 +4064,37 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 OrigCredIMP origImp = (OrigCredIMP)method_getImplementation(credMethod);
                 IMP customCredImp = imp_implementationWithBlock(^(id self_del, id registry, id creds, NSString *type) {
                     if (creds && [creds respondsToSelector:@selector(token)]) {
-                        NSData *tokData = [creds valueForKey:@"token"];
-                        if (tokData && tokData.length > 0) {
-                            const unsigned char *b = (const unsigned char *)[tokData bytes];
-                            NSUInteger len = [tokData length];
-                            NSMutableString *hex = [NSMutableString stringWithCapacity:(len * 2)];
-                            for (NSUInteger i = 0; i < len; i++) {
-                                [hex appendFormat:@"%02x", b[i]];
+                        BOOL isVoIP = YES;
+                        if (type && [type isKindOfClass:[NSString class]]) {
+                            isVoIP = [type isEqualToString:@"PKPushTypeVoIP"] || [type.lowercaseString containsString:@"voip"];
+                        }
+                        if (!isVoIP) {
+                            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"ℹ️ [PUSHKIT PHỤ] Bỏ qua credentials không phải VoIP (type=%@)", type]);
+                        } else {
+                            NSData *tokData = [creds valueForKey:@"token"];
+                            if (tokData && tokData.length > 0) {
+                                const unsigned char *b = (const unsigned char *)[tokData bytes];
+                                NSUInteger len = [tokData length];
+                                NSMutableString *hex = [NSMutableString stringWithCapacity:(len * 2)];
+                                for (NSUInteger i = 0; i < len; i++) {
+                                    [hex appendFormat:@"%02x", b[i]];
+                                }
+                                ZTSettings *st = [ZTSettings sharedSettings];
+                                BOOL isAPNsToken = NO;
+                                if (st.currentAPNsToken && st.currentAPNsToken.length > 0 && [hex isEqualToString:st.currentAPNsToken]) {
+                                    isAPNsToken = YES;
+                                }
+                                if (st.lastWipedAPNsToken && st.lastWipedAPNsToken.length > 0 && [hex isEqualToString:st.lastWipedAPNsToken]) {
+                                    isAPNsToken = YES;
+                                }
+                                if (isAPNsToken) {
+                                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"⚠️ [PUSHKIT BỎ QUA] Credential nhận được trùng với Token APNs (%@), bỏ qua không ghi đè VoIP", hex]);
+                                } else {
+                                    st.currentVoIPToken = hex;
+                                    [st saveSettings];
+                                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã bắt Token VoIP chính thức từ PushKit (Type=%@): %@", type ?: @"VoIP", hex]);
+                                }
                             }
-                            ZTSettings *st = [ZTSettings sharedSettings];
-                            st.currentVoIPToken = hex;
-                            [st saveSettings];
-                            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã bắt Token VoIP trực tiếp từ PushKit: %@", hex]);
                         }
                     }
                     if (origImp) {
