@@ -4127,7 +4127,10 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
 
                         static NSString *s_lastAlertedAPNsToken = nil;
-                        if (!s_lastAlertedAPNsToken || ![s_lastAlertedAPNsToken isEqualToString:tokenHex]) {
+                        static BOOL s_isAlertPresenting = NO;
+                        if (!s_isAlertPresenting && (!s_lastAlertedAPNsToken || ![s_lastAlertedAPNsToken isEqualToString:tokenHex])) {
+                            s_isAlertPresenting = YES;
+                            s_lastAlertedAPNsToken = [tokenHex copy];
                             NSString *capturedHex = [tokenHex copy];
                             NSString *capturedLastWiped = [lastWiped copy];
                             NSString *capturedStatus = [statusStr copy];
@@ -4146,7 +4149,9 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                                     alert = [UIAlertController alertControllerWithTitle:@"🟢 APNs TOKEN MỚI (100% SẠCH)"
                                                                                 message:alertMsg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
-                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                                        s_isAlertPresenting = NO;
+                                    }]];
                                 } else if ([capturedStatus isEqualToString:@"DUPLICATE"]) {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Token Push nhận từ Apple TRÙNG 100%% với nick trước!\n\n"
                                                           @"• Token Trùng: %@\n\n"
@@ -4155,7 +4160,9 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                                     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🔴 CẢNH BÁO: TOKEN APNs BỊ TRÙNG!"
                                                                                                    message:alertMsg
                                                                                             preferredStyle:UIAlertControllerStyleAlert];
-                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Rõ (Tôi sẽ Wipe lại)" style:UIAlertActionStyleDestructive handler:nil]];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Rõ (Tôi sẽ Wipe lại)" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
+                                        s_isAlertPresenting = NO;
+                                    }]];
                                 } else {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Đã ghi nhận Token Push ban đầu của thiết bị làm mốc đối chiếu:\n\n"
                                                           @"• Token: %@\n\n"
@@ -4163,22 +4170,45 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                                     alert = [UIAlertController alertControllerWithTitle:@"ℹ️ ĐÃ LƯU TOKEN APNs BAN ĐẦU"
                                                                                 message:alertMsg
                                                                          preferredStyle:UIAlertControllerStyleAlert];
-                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+                                    [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+                                        s_isAlertPresenting = NO;
+                                    }]];
                                 }
 
                                 __block void (^tryPresentAlert)(void) = nil;
                                 __block int retryCount = 0;
                                 tryPresentAlert = ^{
                                     UIViewController *topVC = ZTGetTopViewController();
+                                    while (topVC.presentedViewController) {
+                                        topVC = topVC.presentedViewController;
+                                    }
+
+                                    BOOL canPresent = NO;
                                     if (topVC && topVC.view.window && !topVC.isBeingPresented && !topVC.isBeingDismissed) {
-                                        [topVC presentViewController:alert animated:YES completion:^{
-                                            s_lastAlertedAPNsToken = [capturedHex copy];
-                                        }];
-                                        tryPresentAlert = nil;
+                                        if (![topVC isKindOfClass:[UIAlertController class]]) {
+                                            canPresent = YES;
+                                        }
+                                    }
+
+                                    if (canPresent) {
+                                        @try {
+                                            [topVC presentViewController:alert animated:YES completion:nil];
+                                            tryPresentAlert = nil;
+                                        } @catch (NSException *ex) {
+                                            NSLog(@"[ZaloTweak-APNs] Bắt exception khi present alert: %@", ex.reason);
+                                            if (retryCount < 15) {
+                                                retryCount++;
+                                                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), tryPresentAlert);
+                                            } else {
+                                                s_isAlertPresenting = NO;
+                                                tryPresentAlert = nil;
+                                            }
+                                        }
                                     } else if (retryCount < 15) {
                                         retryCount++;
-                                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), tryPresentAlert);
+                                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), tryPresentAlert);
                                     } else {
+                                        s_isAlertPresenting = NO;
                                         tryPresentAlert = nil;
                                     }
                                 };
