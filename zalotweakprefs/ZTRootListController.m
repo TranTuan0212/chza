@@ -61,22 +61,55 @@ static NSString *get_roothide_license_path(void) {
     return @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.license.plist";
 }
 
-static NSDictionary *load_current_prefs_dict(void) {
-    NSString *rhPath = get_roothide_prefs_path();
-    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:rhPath];
-    if (!dict && ![rhPath isEqualToString:PREFS_PATH]) {
-        dict = [NSDictionary dictionaryWithContentsOfFile:PREFS_PATH];
-    }
-    return dict;
-}
+static NSArray<NSString *> *get_zalo_data_container_paths(void);
+static NSArray<NSString *> *get_zalo_group_container_paths(void);
 
-static NSMutableDictionary *load_current_mutable_prefs_dict(void) {
+static NSDictionary *load_current_prefs_dict(void) {
     NSString *rhPath = get_roothide_prefs_path();
     NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:rhPath];
     if (!dict && ![rhPath isEqualToString:PREFS_PATH]) {
         dict = [NSMutableDictionary dictionaryWithContentsOfFile:PREFS_PATH];
     }
-    return dict ?: [NSMutableDictionary dictionary];
+    if (!dict) dict = [NSMutableDictionary dictionary];
+
+    // Luôn quét thêm vào Sandbox Container & App Group của Zalo để lấy Token APNs mới nhất
+    // (Vì Zalo nằm trong Sandbox của iOS nên không ghi trực tiếp được ra /var/mobile/Library/Preferences/)
+    NSString *currAPNs = dict[@"currentAPNsToken"];
+    if (!currAPNs || currAPNs.length == 0) {
+        NSArray *containers = get_zalo_data_container_paths();
+        for (NSString *container in containers) {
+            NSString *sandboxPref = [container stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"];
+            NSDictionary *sDict = [NSDictionary dictionaryWithContentsOfFile:sandboxPref];
+            NSString *token = sDict[@"currentAPNsToken"];
+            if (token && token.length > 0) {
+                dict[@"currentAPNsToken"] = token;
+                if (sDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = sDict[@"apnsRotatedStatus"];
+                if (sDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = sDict[@"lastWipedAPNsToken"];
+                break;
+            }
+        }
+        if (!dict[@"currentAPNsToken"] || [dict[@"currentAPNsToken"] length] == 0) {
+            NSArray *groups = get_zalo_group_container_paths();
+            for (NSString *grp in groups) {
+                NSString *grpPref = [grp stringByAppendingPathComponent:@"com.sonhu.zalotweak.plist"];
+                NSDictionary *gDict = [NSDictionary dictionaryWithContentsOfFile:grpPref];
+                NSString *token = gDict[@"currentAPNsToken"];
+                if (token && token.length > 0) {
+                    dict[@"currentAPNsToken"] = token;
+                    if (gDict[@"apnsRotatedStatus"]) dict[@"apnsRotatedStatus"] = gDict[@"apnsRotatedStatus"];
+                    if (gDict[@"lastWipedAPNsToken"]) dict[@"lastWipedAPNsToken"] = gDict[@"lastWipedAPNsToken"];
+                    break;
+                }
+            }
+        }
+    }
+
+    return [dict copy];
+}
+
+static NSMutableDictionary *load_current_mutable_prefs_dict(void) {
+    NSDictionary *d = load_current_prefs_dict();
+    return d ? [d mutableCopy] : [NSMutableDictionary dictionary];
 }
 
 static void save_dict_to_all_locations(NSDictionary *dict);
@@ -1301,6 +1334,10 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
     [self presentViewController:progressAlert animated:YES completion:^{
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            // 0. Gửi tín hiệu yêu cầu Zalo unregister APNs và xả RunLoop Mach IPC (nếu Zalo đang chạy)
+            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/perform_push_unregister"), NULL, NULL, YES);
+            [NSThread sleepForTimeInterval:0.25];
+
             // 1. Khởi tạo quyền thực thi & Tắt sạch tiến trình Zalo
             ensure_root_privileges();
             kill_all_zalo_processes();
@@ -1420,7 +1457,8 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
 
-            dict[@"wipePending"] = @(NO);
+            dict[@"wipePending"] = @(YES);
+            dict[@"needsAPNsUnregister"] = @(YES);
             dict[@"needsSandboxPurge"] = @(NO);
             dict[@"needsNewProfile"] = @(NO);
 

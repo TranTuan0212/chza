@@ -4043,14 +4043,24 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
         static BOOL s_unregisteredOnceAfterWipe = NO;
         if (!s_unregisteredOnceAfterWipe) {
-            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
-            if ([dict[@"wipePending"] boolValue]) {
+            NSString *prefPath = getConfigPath();
+            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:prefPath];
+            if (!dict) dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
+            if ([dict[@"wipePending"] boolValue] || [dict[@"needsAPNsUnregister"] boolValue]) {
                 s_unregisteredOnceAfterWipe = YES;
-                logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd để ép Apple cấp Token mới...");
+                logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd và xả RunLoop...");
                 if ([self respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
                     [self unregisterForRemoteNotifications];
+                    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
                 }
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                NSMutableDictionary *m = [dict mutableCopy];
+                m[@"wipePending"] = @(NO);
+                m[@"needsAPNsUnregister"] = @(NO);
+                [m writeToFile:prefPath atomically:YES];
+                [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    logAudit(@"APNS-ROTATE", @"🚀 [WIPE-ACTIVE] Kích hoạt đăng ký mới với Apple Gateway để nhận Token mới...");
                     %orig;
                 });
                 return;
@@ -5309,6 +5319,17 @@ static NSString *get_runtime_environment_desc(void) {
     return [NSString stringWithFormat:@"🔌 Custom Dylib [%@]", dname];
 }
 
+static void pushUnregisterCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if ([[UIApplication sharedApplication] respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
+            logAudit(@"APNS-ROTATE", @"📡 [SETTINGS-WIPE] Nhận tín hiệu từ Cài đặt -> Hủy đăng ký push với Apple và xả RunLoop Mach IPC...");
+            [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.18]];
+        }
+        exit(0);
+    });
+}
+
 static void settingsChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     if ([ZTSettings sharedSettings].isShuttingDownForDeepWipe) {
         return;
@@ -5426,6 +5447,15 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
             CFSTR("com.sonhu.zalotweak/settingschanged"),
             NULL,
             CFNotificationSuspensionBehaviorCoalesce
+        );
+
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            NULL,
+            pushUnregisterCallback,
+            CFSTR("com.sonhu.zalotweak/perform_push_unregister"),
+            NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately
         );
 
         // 3. Cài đặt các hook C an toàn (tương thích 100% cả Jailbreak lẫn Sideload/LARA qua Fishhook)
