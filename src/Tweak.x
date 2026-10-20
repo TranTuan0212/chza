@@ -4051,7 +4051,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                 logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd và xả RunLoop...");
                 if ([self respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
                     [self unregisterForRemoteNotifications];
-                    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.2]];
+                    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
                 }
                 NSMutableDictionary *m = [dict mutableCopy];
                 m[@"wipePending"] = @(NO);
@@ -4059,7 +4059,7 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                 [m writeToFile:prefPath atomically:YES];
                 [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
 
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                     logAudit(@"APNS-ROTATE", @"🚀 [WIPE-ACTIVE] Kích hoạt đăng ký mới với Apple Gateway để nhận Token mới...");
                     %orig;
                 });
@@ -4101,7 +4101,8 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                         ZTSettings *s = [ZTSettings sharedSettings];
                         NSString *lastWiped = s.lastWipedAPNsToken;
                         if (!lastWiped || lastWiped.length == 0) {
-                            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
+                            NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:getConfigPath()];
+                            if (!dict) dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
                             lastWiped = dict[@"lastWipedAPNsToken"];
                         }
                         NSString *statusStr = @"INITIAL_CAPTURED";
@@ -4127,28 +4128,25 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 
                         static NSString *s_lastAlertedAPNsToken = nil;
                         if (!s_lastAlertedAPNsToken || ![s_lastAlertedAPNsToken isEqualToString:tokenHex]) {
-                            s_lastAlertedAPNsToken = [tokenHex copy];
                             NSString *capturedHex = [tokenHex copy];
                             NSString *capturedLastWiped = [lastWiped copy];
                             NSString *capturedStatus = [statusStr copy];
 
-                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                                UIViewController *topVC = ZTGetTopViewController();
-                                if (!topVC || !topVC.view.window) return;
+                            dispatch_async(dispatch_get_main_queue(), ^{
 
                                 NSString *tokenShort = (capturedHex.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedHex substringToIndex:7], [capturedHex substringFromIndex:capturedHex.length - 7]] : capturedHex;
                                 NSString *oldShort = (capturedLastWiped.length > 14) ? [NSString stringWithFormat:@"%@...%@", [capturedLastWiped substringToIndex:7], [capturedLastWiped substringFromIndex:capturedLastWiped.length - 7]] : (capturedLastWiped ?: @"(Trống)");
 
+                                UIAlertController *alert = nil;
                                 if ([capturedStatus isEqualToString:@"ROTATED_NEW"]) {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Apple đã cấp Token Push mới hoàn toàn!\n\n"
                                                           @"• Token Mới: %@\n"
                                                           @"• Token Cũ: %@\n\n"
                                                           @"✅ AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ TÀI KHOẢN MỚI!", tokenShort, oldShort];
-                                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🟢 APNs TOKEN MỚI (100% SẠCH)"
-                                                                                                   message:alertMsg
-                                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                                    alert = [UIAlertController alertControllerWithTitle:@"🟢 APNs TOKEN MỚI (100% SẠCH)"
+                                                                                message:alertMsg
+                                                                         preferredStyle:UIAlertControllerStyleAlert];
                                     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                                    [topVC presentViewController:alert animated:YES completion:nil];
                                 } else if ([capturedStatus isEqualToString:@"DUPLICATE"]) {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Token Push nhận từ Apple TRÙNG 100%% với nick trước!\n\n"
                                                           @"• Token Trùng: %@\n\n"
@@ -4158,17 +4156,33 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
                                                                                                    message:alertMsg
                                                                                             preferredStyle:UIAlertControllerStyleAlert];
                                     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Rõ (Tôi sẽ Wipe lại)" style:UIAlertActionStyleDestructive handler:nil]];
-                                    [topVC presentViewController:alert animated:YES completion:nil];
                                 } else {
                                     NSString *alertMsg = [NSString stringWithFormat:@"Đã ghi nhận Token Push ban đầu của thiết bị làm mốc đối chiếu:\n\n"
                                                           @"• Token: %@\n\n"
                                                           @"ℹ️ Hãy vào Cài Đặt (Settings) -> ZaloTweak bấm Wipe để cấp máy mới và đổi Token Push.", tokenShort];
-                                    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ℹ️ ĐÃ LƯU TOKEN APNs BAN ĐẦU"
-                                                                                                   message:alertMsg
-                                                                                            preferredStyle:UIAlertControllerStyleAlert];
+                                    alert = [UIAlertController alertControllerWithTitle:@"ℹ️ ĐÃ LƯU TOKEN APNs BAN ĐẦU"
+                                                                                message:alertMsg
+                                                                         preferredStyle:UIAlertControllerStyleAlert];
                                     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                                    [topVC presentViewController:alert animated:YES completion:nil];
                                 }
+
+                                __block void (^tryPresentAlert)(void) = nil;
+                                __block int retryCount = 0;
+                                tryPresentAlert = ^{
+                                    UIViewController *topVC = ZTGetTopViewController();
+                                    if (topVC && topVC.view.window && !topVC.isBeingPresented && !topVC.isBeingDismissed) {
+                                        [topVC presentViewController:alert animated:YES completion:^{
+                                            s_lastAlertedAPNsToken = [capturedHex copy];
+                                        }];
+                                        tryPresentAlert = nil;
+                                    } else if (retryCount < 15) {
+                                        retryCount++;
+                                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), tryPresentAlert);
+                                    } else {
+                                        tryPresentAlert = nil;
+                                    }
+                                };
+                                tryPresentAlert();
                             });
                         }
                     }

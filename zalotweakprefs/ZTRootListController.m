@@ -1320,12 +1320,26 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     NSMutableArray<NSString *> *errors = [NSMutableArray array];
 
     UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"⏳ ĐANG DEEP WIPE HỆ THỐNG..."
-                                                                           message:@"[0%] Đang khởi động chu trình dọn dẹp..."
+                                                                           message:@"[0%] Đang khởi động chu trình dọn dẹp...\n\n"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
 
-    void (^updateProgress)(NSString *, double) = ^(NSString *msg, double delaySec) {
+    UIProgressView *progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    progressView.progress = 0.0f;
+    progressView.tintColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
+    [progressAlert.view addSubview:progressView];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [progressView.leadingAnchor constraintEqualToAnchor:progressAlert.view.leadingAnchor constant:20.0],
+        [progressView.trailingAnchor constraintEqualToAnchor:progressAlert.view.trailingAnchor constant:-20.0],
+        [progressView.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor constant:-20.0],
+        [progressView.heightAnchor constraintEqualToConstant:4.0]
+    ]];
+
+    void (^updateProgress)(NSString *, float, double) = ^(NSString *msg, float progressVal, double delaySec) {
         dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = msg;
+            progressAlert.message = [NSString stringWithFormat:@"%@\n\n", msg];
+            [progressView setProgress:progressVal animated:YES];
         });
         if (delaySec > 0) {
             [NSThread sleepForTimeInterval:delaySec];
@@ -1334,18 +1348,33 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
     [self presentViewController:progressAlert animated:YES completion:^{
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            // 0. Gửi tín hiệu yêu cầu Zalo unregister APNs và xả RunLoop Mach IPC (nếu Zalo đang chạy)
+            // 0. Lưu trước mốc Token APNs & IDFV hiện tại trước khi xóa bất kỳ thư mục Sandbox nào
+            NSMutableDictionary *dict = load_current_mutable_prefs_dict();
+            NSString *oldAPNs = dict[@"currentAPNsToken"] ?: dict[@"lastKnownAPNsToken"];
+            if (oldAPNs && oldAPNs.length > 0) {
+                dict[@"lastWipedAPNsToken"] = oldAPNs;
+                NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né trước khi Wipe: %@", oldAPNs);
+            }
+            NSString *oldIDFV = dict[@"spoofedIDFV"];
+            if (oldIDFV && oldIDFV.length > 0) {
+                dict[@"lastWipedIDFV"] = oldIDFV;
+            }
+            dict[@"currentAPNsToken"] = @"";
+            dict[@"apnsRotatedStatus"] = @"WAITING";
+            dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
+
+            // 0.1 Gửi tín hiệu yêu cầu Zalo unregister APNs và xả RunLoop Mach IPC (nếu Zalo đang chạy)
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/perform_push_unregister"), NULL, NULL, YES);
             [NSThread sleepForTimeInterval:0.25];
 
             // 1. Khởi tạo quyền thực thi & Tắt sạch tiến trình Zalo
             ensure_root_privileges();
             kill_all_zalo_processes();
-            updateProgress(@"[15%] 🛡️ Khởi tạo quyền thực thi & Đã tắt toàn bộ tiến trình Zalo...", 0.2);
+            updateProgress(@"[15%] 🛡️ Khởi tạo quyền thực thi & Đã tắt toàn bộ tiến trình Zalo...", 0.15f, 0.2);
 
             // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
             safe_purge_apple_push_cache(errors);
-            updateProgress(@"[35%] 🔄 Đã purge cache com.apple.apsd.plist & Khởi động lại daemon apsd...", 0.25);
+            updateProgress(@"[35%] 🔄 Đã purge cache com.apple.apsd.plist & Khởi động lại daemon apsd...", 0.35f, 0.25);
 
             // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites của Zalo
             NSArray *suitesToPurge = @[
@@ -1367,7 +1396,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                     [ud synchronize];
                 }
             }
-            updateProgress(@"[55%] 🧹 Đã dọn sạch NSUserDefaults App Suites của Zalo...", 0.2);
+            updateProgress(@"[55%] 🧹 Đã dọn sạch NSUserDefaults App Suites của Zalo...", 0.55f, 0.2);
 
             // 4. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
             NSArray *dataContainers = get_zalo_data_container_paths();
@@ -1402,24 +1431,9 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
             }
-            updateProgress(@"[75%] 🗂️ Đã làm sạch toàn bộ Sandbox Data Containers & App Groups...", 0.2);
+            updateProgress(@"[75%] 🗂️ Đã làm sạch toàn bộ Sandbox Data Containers & App Groups...", 0.75f, 0.2);
 
             // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
-            NSMutableDictionary *dict = load_current_mutable_prefs_dict();
-
-            NSString *oldIDFV = dict[@"spoofedIDFV"];
-            if (oldIDFV && oldIDFV.length > 0) {
-                dict[@"lastWipedIDFV"] = oldIDFV;
-            }
-            NSString *oldAPNs = dict[@"currentAPNsToken"] ?: dict[@"lastKnownAPNsToken"];
-            if (oldAPNs && oldAPNs.length > 0) {
-                dict[@"lastWipedAPNsToken"] = oldAPNs;
-                NSLog(@"[ZaloTweak-APNs] Đã lưu Token cũ cần né: %@", oldAPNs);
-            }
-            dict[@"currentAPNsToken"] = @"";
-            dict[@"apnsRotatedStatus"] = @"WAITING";
-            dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
-
             NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
             dict[@"regionMode"] = chosenRegion;
             dict[@"preferredCarrier"] = preferredCarrier ?: @"";
@@ -1508,9 +1522,10 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                                          @"• MAC Wi-Fi: %@\n"
                                          @"• SIM & Khu Vực: %@\n"
                                          @"• Token APNs Cũ Đã Lưu: %@\n"
-                                         @"• Keychain & WebKit: Phân vùng riêng biệt\n"
-                                         @"• Uptime: Cấp Boot Time ngẫu nhiên\n\n"
-                                         @"✈️ BẮT BUỘC: Bật và Tắt Chế Độ Máy Bay (Airplane Mode) trong 5 giây để đổi IP 4G trước khi mở lại Zalo.",
+                                         @"• Keychain & WebKit: Phân vùng riêng biệt\n\n"
+                                         @"📲 BƯỚC TIẾP THEO:\n"
+                                         @"1. Bật và Tắt Chế Độ Máy Bay trong 5 giây để đổi IP mạng.\n"
+                                         @"2. Mở Zalo để Apple cấp Token APNs mới và xem Bảng Báo Xanh!",
                                          p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName, oldTokenDisplay];
 
                         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 DEEP WIPE THÀNH CÔNG 100%"

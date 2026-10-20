@@ -1667,12 +1667,31 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
 
 - (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top {
     UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"🧹 ĐANG DEEP WIPE HỆ THỐNG..."
-                                                                           message:@"[0%] Đang ghi nhận IP mạng..."
+                                                                           message:@"[0%] Đang ghi nhận IP mạng...
+
+"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
+
+    UIProgressView *progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
+    progressView.translatesAutoresizingMaskIntoConstraints = NO;
+    progressView.progress = 0.0f;
+    progressView.tintColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
+    [progressAlert.view addSubview:progressView];
+
+    [NSLayoutConstraint activateConstraints:@[
+        [progressView.leadingAnchor constraintEqualToAnchor:progressAlert.view.leadingAnchor constant:20.0],
+        [progressView.trailingAnchor constraintEqualToAnchor:progressAlert.view.trailingAnchor constant:-20.0],
+        [progressView.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor constant:-20.0],
+        [progressView.heightAnchor constraintEqualToConstant:4.0]
+    ]];
+
     [top presentViewController:progressAlert animated:YES completion:^{
         fetch_public_ip(^(NSString *currentIP) {
             dispatch_sync(dispatch_get_main_queue(), ^{
-                progressAlert.message = @"[15%] 📡 Đang hủy đăng ký push & Drain RunLoop (150ms)...";
+                progressAlert.message = @"[15%] 📡 Đang hủy đăng ký push & Drain RunLoop (150ms)...
+
+";
+                [progressView setProgress:0.15f animated:YES];
             });
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
                 [self performInAppDeepWipeWithRegion:targetRegion preferredCarrier:preferredCarrier currentIP:currentIP targetTimeZone:nil progressAlert:progressAlert];
@@ -1755,6 +1774,19 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     if (!home || home.length < 5) return;
     
     NSFileManager *fm = [NSFileManager defaultManager];
+
+    void (^updateProgressAlert)(NSString *, float) = ^(NSString *msg, float val) {
+        if (!progressAlert) return;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            progressAlert.message = [NSString stringWithFormat:@"%@\n\n", msg];
+            for (UIView *sub in progressAlert.view.subviews) {
+                if ([sub isKindOfClass:[UIProgressView class]]) {
+                    [(UIProgressView *)sub setProgress:val animated:YES];
+                    break;
+                }
+            }
+        });
+    };
     
     // 0. Hủy đăng ký push notification với Apple Gateway
     void (^doUnregisterPushBlock)(void) = ^{
@@ -1769,22 +1801,14 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     } else {
         dispatch_sync(dispatch_get_main_queue(), doUnregisterPushBlock);
     }
-    if (progressAlert) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = @"[30%] 📡 Đã gửi unregister push & Xả RunLoop 150ms...";
-        });
-    }
+    updateProgressAlert(@"[30%] 📡 Đã gửi unregister push & Xả RunLoop 150ms...", 0.30f);
 
     // 1. Xóa Clipboard để triệt tiêu mọi token tracking
     [UIPasteboard generalPasteboard].items = @[];
     [UIPasteboard generalPasteboard].string = @"";
     
     // 2. Xóa sạch Keychain của Zalo trong sandbox này
-    if (progressAlert) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = @"[50%] 🔐 Đang làm sạch Keychain & NSUserDefaults App Suites...";
-        });
-    }
+    updateProgressAlert(@"[50%] 🔐 Đang làm sạch Keychain & NSUserDefaults App Suites...", 0.50f);
     NSArray *secClasses = @[
         (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecClassInternetPassword,
@@ -1908,11 +1932,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Application Support/KVCore/Device"] withIntermediateDirectories:YES attributes:nil error:nil];
     [fm createDirectoryAtPath:[libDir stringByAppendingPathComponent:@"Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
     
-    if (progressAlert) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = @"[75%] 🗂️ Đã làm sạch Sandbox Documents, Library & App Groups...";
-        });
-    }
+    updateProgressAlert(@"[75%] 🗂️ Đã làm sạch Sandbox Documents, Library & App Groups...", 0.75f);
     
     // 5. Đánh dấu Cold-Boot: Sinh ngay hồ sơ mới + lưu khu vực SIM, IP wipe và cờ needsNewProfile + needsSandboxPurge
     ZTSettings *settings = [ZTSettings sharedSettings];
@@ -1968,12 +1988,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
     // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
     sever_all_network_sockets_immediately();
-    if (progressAlert) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = @"[95%] 🎲 Đã sinh Profile mới & Ngắt kết nối socket TCP...";
-        });
-        [NSThread sleepForTimeInterval:0.15];
-    }
+    updateProgressAlert(@"[95%] 🎲 Đã sinh Profile mới & Ngắt kết nối socket TCP...", 0.95f);
+    if (progressAlert) [NSThread sleepForTimeInterval:0.15];
 
     // 7. Đóng app êm ái: Suspend trước để SpringBoard thu nhỏ scene về nền, sau đó exit(0) tránh lỗi "Scene client is invalid"
     UIViewController *top = get_top_view_controller();
@@ -2023,12 +2039,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         cleanExitBlock();
     }]];
 
-    if (progressAlert) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = @"[100%] 🎉 Hoàn tất Deep Wipe!";
-        });
-        [NSThread sleepForTimeInterval:0.2];
-    }
+    updateProgressAlert(@"[100%] 🎉 Hoàn tất Deep Wipe!", 1.0f);
+    if (progressAlert) [NSThread sleepForTimeInterval:0.2];
 
     void (^presentCompletionBlock)(void) = ^{
         UIViewController *presenter = get_top_view_controller() ?: top;
