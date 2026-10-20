@@ -21,9 +21,6 @@
 extern char **environ;
 
 #define PREFS_PATH @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
-#define ZALO_IPA_EXPORT_PATH @"/var/mobile/Media/ZaloTweak_Zalo.ipa"
-#define ZALO_IPA_FALLBACK_PATH @"/var/mobile/Documents/ZaloTweak_Zalo.ipa"
-#define ZALO_IPA_STAGING_DIR @"/var/mobile/Library/Caches/ZaloTweak_IPA_Staging"
 
 static inline NSArray<NSString *> *get_known_zalo_bundle_ids(void) {
     return @[
@@ -263,63 +260,6 @@ static void zt_log_to_audit(NSString *tag, NSString *msg) {
     }
 }
 
-static NSString *get_zalo_bundle_app_path(void) {
-    // 1. Dùng LSApplicationProxy trước
-    Class proxyCls = NSClassFromString(@"LSApplicationProxy");
-    if (proxyCls && [proxyCls respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        for (NSString *bid in get_known_zalo_bundle_ids()) {
-            id proxy = [proxyCls performSelector:@selector(applicationProxyForIdentifier:) withObject:bid];
-            if (proxy) {
-                if ([proxy respondsToSelector:@selector(bundleURL)]) {
-                    NSURL *bURL = [proxy performSelector:@selector(bundleURL)];
-                    if (bURL && bURL.path && [[NSFileManager defaultManager] fileExistsAtPath:bURL.path]) {
-                        zt_log_to_audit(@"IPA-EXPORT", [NSString stringWithFormat:@"Tìm thấy bundle Zalo qua LSApplicationProxy.bundleURL: %@", bURL.path]);
-                        return bURL.path;
-                    }
-                }
-                if ([proxy respondsToSelector:@selector(containerURL)]) {
-                    NSURL *cURL = [proxy performSelector:@selector(containerURL)];
-                    if (cURL && cURL.path) {
-                        NSArray *items = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:cURL.path error:nil];
-                        for (NSString *item in items) {
-                            if ([item hasSuffix:@".app"]) {
-                                NSString *appP = [cURL.path stringByAppendingPathComponent:item];
-                                zt_log_to_audit(@"IPA-EXPORT", [NSString stringWithFormat:@"Tìm thấy bundle Zalo qua LSApplicationProxy.containerURL: %@", appP]);
-                                return appP;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Fallback quét thư mục Bundle /var/containers/Bundle/Application
-    NSArray *roots = @[@"/var/containers/Bundle/Application", @"/private/var/containers/Bundle/Application"];
-    NSFileManager *fm = [NSFileManager defaultManager];
-    for (NSString *root in roots) {
-        if (![fm fileExistsAtPath:root]) continue;
-        NSArray *uuids = [fm contentsOfDirectoryAtPath:root error:nil];
-        for (NSString *uuid in uuids) {
-            NSString *bundleDir = [root stringByAppendingPathComponent:uuid];
-            NSArray *apps = [fm contentsOfDirectoryAtPath:bundleDir error:nil];
-            for (NSString *app in apps) {
-                if ([app hasSuffix:@".app"]) {
-                    NSString *infoPath = [bundleDir stringByAppendingPathComponent:[NSString stringWithFormat:@"%@/Info.plist", app]];
-                    NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-                    NSString *bid = info[@"CFBundleIdentifier"];
-                    if (bid && [get_known_zalo_bundle_ids() containsObject:bid]) {
-                        NSString *appP = [bundleDir stringByAppendingPathComponent:app];
-                        zt_log_to_audit(@"IPA-EXPORT", [NSString stringWithFormat:@"Tìm thấy bundle Zalo qua quét filesystem: %@", appP]);
-                        return appP;
-                    }
-                }
-            }
-        }
-    }
-    return nil;
-}
-
 static void set_airplane_mode_enabled(BOOL enabled) {
     dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_NOW);
     Class rCls = NSClassFromString(@"RadiosPreferences");
@@ -355,219 +295,11 @@ static void zt_run_uicache(void) {
         if (access(uicachePaths[i], X_OK) == 0) {
             const char *argv[] = {uicachePaths[i], "-a", NULL};
             if (zt_run_cmd(uicachePaths[i], argv) == 0) {
-                zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Đã chạy uicache thành công qua %s", uicachePaths[i]]);
+                zt_log_to_audit(@"PREFS", [NSString stringWithFormat:@"Đã chạy uicache thành công qua %s", uicachePaths[i]]);
                 return;
             }
         }
     }
-}
-
-static BOOL zt_uninstall_zalo(NSString *bundleId, NSMutableArray<NSString *> *errors) {
-    zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Bắt đầu gỡ cài đặt Zalo (BundleID: %@)...", bundleId]);
-
-    // 1. Thử appinst -u
-    const char *appinstPaths[] = {
-        "/var/jb/usr/bin/appinst",
-        "/var/jb/bin/appinst",
-        "/usr/bin/appinst",
-        "/bin/appinst",
-        NULL
-    };
-    for (int i = 0; appinstPaths[i] != NULL; i++) {
-        if (access(appinstPaths[i], X_OK) == 0) {
-            const char *argv[] = {appinstPaths[i], "-u", [bundleId UTF8String], NULL};
-            int ret = zt_run_cmd(appinstPaths[i], argv);
-            if (ret == 0) {
-                zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Gỡ Zalo thành công qua appinst (%s)", appinstPaths[i]]);
-                return YES;
-            }
-        }
-    }
-
-    // 2. Thử trollstore uninstall / trollstorehelper
-    const char *tsPaths[] = {
-        "/var/jb/usr/bin/trollstore",
-        "/usr/bin/trollstore",
-        "/Applications/TrollStore.app/trollstorehelper",
-        NULL
-    };
-    for (int i = 0; tsPaths[i] != NULL; i++) {
-        if (access(tsPaths[i], X_OK) == 0) {
-            const char *argv[] = {tsPaths[i], "uninstall", [bundleId UTF8String], NULL};
-            int ret = zt_run_cmd(tsPaths[i], argv);
-            if (ret == 0) {
-                zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Gỡ Zalo thành công qua trollstore (%s)", tsPaths[i]]);
-                return YES;
-            }
-        }
-    }
-
-    // 3. Thử Private API LSApplicationWorkspace
-    Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
-    if (wsClass && [wsClass respondsToSelector:@selector(defaultWorkspace)]) {
-        id ws = [wsClass performSelector:@selector(defaultWorkspace)];
-        SEL unSel = sel_registerName("uninstallApplication:withOptions:");
-        if (ws && [ws respondsToSelector:unSel]) {
-            BOOL (*unFn)(id, SEL, NSString *, NSDictionary *) = (BOOL (*)(id, SEL, NSString *, NSDictionary *))[ws methodForSelector:unSel];
-            BOOL res = unFn(ws, unSel, bundleId, nil);
-            if (res) {
-                zt_log_to_audit(@"REINSTALL", @"Gỡ Zalo thành công qua LSApplicationWorkspace uninstallApplication");
-                return YES;
-            }
-        }
-    }
-
-    NSString *err = [NSString stringWithFormat:@"Không thể gỡ cài đặt %@ qua appinst, trollstore hoặc LSApplicationWorkspace", bundleId];
-    zt_log_to_audit(@"REINSTALL-ERR", err);
-    if (errors) [errors addObject:err];
-    return NO;
-}
-
-static BOOL zt_reinstall_zalo_ipa(NSString *ipaPath, NSMutableArray<NSString *> *errors) {
-    zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Bắt đầu cài đặt lại Zalo từ IPA: %@...", ipaPath]);
-
-    if (![[NSFileManager defaultManager] fileExistsAtPath:ipaPath]) {
-        NSString *err = [NSString stringWithFormat:@"File IPA không tồn tại: %@", ipaPath];
-        zt_log_to_audit(@"REINSTALL-ERR", err);
-        if (errors) [errors addObject:err];
-        return NO;
-    }
-
-    // 1. Thử appinst (AppSync Unified) - quét toàn bộ đường dẫn trên Rootful, Rootless, Roothide, Xina
-    const char *appinstPaths[] = {
-        "/var/jb/usr/bin/appinst",          // Rootless / Roothide / Dopamine / Palera1n
-        "/usr/bin/appinst",                 // Rootful (unc0ver, Taurine, Checkra1n, Chimera)
-        "/var/jb/bin/appinst",
-        "/bin/appinst",
-        "/usr/local/bin/appinst",
-        "/var/jb/usr/local/bin/appinst",
-        "/var/Liy/usr/bin/appinst",         // XinaA15
-        "/var/Liy/bin/appinst",
-        NULL
-    };
-    for (int i = 0; appinstPaths[i] != NULL; i++) {
-        if (access(appinstPaths[i], X_OK) == 0) {
-            const char *argv[] = {appinstPaths[i], [ipaPath UTF8String], NULL};
-            int ret = zt_run_cmd(appinstPaths[i], argv);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy appinst (%s) ret=%d", appinstPaths[i], ret]);
-            if (ret == 0) {
-                zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Cài đặt Zalo thành công qua appinst (%s)", appinstPaths[i]]);
-                return YES;
-            }
-        }
-    }
-
-    // 2. Thử TrollStore Helper động qua LSApplicationProxy (tìm thấy bất kể TrollStore nằm ở đâu)
-    Class proxyClass = NSClassFromString(@"LSApplicationProxy");
-    if (proxyClass && [proxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
-        id tsProxy = [proxyClass performSelector:@selector(applicationProxyForIdentifier:) withObject:@"com.opa334.TrollStore"];
-        if (tsProxy && [tsProxy respondsToSelector:@selector(bundleURL)]) {
-            NSURL *tsURL = [tsProxy performSelector:@selector(bundleURL)];
-            if (tsURL && tsURL.path) {
-                NSString *tsHelper = [tsURL.path stringByAppendingPathComponent:@"trollstorehelper"];
-                if (access([tsHelper UTF8String], X_OK) == 0) {
-                    const char *argv[] = {[tsHelper UTF8String], "install", [ipaPath UTF8String], NULL};
-                    int ret = zt_run_cmd([tsHelper UTF8String], argv);
-                    zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy trollstorehelper động (%@) ret=%d", tsHelper, ret]);
-                    if (ret == 0) {
-                        zt_log_to_audit(@"REINSTALL", @"Cài đặt Zalo thành công qua trollstorehelper động");
-                        return YES;
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Thử TrollStore Helper tĩnh qua các đường dẫn cố định
-    const char *tsPaths[] = {
-        "/var/jb/Applications/TrollStore.app/trollstorehelper",
-        "/Applications/TrollStore.app/trollstorehelper",
-        "/var/jb/usr/bin/trollstorehelper",
-        "/usr/bin/trollstorehelper",
-        "/var/jb/usr/local/bin/trollstorehelper",
-        "/usr/local/bin/trollstorehelper",
-        "/var/jb/usr/bin/trollstore",
-        "/usr/bin/trollstore",
-        "/var/jb/usr/bin/trollstoreinstaller",
-        "/usr/bin/trollstoreinstaller",
-        "/var/Liy/usr/bin/trollstore",
-        NULL
-    };
-    for (int i = 0; tsPaths[i] != NULL; i++) {
-        if (access(tsPaths[i], X_OK) == 0) {
-            const char *argv[] = {tsPaths[i], "install", [ipaPath UTF8String], NULL};
-            int ret = zt_run_cmd(tsPaths[i], argv);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy trollstore (%s) ret=%d", tsPaths[i], ret]);
-            if (ret == 0) {
-                zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Cài đặt Zalo thành công qua trollstore (%s)", tsPaths[i]]);
-                return YES;
-            }
-        }
-    }
-
-    // 4. Thử LSApplicationWorkspace với toàn bộ selector cài đặt của iOS (hoạt động khi có AppSync Unified)
-    Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
-    if (wsClass && [wsClass respondsToSelector:@selector(defaultWorkspace)]) {
-        id ws = [wsClass performSelector:@selector(defaultWorkspace)];
-        NSURL *url = [NSURL fileURLWithPath:ipaPath];
-        NSDictionary *opts = @{@"PackageType": @"Customer"};
-
-        // 4.1 Selector chuẩn: installApplication:withOptions:error:
-        SEL sErr = sel_registerName("installApplication:withOptions:error:");
-        if (ws && [ws respondsToSelector:sErr]) {
-            NSError *instErr = nil;
-            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *, NSError **) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **))[ws methodForSelector:sErr];
-            BOOL ok = fn(ws, sErr, url, opts, &instErr);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions:error: -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
-            if (ok) return YES;
-
-            instErr = nil;
-            ok = fn(ws, sErr, url, @{}, &instErr);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication (opts rỗng) -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
-            if (ok) return YES;
-        }
-
-        // 4.2 Selector gọn: installApplication:withOptions:
-        SEL sNoErr = sel_registerName("installApplication:withOptions:");
-        if (ws && [ws respondsToSelector:sNoErr]) {
-            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *))[ws methodForSelector:sNoErr];
-            BOOL ok = fn(ws, sNoErr, url, opts);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions: -> %d", ok]);
-            if (ok) return YES;
-
-            ok = fn(ws, sNoErr, url, @{});
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions (opts rỗng) -> %d", ok]);
-            if (ok) return YES;
-        }
-
-        // 4.3 Selector khối: installApplication:withOptions:error:usingBlock:
-        SEL sBlock = sel_registerName("installApplication:withOptions:error:usingBlock:");
-        if (ws && [ws respondsToSelector:sBlock]) {
-            NSError *instErr = nil;
-            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *, NSError **, id) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **, id))[ws methodForSelector:sBlock];
-            BOOL ok = fn(ws, sBlock, url, opts, &instErr, nil);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions:error:usingBlock: -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
-            if (ok) return YES;
-        }
-    }
-
-    // 5. Thử qua MobileInstallation.framework (MobileInstallationInstall)
-    void *mi = dlopen("/System/Library/PrivateFrameworks/MobileInstallation.framework/MobileInstallation", RTLD_NOW);
-    if (mi) {
-        typedef int (*MIInstallFunc)(CFStringRef path, CFDictionaryRef parameters, void *callback, CFStringRef unknown);
-        MIInstallFunc miInstall = (MIInstallFunc)dlsym(mi, "MobileInstallationInstall");
-        if (miInstall) {
-            NSDictionary *miOpts = @{@"ApplicationType": @"User", @"PackageType": @"Customer"};
-            int ret = miInstall((__bridge CFStringRef)ipaPath, (__bridge CFDictionaryRef)miOpts, NULL, NULL);
-            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"MobileInstallationInstall -> %d", ret]);
-            if (ret == 0) return YES;
-        }
-    }
-
-    NSString *err = [NSString stringWithFormat:@"Không thể cài đặt lại Zalo từ IPA (%@)", ipaPath];
-    zt_log_to_audit(@"REINSTALL-ERR", err);
-    if (errors) [errors addObject:err];
-    return NO;
 }
 @implementation ZTRootListController
 
@@ -821,6 +553,48 @@ static void kill_all_zalo_processes(void) {
         }
     }
     [NSThread sleepForTimeInterval:0.3];
+}
+
+static void zt_kill_apsd(void) {
+    zt_log_to_audit(@"APSD-RESET", @"Bắt đầu kill daemon apsd...");
+
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t size = 0;
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
+        struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+        if (procs) {
+            if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
+                int count = (int)(size / sizeof(struct kinfo_proc));
+                for (int i = 0; i < count; i++) {
+                    const char *name = procs[i].kp_proc.p_comm;
+                    if (name && strcasecmp(name, "apsd") == 0) {
+                        pid_t pid = procs[i].kp_proc.p_pid;
+                        if (pid > 1) {
+                            kill(pid, SIGKILL);
+                            zt_log_to_audit(@"APSD-RESET", [NSString stringWithFormat:@"Đã gửi SIGKILL tới apsd (PID: %d)", pid]);
+                        }
+                    }
+                }
+            }
+            free(procs);
+        }
+    }
+
+    const char *killallPaths[] = {
+        "/usr/bin/killall",
+        "/bin/killall",
+        "/var/jb/usr/bin/killall",
+        "/var/jb/bin/killall",
+        NULL
+    };
+    for (int i = 0; killallPaths[i] != NULL; i++) {
+        if (access(killallPaths[i], X_OK) == 0) {
+            const char *argv[] = {killallPaths[i], "-9", "apsd", NULL};
+            zt_run_cmd(killallPaths[i], argv);
+            break;
+        }
+    }
+    [NSThread sleepForTimeInterval:0.2];
 }
 
 static void ensure_root_privileges(void) {
@@ -1791,16 +1565,20 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/perform_push_unregister"), NULL, NULL, YES);
             [NSThread sleepForTimeInterval:0.25];
 
-            // 1. Khởi tạo quyền thực thi & Tắt sạch tiến trình Zalo
+            // 1. Tắt sạch tiến trình Zalo & Kill daemon apsd
             ensure_root_privileges();
             kill_all_zalo_processes();
-            updateProgress(@"[15%] 🛡️ Khởi tạo quyền thực thi & Đã tắt toàn bộ tiến trình Zalo...", 0.15f, 0.2);
+            zt_kill_apsd();
+            updateProgress(@"[15%] 🛑 Đã tắt toàn bộ tiến trình Zalo & Kill daemon apsd...", 0.15f, 0.2);
 
-            // 2. Ép Apple Push Service xóa cache token cũ và restart apsd an toàn
+            // 2. BẬT CHẾ ĐỘ MÁY BAY: Cắt mạng hoàn toàn để cô lập môi trường và ngắt socket Apple Gateway
+            updateProgress(@"[25%] ✈️ Đang bật Chế độ máy bay (Cô lập mạng & ngắt socket Apple Gateway)...", 0.25f, 0.2);
+            set_airplane_mode_enabled(YES);
+
+            // 3. Trong khi mạng đang ngắt: Xóa sạch dữ liệu cũ
             safe_purge_apple_push_cache(errors);
-            updateProgress(@"[35%] 🔄 Đã purge cache com.apple.apsd.plist & Khởi động lại daemon apsd...", 0.35f, 0.25);
+            zt_kill_cfprefsd();
 
-            // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites của Zalo
             NSArray *suitesToPurge = @[
                 @"group.vn.com.vng.zingalo",
                 @"group.com.vng.zalo",
@@ -1820,9 +1598,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                     [ud synchronize];
                 }
             }
-            updateProgress(@"[55%] 🧹 Đã dọn sạch NSUserDefaults App Suites của Zalo...", 0.55f, 0.2);
 
-            // 4. Xóa sạch App Data Containers (Tất cả thư mục con trong Library, Documents, tmp - bảo vệ tuyệt đối file .adbk)
             NSArray *dataContainers = get_zalo_data_container_paths();
             for (NSString *dataContainer in dataContainers) {
                 if (!is_valid_zalo_sandbox_path(dataContainer)) continue;
@@ -1842,7 +1618,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 [fm createDirectoryAtPath:[dataContainer stringByAppendingPathComponent:@"tmp"] withIntermediateDirectories:YES attributes:nil error:nil];
             }
 
-            // 5. Xóa sạch Shared App Group
+            // Xóa sạch Shared App Group
             NSArray *groupContainers = get_zalo_group_container_paths();
             for (NSString *groupPath in groupContainers) {
                 if (!is_valid_zalo_sandbox_path(groupPath)) continue;
@@ -1855,9 +1631,9 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
             }
-            updateProgress(@"[75%] 🗂️ Đã làm sạch toàn bộ Sandbox Data Containers & App Groups...", 0.75f, 0.2);
+            updateProgress(@"[55%] 🧹 Đã làm sạch toàn bộ Sandbox Data Containers, Keychain & App Groups...", 0.55f, 0.2);
 
-            // 6. Tạo định danh mới (New IDFV + New ProfileId + New BootTime + New DiskFree + New Serial + New MAC)
+            // 4. Sinh và cấp Profile máy mới (TRONG KHI MẠNG VẪN ĐANG TẮT)
             NSString *chosenRegion = targetRegion ?: (dict[@"regionMode"] ?: @"VN");
             dict[@"regionMode"] = chosenRegion;
             dict[@"preferredCarrier"] = preferredCarrier ?: @"";
@@ -1920,7 +1696,20 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             sync_license_to_all_locations();
             CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
 
-            // Truy vấn và lưu IP hiện tại để đối chiếu checklist
+            updateProgress(@"[75%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Lưu cấu hình máy mới...", 0.75f, 0.2);
+
+            // Đợi tổng cộng thời gian ngắt mạng đạt 4-5s để socket Apple Gateway đóng hoàn toàn
+            [NSThread sleepForTimeInterval:2.0];
+
+            // 5. KHÔI PHỤC KẾT NỐI MẠNG KHI THIẾT BỊ ĐÃ LÀ MÁY MỚI 100%
+            updateProgress(@"[90%] 🌐 Đang khôi phục kết nối mạng (Nhận dải IP mới cho máy mới)...", 0.90f, 0.3);
+            set_airplane_mode_enabled(NO);
+            [NSThread sleepForTimeInterval:1.5];
+
+            // Làm mới biểu tượng qua uicache
+            zt_run_uicache();
+
+            // Truy vấn và lưu IP mới sau khi bật mạng lại
             fetch_public_ip_prefs(^(NSString *ip) {
                 if (ip.length > 0 && ![ip isEqualToString:@"Không xác định"]) {
                     NSMutableDictionary *d = load_current_mutable_prefs_dict();
@@ -1929,8 +1718,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 }
             });
 
-            updateProgress(@"[90%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Đồng bộ cấu hình...", 0.90f, 0.2);
-            updateProgress(@"[100%] 🎉 Hoàn tất dọn dẹp sạch sẽ!", 1.0f, 0.25);
+            updateProgress(@"[100%] 🎉 Hoàn tất Wipe sạch sẽ!", 1.0f, 0.25);
 
             // Hoàn tất: Đóng progress alert và hiển thị kết quả
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -1966,399 +1754,14 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                                          @"• Token APNs Cũ Đã Lưu: %@\n"
                                          @"• Token VoIP Cũ Đã Lưu: %@\n"
                                          @"• zcid Cũ Đã Lưu: %@\n"
+                                         @"• Socket Apple APNs: Đã tự động reset qua Chế độ máy bay ✅\n"
+                                         @"• Daemon apsd: Đã kill & làm mới hoàn toàn ✅\n"
                                          @"• Keychain & WebKit: Sạch 100%% (Tự sinh mới khi mở Zalo)\n\n"
-                                         @"📲 BƯỚC TIẾP THEO:\n"
-                                         @"1. Bật và Tắt Chế Độ Máy Bay trong 5 giây để đổi IP mạng.\n"
-                                         @"2. Mở Zalo để Apple cấp Token APNs/VoIP mới và tự sinh zcid mới!",
+                                         @"📲 BÂY GIỜ BẠN CÓ THỂ MỞ ZALO:\n"
+                                         @"Apple APNs và Zalo sẽ nhận diện môi trường sạch hoàn toàn!",
                                          p.spoofedIDFV, dict[@"spoofedSerial"], dict[@"spoofedWifiMAC"], p.carrierName, dict[@"timeZoneName"], oldTokenDisplay, oldVoIPDisplay, oldZcidDisplay];
 
                         UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 DEEP WIPE THÀNH CÔNG 100%"
-                                                                                           message:msg
-                                                                                    preferredStyle:UIAlertControllerStyleAlert];
-                        [doneAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:doneAlert animated:YES completion:nil];
-                    }
-                }];
-            });
-        });
-    }];
-}
-
-- (void)exportZaloIPAAction:(PSSpecifier *)specifier {
-    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                        message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi sử dụng tính năng Trích Xuất IPA."
-                                                                 preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
-    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"📦 ĐANG TRÍCH XUẤT ZALO IPA..."
-                                                                           message:@"[0%] Đang chuẩn bị môi trường trích xuất...\n\n"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-
-    UIProgressView *progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
-    progressView.translatesAutoresizingMaskIntoConstraints = NO;
-    progressView.progress = 0.0f;
-    progressView.tintColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
-    [progressAlert.view addSubview:progressView];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [progressView.leadingAnchor constraintEqualToAnchor:progressAlert.view.leadingAnchor constant:20.0],
-        [progressView.trailingAnchor constraintEqualToAnchor:progressAlert.view.trailingAnchor constant:-20.0],
-        [progressView.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor constant:-20.0],
-        [progressView.heightAnchor constraintEqualToConstant:4.0]
-    ]];
-
-    void (^updateProgress)(NSString *, float, double) = ^(NSString *msg, float progressVal, double delaySec) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = [NSString stringWithFormat:@"%@\n\n", msg];
-            [progressView setProgress:progressVal animated:YES];
-        });
-        if (delaySec > 0) {
-            [NSThread sleepForTimeInterval:delaySec];
-        }
-    };
-
-    [self presentViewController:progressAlert animated:YES completion:^{
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            ensure_root_privileges();
-            zt_log_to_audit(@"IPA-EXPORT", @"=== BẮT ĐẦU TRÍCH XUẤT BỘ CÀI ZALO IPA ===");
-
-            updateProgress(@"[10%] 🔍 Đang quét tìm thư mục cài đặt Zalo.app...", 0.10f, 0.2);
-            NSString *bundleApp = get_zalo_bundle_app_path();
-            if (!bundleApp) {
-                zt_log_to_audit(@"IPA-EXPORT-ERR", @"❌ Không tìm thấy thư mục cài đặt Zalo trên thiết bị!");
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [progressAlert dismissViewControllerAnimated:YES completion:^{
-                        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Lỗi Trích Xuất"
-                                                                                     message:@"Không tìm thấy thư mục cài đặt Zalo.app trên thiết bị!\n\nVui lòng đảm bảo ứng dụng Zalo đã được cài đặt."
-                                                                              preferredStyle:UIAlertControllerStyleAlert];
-                        [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:err animated:YES completion:nil];
-                    }];
-                });
-                return;
-            }
-
-            updateProgress(@"[25%] 📂 Đã tìm thấy Zalo.app. Đang khởi tạo cấu trúc Payload...", 0.25f, 0.2);
-            NSFileManager *fm = [NSFileManager defaultManager];
-            NSString *stagingDir = ZALO_IPA_STAGING_DIR;
-            NSString *payloadDir = [stagingDir stringByAppendingPathComponent:@"Payload"];
-            [fm removeItemAtPath:stagingDir error:nil];
-            NSError *mkErr = nil;
-            if (![fm createDirectoryAtPath:payloadDir withIntermediateDirectories:YES attributes:nil error:&mkErr]) {
-                zt_log_to_audit(@"IPA-EXPORT-ERR", [NSString stringWithFormat:@"Không thể tạo thư mục staging: %@", mkErr.localizedDescription]);
-            }
-
-            updateProgress(@"[45%] 📋 Đang sao chép bundle Zalo.app vào Payload (vui lòng đợi 3-5s)...", 0.45f, 0.3);
-            NSString *destApp = [payloadDir stringByAppendingPathComponent:[bundleApp lastPathComponent]];
-            NSError *cpErr = nil;
-            if (![fm copyItemAtPath:bundleApp toPath:destApp error:&cpErr]) {
-                zt_log_to_audit(@"IPA-EXPORT-ERR", [NSString stringWithFormat:@"Lỗi copy Zalo.app vào Payload: %@", cpErr.localizedDescription]);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [progressAlert dismissViewControllerAnimated:YES completion:^{
-                        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Lỗi Sao Chép"
-                                                                                     message:[NSString stringWithFormat:@"Không thể sao chép Zalo.app: %@", cpErr.localizedDescription]
-                                                                              preferredStyle:UIAlertControllerStyleAlert];
-                        [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:err animated:YES completion:nil];
-                    }];
-                });
-                return;
-            }
-
-            updateProgress(@"[70%] 🗜️ Đang nén đóng gói thành file IPA...", 0.70f, 0.3);
-            NSString *targetIpa = ZALO_IPA_EXPORT_PATH;
-            NSString *destDir = [targetIpa stringByDeletingLastPathComponent];
-            [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:nil];
-            [fm removeItemAtPath:targetIpa error:nil];
-
-            __block BOOL zipSuccess = NO;
-            const char *zipBins[] = {"/var/jb/usr/bin/zip", "/var/jb/bin/zip", "/usr/bin/zip", "/bin/zip", NULL};
-            for (int i = 0; zipBins[i] != NULL && !zipSuccess; i++) {
-                if (access(zipBins[i], X_OK) == 0) {
-                    char oldWd[PATH_MAX] = {0};
-                    getcwd(oldWd, sizeof(oldWd));
-                    chdir([stagingDir UTF8String]);
-                    const char *argv[] = {zipBins[i], "-r", "-q", "-1", [targetIpa UTF8String], "Payload", NULL};
-                    int ret = zt_run_cmd(zipBins[i], argv);
-                    if (strlen(oldWd) > 0) chdir(oldWd);
-                    if (ret == 0 && [fm fileExistsAtPath:targetIpa]) {
-                        zipSuccess = YES;
-                        zt_log_to_audit(@"IPA-EXPORT", [NSString stringWithFormat:@"Đã nén thành công qua CLI %s", zipBins[i]]);
-                    }
-                }
-            }
-
-            if (!zipSuccess) {
-                zt_log_to_audit(@"IPA-EXPORT", @"Thử nén fallback qua Foundation NSFileCoordinator...");
-                NSFileCoordinator *coordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
-                NSURL *stagingURL = [NSURL fileURLWithPath:stagingDir isDirectory:YES];
-                NSURL *destURL = [NSURL fileURLWithPath:targetIpa isDirectory:NO];
-                [coordinator coordinateReadingItemAtURL:stagingURL options:(NSFileCoordinatorReadingOptions)(1 << 3) error:nil byAccessor:^(NSURL * _Nonnull zippedURL) {
-                    [fm removeItemAtURL:destURL error:nil];
-                    zipSuccess = [fm moveItemAtURL:zippedURL toURL:destURL error:nil];
-                }];
-            }
-
-            updateProgress(@"[90%] 🔍 Đang kiểm tra tính toàn vẹn của file IPA...", 0.90f, 0.2);
-            [fm removeItemAtPath:stagingDir error:nil];
-
-            NSDictionary *attr = [fm attributesOfItemAtPath:targetIpa error:nil];
-            unsigned long long fsize = [attr fileSize];
-            double sizeMB = (double)fsize / (1024.0 * 1024.0);
-
-            if (!zipSuccess || fsize < 10 * 1024 * 1024) {
-                NSString *fb = ZALO_IPA_FALLBACK_PATH;
-                if ([fm fileExistsAtPath:targetIpa]) {
-                    [fm moveItemAtPath:targetIpa toPath:fb error:nil];
-                    targetIpa = fb;
-                    attr = [fm attributesOfItemAtPath:targetIpa error:nil];
-                    fsize = [attr fileSize];
-                    sizeMB = (double)fsize / (1024.0 * 1024.0);
-                }
-            }
-
-            if (fsize < 10 * 1024 * 1024) {
-                zt_log_to_audit(@"IPA-EXPORT-ERR", [NSString stringWithFormat:@"Dung lượng file IPA không hợp lệ (%.1f MB)", sizeMB]);
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    [progressAlert dismissViewControllerAnimated:YES completion:^{
-                        UIAlertController *err = [UIAlertController alertControllerWithTitle:@"Lỗi Nén IPA"
-                                                                                     message:[NSString stringWithFormat:@"Quá trình nén IPA chưa hoàn tất hoặc file có dung lượng quá nhỏ (%.1f MB).", sizeMB]
-                                                                              preferredStyle:UIAlertControllerStyleAlert];
-                        [err addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-                        [self presentViewController:err animated:YES completion:nil];
-                    }];
-                });
-                return;
-            }
-
-            zt_log_to_audit(@"IPA-EXPORT", [NSString stringWithFormat:@"✅ Trích xuất thành công: %@ (%.1f MB)", targetIpa, sizeMB]);
-            updateProgress(@"[100%] 🎉 Trích xuất file IPA thành công 100%!", 1.0f, 0.3);
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [progressAlert dismissViewControllerAnimated:YES completion:^{
-                    NSString *succMsg = [NSString stringWithFormat:@"Đã trích xuất thành công bộ cài Zalo!\n\n"
-                                         @"📁 Vị trí: %@\n"
-                                         @"📊 Dung lượng: %.1f MB\n\n"
-                                         @"Bây giờ bạn đã có thể sử dụng nút '1-Click Gỡ & Cài Đặt Lại' để cấp Push mới an toàn 100%%!",
-                                         targetIpa, sizeMB];
-                    UIAlertController *succ = [UIAlertController alertControllerWithTitle:@"🎉 TRÍCH XUẤT THÀNH CÔNG"
-                                                                                  message:succMsg
-                                                                           preferredStyle:UIAlertControllerStyleAlert];
-                    [succ addAction:[UIAlertAction actionWithTitle:@"Tuyệt Vời" style:UIAlertActionStyleDefault handler:nil]];
-                    [self presentViewController:succ animated:YES completion:nil];
-                }];
-            });
-        });
-    }];
-}
-
-- (void)automatedReinstallSequence:(PSSpecifier *)specifier {
-    if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Chưa Kích Hoạt Bản Quyền"
-                                                                        message:@"Vui lòng kích hoạt License Key hợp lệ ở phía trên trước khi sử dụng tính năng Gỡ & Cài Đặt Lại."
-                                                                 preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-        return;
-    }
-
-    NSString *ipaPath = ZALO_IPA_EXPORT_PATH;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:ipaPath]) {
-        ipaPath = ZALO_IPA_FALLBACK_PATH;
-    }
-
-    if (![fm fileExistsAtPath:ipaPath]) {
-        UIAlertController *noIpa = [UIAlertController alertControllerWithTitle:@"⚠️ CHƯA CÓ FILE IPA DỰ PHÒNG"
-                                                                       message:@"Chưa tìm thấy file Zalo.ipa dự phòng!\n\nĐể đảm bảo an toàn tuyệt đối (tránh bị mất Zalo nếu lỗi mạng/gỡ app), vui lòng bấm nút:\n\n📦 'Trích Xuất File Cài Zalo (IPA Dự Phòng)'\n\nở ngay phía trên trước khi thực hiện tính năng này."
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [noIpa addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:noIpa animated:YES completion:nil];
-        return;
-    }
-
-    NSDictionary *attr = [fm attributesOfItemAtPath:ipaPath error:nil];
-    unsigned long long fsize = [attr fileSize];
-    double sizeMB = (double)fsize / (1024.0 * 1024.0);
-    if (fsize < 10 * 1024 * 1024) {
-        UIAlertController *badIpa = [UIAlertController alertControllerWithTitle:@"⚠️ FILE IPA KHÔNG HỢP LỆ"
-                                                                        message:[NSString stringWithFormat:@"File IPA tại %@ có dung lượng quá nhỏ (%.1f MB). Vui lòng bấm 'Trích Xuất IPA' lại để đảm bảo trọn vẹn!", ipaPath, sizeMB]
-                                                                 preferredStyle:UIAlertControllerStyleAlert];
-        [badIpa addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:badIpa animated:YES completion:nil];
-        return;
-    }
-
-    UIAlertController *confirmAlert = [UIAlertController alertControllerWithTitle:@"🔄 XÁC NHẬN GỠ & CÀI ĐẶT LẠI"
-                                                                          message:[NSString stringWithFormat:@"Hệ thống sẽ thực hiện chu trình hoàn toàn tự động:\n\n"
-                                                                                   @"1. Dọn sạch Keychain Zalo & cấp Profile máy mới\n"
-                                                                                   @"2. Gỡ cài đặt Zalo sạch khỏi hệ thống\n"
-                                                                                   @"3. Bật Airplane Mode 5 giây (ngắt socket Apple Gateway)\n"
-                                                                                   @"4. Cài đặt lại Zalo từ IPA sạch (%.1f MB)\n"
-                                                                                   @"5. Tắt Airplane Mode & Làm mới icon (uicache)\n\n"
-                                                                                   @"Apple APNs sẽ cấp cả Token APNs và Token VoIP THẬT MỚI 100%% khi Zalo mở lại. Bạn có muốn tiếp tục?", sizeMB]
-                                                                   preferredStyle:UIAlertControllerStyleAlert];
-
-    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Hủy Bỏ" style:UIAlertActionStyleCancel handler:nil]];
-    [confirmAlert addAction:[UIAlertAction actionWithTitle:@"🚀 Tiến Hành Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction *action) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self executeAutomatedReinstallWithIPAPath:ipaPath];
-        });
-    }]];
-
-    [self presentViewController:confirmAlert animated:YES completion:nil];
-}
-
-- (void)executeAutomatedReinstallWithIPAPath:(NSString *)ipaPath {
-    NSMutableArray<NSString *> *errors = [NSMutableArray array];
-
-    UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"🔄 ĐANG TỰ ĐỘNG GỠ & CÀI LẠI..."
-                                                                           message:@"[0%] Bắt đầu chu trình tự động...\n\n"
-                                                                    preferredStyle:UIAlertControllerStyleAlert];
-
-    UIProgressView *progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
-    progressView.translatesAutoresizingMaskIntoConstraints = NO;
-    progressView.progress = 0.0f;
-    progressView.tintColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
-    [progressAlert.view addSubview:progressView];
-
-    [NSLayoutConstraint activateConstraints:@[
-        [progressView.leadingAnchor constraintEqualToAnchor:progressAlert.view.leadingAnchor constant:20.0],
-        [progressView.trailingAnchor constraintEqualToAnchor:progressAlert.view.trailingAnchor constant:-20.0],
-        [progressView.bottomAnchor constraintEqualToAnchor:progressAlert.view.bottomAnchor constant:-20.0],
-        [progressView.heightAnchor constraintEqualToConstant:4.0]
-    ]];
-
-    void (^updateProgress)(NSString *, float, double) = ^(NSString *msg, float progressVal, double delaySec) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            progressAlert.message = [NSString stringWithFormat:@"%@\n\n", msg];
-            [progressView setProgress:progressVal animated:YES];
-        });
-        if (delaySec > 0) {
-            [NSThread sleepForTimeInterval:delaySec];
-        }
-    };
-
-    [self presentViewController:progressAlert animated:YES completion:^{
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            ensure_root_privileges();
-            zt_log_to_audit(@"AUTO-REINSTALL", @"=== BẮT ĐẦU CHU TRÌNH 1-CLICK GỠ & CÀI LẠI ZALO ===");
-
-            // 1. Tắt tiến trình Zalo
-            updateProgress(@"[10%] 🛑 Đang tắt tiến trình Zalo & cấp quyền root...", 0.10f, 0.2);
-            kill_all_zalo_processes();
-
-            // 2. Wipe Keychain & APNs cache, sinh Profile máy mới
-            updateProgress(@"[25%] 🧹 Đang dọn Keychain Zalo & sinh Profile máy mới...", 0.25f, 0.25);
-            safe_purge_apple_push_cache(errors);
-            zt_kill_cfprefsd();
-
-            NSMutableDictionary *dict = load_current_mutable_prefs_dict();
-            dict[@"lastWipedAPNsToken"] = dict[@"currentAPNsToken"] ?: @"";
-            dict[@"lastWipedVoIPToken"] = dict[@"currentVoIPToken"] ?: @"";
-            dict[@"lastWipedZCID"] = dict[@"currentZCID"] ?: @"";
-            dict[@"currentAPNsToken"] = @"";
-            dict[@"currentVoIPToken"] = @"";
-            dict[@"currentZCID"] = @"";
-            dict[@"centralizedDid"] = @"";
-            dict[@"apnsRotatedStatus"] = @"WAITING";
-
-            NSString *region = dict[@"regionMode"] ?: @"VN";
-            ZTDeviceProfile *p = [ZTDeviceProfile generateRandomProfileForRegion:region baseMachine:get_prefs_real_machine() preferredCarrier:dict[@"preferredCarrier"]];
-            dict[@"spoofedIDFV"] = p.spoofedIDFV;
-            dict[@"profileId"] = p.profileId;
-            dict[@"bootTimeSec"] = @(p.bootTimeSec);
-            dict[@"diskTotalSize"] = @(p.diskTotalSize);
-            dict[@"diskFreeSize"] = @(p.diskFreeSize);
-            dict[@"deviceMachine"] = p.deviceMachine;
-            dict[@"deviceModel"] = p.deviceModel;
-            dict[@"systemVersion"] = p.systemVersion;
-            dict[@"kernOsVersion"] = p.kernOsVersion;
-            dict[@"carrierName"] = p.carrierName;
-            dict[@"carrierMCC"] = p.carrierMCC;
-            dict[@"carrierMNC"] = p.carrierMNC;
-            dict[@"carrierCountryCode"] = p.carrierCountryCode;
-            dict[@"spoofedSerial"] = generate_random_serial_prefs();
-            dict[@"spoofedWifiMAC"] = generate_random_mac_prefs();
-            dict[@"spoofedBluetoothMAC"] = generate_random_mac_prefs();
-            dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
-            save_dict_to_all_locations(dict);
-
-            // 3. Gỡ cài đặt Zalo
-            updateProgress(@"[45%] 🗑️ Đang gỡ bỏ Zalo (xóa sạch Sandbox & Bundle cũ)...", 0.45f, 0.3);
-            BOOL uninstalled = zt_uninstall_zalo(@"vn.com.vng.zingalo", errors);
-            if (!uninstalled) {
-                for (NSString *bid in get_known_zalo_bundle_ids()) {
-                    zt_uninstall_zalo(bid, nil);
-                }
-            }
-            [NSThread sleepForTimeInterval:2.0];
-
-            // 4. Bật Airplane Mode 5 giây để ngắt socket Apple Gateway
-            updateProgress(@"[65%] ✈️ Đang bật Chế độ máy bay (ngắt socket APNs trong 5s)...", 0.65f, 0.3);
-            set_airplane_mode_enabled(YES);
-            [NSThread sleepForTimeInterval:5.0];
-
-            // 5. Cài đặt lại Zalo từ IPA sạch
-            updateProgress(@"[80%] 📦 Đang cài đặt lại Zalo từ file IPA sạch...", 0.80f, 0.5);
-            BOOL reinstalled = zt_reinstall_zalo_ipa(ipaPath, errors);
-            [NSThread sleepForTimeInterval:2.0];
-
-            // 6. Tắt Airplane Mode & chạy uicache
-            updateProgress(@"[92%] 🌐 Đang tắt Chế độ máy bay & Làm mới biểu tượng (uicache)...", 0.92f, 0.3);
-            set_airplane_mode_enabled(NO);
-            zt_run_uicache();
-            [NSThread sleepForTimeInterval:1.0];
-
-            updateProgress(@"[100%] 🎉 Hoàn tất! Zalo đã được cài đặt lại thành công!", 1.0f, 0.3);
-            zt_log_to_audit(@"AUTO-REINSTALL", @"=== HOÀN TẤT CHU TRÌNH GỠ & CÀI ĐẶT LẠI ZALO ===");
-
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [progressAlert dismissViewControllerAnimated:YES completion:^{
-                    [self reloadSpecifiers];
-
-                    if (errors.count > 0 && !reinstalled) {
-                        NSMutableString *errDetail = [NSMutableString string];
-                        [errDetail appendFormat:@"Chưa thể cài đặt ngầm Zalo tự động:\n\n"];
-                        for (NSUInteger i = 0; i < errors.count; i++) {
-                            [errDetail appendFormat:@"• %@\n", errors[i]];
-                        }
-                        [errDetail appendString:@"\n📁 File IPA đã lưu tại: /var/mobile/Media/ZaloTweak_Zalo.ipa\n\n"
-                                                 @"💡 Gợi ý cho máy không dùng TrollStore:\n"
-                                                 @"Cài gói 'AppSync Unified' từ nguồn: https://cydia.akemi.ai/ (qua Sileo/Zebra) để tweak có thể tự động cài đặt Zalo từ IPA mà không bị Apple chặn chữ ký."];
-
-                        UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"⚠️ THÔNG BÁO TIẾN TRÌNH"
-                                                                                          message:errDetail
-                                                                                   preferredStyle:UIAlertControllerStyleAlert];
-
-                        NSURL *tsURL = [NSURL URLWithString:[NSString stringWithFormat:@"trollstore://install?url=file://%@", [ipaPath stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]]];
-                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Cài Qua TrollStore" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                            [[UIApplication sharedApplication] openURL:tsURL options:@{} completionHandler:nil];
-                        }]];
-
-                        NSURL *filzaURL = [NSURL URLWithString:[NSString stringWithFormat:@"filza://view%@", [ipaPath stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]]];
-                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Mở Bằng Filza" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-                            [[UIApplication sharedApplication] openURL:filzaURL options:@{} completionHandler:nil];
-                        }]];
-
-                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleCancel handler:nil]];
-                        [self presentViewController:errAlert animated:YES completion:nil];
-                    } else {
-                        NSString *msg = [NSString stringWithFormat:@"Đã hoàn tất chu trình Gỡ & Cài đặt lại Zalo tự động:\n\n"
-                                         @"• App Container: Cấp UUID mới toanh\n"
-                                         @"• Keychain & Sandbox: Sạch sẽ 100%%\n"
-                                         @"• Profile máy mới: %@ (%@)\n"
-                                         @"• IDFV Mới: %@\n"
-                                         @"• Socket Apple APNs: Đã được reset qua Airplane Mode\n\n"
-                                         @"📲 BÂY GIỜ BẠN CÓ THỂ MỞ ZALO:\n"
-                                         @"Apple sẽ cấp bộ Token APNs và Token VoIP THẬT MỚI TINH 100%%!",
-                                         p.carrierName, p.carrierMCC, p.spoofedIDFV];
-
-                        UIAlertController *doneAlert = [UIAlertController alertControllerWithTitle:@"🎉 TÁI CÀI ĐẶT THÀNH CÔNG 100%"
                                                                                            message:msg
                                                                                     preferredStyle:UIAlertControllerStyleAlert];
                         [doneAlert addAction:[UIAlertAction actionWithTitle:@"Mở Zalo Ngay" style:UIAlertActionStyleDefault handler:nil]];

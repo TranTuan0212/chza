@@ -60,32 +60,6 @@
             <string>getRuntimeEnvironmentDisplayValue:</string>
         </dict>
 
-        <!-- GROUP: GỠ & TÁI CÀI ĐẶT ZALO (RESET PUSH 100%) -->
-        <dict>
-            <key>cell</key>
-            <string>PSGroupCell</string>
-            <key>label</key>
-            <string>GỠ &amp; TÁI CÀI ĐẶT ZALO (RESET PUSH 100%)</string>
-            <key>footerText</key>
-            <string>Trích xuất bộ cài Zalo hiện tại thành file IPA dự phòng, sau đó thực hiện chu trình 1-Click: Wipe Keychain → Gỡ Zalo → Bật Airplane Mode 5s → Cài đặt lại tự động để Apple cấp bộ Token APNs và VoIP mới tinh 100%.</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSButtonCell</string>
-            <key>label</key>
-            <string>📦 Trích Xuất File Cài Zalo (IPA Dự Phòng)</string>
-            <key>action</key>
-            <string>exportZaloIPAAction:</string>
-        </dict>
-        <dict>
-            <key>cell</key>
-            <string>PSButtonCell</string>
-            <key>label</key>
-            <string>🔄 1-Click Gỡ &amp; Cài Đặt Lại Tự Động (Cấp Push Mới)</string>
-            <key>action</key>
-            <string>automatedReinstallSequence:</string>
-        </dict>
-
         <!-- GROUP: SAO LƯU & PHỤC HỒI (BACKUP & RESTORE) -->
         <dict>
             <key>cell</key>
