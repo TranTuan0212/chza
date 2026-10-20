@@ -24,7 +24,7 @@
 extern void zt_flush_audit_and_har_queues_sync(void) __attribute__((weak_import));
 extern NSArray<NSString *> *zt_get_discovered_security_modules(void) __attribute__((weak_import));
 
-static NSString *zt_preview_sha256_token_hex(NSString *prefix, NSString *seedStr) {
+static __attribute__((unused)) NSString *zt_preview_sha256_token_hex(NSString *prefix, NSString *seedStr) {
     if (!seedStr || seedStr.length == 0) return @"Chưa cấp (Cần Wipe)";
     NSString *full = [NSString stringWithFormat:@"%@:%@", prefix ?: @"APNS", seedStr];
     const char *cstr = [full UTF8String];

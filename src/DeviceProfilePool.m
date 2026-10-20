@@ -564,6 +564,16 @@ static NSString *detect_real_system_machine(void) {
     profile.spoofedWifiMAC = @"02:00:00:00:00:00";
     profile.spoofedBluetoothMAC = @"02:00:00:00:00:00";
 
+    profile.spoofedScreenSize = [NSString stringWithFormat:@"%dx%d", (int)(spec.width * spec.scale), (int)(spec.height * spec.scale)];
+
+    uint8_t zcidBytes[80];
+    arc4random_buf(zcidBytes, sizeof(zcidBytes));
+    NSMutableString *zcidHex = [NSMutableString stringWithCapacity:160];
+    for (int i = 0; i < 80; i++) {
+        [zcidHex appendFormat:@"%02X", zcidBytes[i]];
+    }
+    profile.spoofedZCID = [zcidHex copy];
+
     return profile;
 }
 

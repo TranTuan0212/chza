@@ -628,8 +628,14 @@ static void purge_all_zalo_keychain_safely(void) {
     ];
     NSArray *groups = @[
         @"",
+        @"CVB6BX97VM.group.keychain.vn.com.vng.zalo",
+        @"group.keychain.vn.com.vng.zalo",
         @"group.vn.com.vng.zingalo",
         @"group.noti.vn.com.vng.zingalo",
+        @"group.zcontacts.vn.com.vng.zingalo",
+        @"group.zfriends.vn.com.vng.zingalo",
+        @"group.zsettings.vn.com.vng.zingalo",
+        @"group.zgroups.vn.com.vng.zingalo",
         @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
@@ -637,6 +643,10 @@ static void purge_all_zalo_keychain_safely(void) {
     ];
 
     for (id secClass in secClasses) {
+        NSMutableDictionary *baseQuery = [NSMutableDictionary dictionary];
+        baseQuery[(__bridge id)kSecClass] = secClass;
+        SecItemDelete((__bridge CFDictionaryRef)baseQuery);
+
         for (NSString *grp in groups) {
             NSMutableDictionary *query = [NSMutableDictionary dictionary];
             query[(__bridge id)kSecClass] = secClass;
@@ -646,7 +656,7 @@ static void purge_all_zalo_keychain_safely(void) {
             SecItemDelete((__bridge CFDictionaryRef)query);
         }
     }
-    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain của Zalo!");
+    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain (bao gồm CVB6BX97VM.group.keychain.vn.com.vng.zalo) của Zalo!");
 }
 
 static void __attribute__((unused)) purge_webkit_data_safely(void) {
@@ -857,6 +867,9 @@ static void purge_entire_sandbox_safely(void) {
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
+        self.spoofedScreenSize = dict[@"spoofedScreenSize"] ?: @"";
+        self.spoofedZCID = dict[@"spoofedZCID"] ?: @"";
+        self.lastVoIPToken = dict[@"lastVoIPToken"] ?: @"";
 
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
@@ -889,13 +902,8 @@ static void purge_entire_sandbox_safely(void) {
                     }
                     self.regionMode = dict[@"regionMode"] ?: (self.regionMode ?: @"VN");
                     self.preferredCarrier = dict[@"preferredCarrier"] ?: @"";
-                    NSString *savedTZ = dict[@"timeZoneName"];
-                    if (!self.hasConfiguredProfile || self.spoofedIDFV.length == 0) {
-                        [self generateNewProfile];
-                    }
-                    if (savedTZ.length > 0) {
-                        self.timeZoneName = savedTZ;
-                    }
+                    // Cấp ngay Profile mới tinh đồng bộ theo vòng đời máy và vùng địa lý
+                    [self generateNewProfile];
                     [self saveSettings];
                     reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
                     return;
@@ -1046,6 +1054,9 @@ static void purge_entire_sandbox_safely(void) {
     if (self.spoofedSerial) dict[@"spoofedSerial"] = self.spoofedSerial;
     if (self.spoofedWifiMAC) dict[@"spoofedWifiMAC"] = self.spoofedWifiMAC;
     if (self.spoofedBluetoothMAC) dict[@"spoofedBluetoothMAC"] = self.spoofedBluetoothMAC;
+    if (self.spoofedScreenSize) dict[@"spoofedScreenSize"] = self.spoofedScreenSize;
+    if (self.spoofedZCID) dict[@"spoofedZCID"] = self.spoofedZCID;
+    if (self.lastVoIPToken) dict[@"lastVoIPToken"] = self.lastVoIPToken;
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -1137,6 +1148,8 @@ NSString *generate_random_mac(void) {
     self.spoofedSerial = p.spoofedSerial;
     self.spoofedWifiMAC = p.spoofedWifiMAC;
     self.spoofedBluetoothMAC = p.spoofedBluetoothMAC;
+    self.spoofedScreenSize = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%.0fx%.0f", self.screenWidth * self.screenScale, self.screenHeight * self.screenScale];
+    self.spoofedZCID = p.spoofedZCID;
 
     logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | L2: %lluMB | Màn: %.0fx%.0f@%.0fx | Vùng: %@ (%@) | Tên: %@",
               self.deviceMachine, self.deviceModel, self.systemVersion, self.kernOsVersion,
@@ -1154,7 +1167,7 @@ NSString *generate_random_mac(void) {
 // HỆ THỐNG AUDIT LOG (KIỂM TOÁN HÀNH VI ZALO)
 // ==========================================
 
-static NSString *getAuditLogPath(void) {
+static __attribute__((unused)) NSString *getAuditLogPath(void) {
     return @"/var/mobile/Documents/ZaloAudit.log";
 }
 
@@ -2344,7 +2357,7 @@ static void update_cached_locale_and_tz(void) {
 // Bảo toàn 100% thuộc tính hiển thị vật lý của UIScreen (bounds, nativeBounds, scale) để UIKit & Metal
 // render chuẩn xác, không bị lỗi buffer mismatch. Thông số màn hình fake được cung cấp qua MGCopyAnswer & Headers.
 
-static uint64_t seconds_to_mach_ticks(double seconds) {
+static __attribute__((unused)) uint64_t seconds_to_mach_ticks(double seconds) {
     mach_timebase_info_data_t tb;
     mach_timebase_info(&tb);
     if (tb.numer == 0 || tb.denom == 0) {
@@ -2365,7 +2378,7 @@ static inline double mach_ticks_to_signed_seconds(int64_t ticks) {
     return ((double)ticks * (double)tb.numer) / ((double)tb.denom * 1000000000.0);
 }
 
-static inline double mach_ticks_to_seconds(uint64_t ticks) {
+static __attribute__((unused)) inline double mach_ticks_to_seconds(uint64_t ticks) {
     return mach_ticks_to_signed_seconds((int64_t)ticks);
 }
 
@@ -3809,7 +3822,7 @@ static BOOL s_in_bundle_hook = NO;
 
 %end
 
-static inline NSData *get_clone_fake_apns_token_data(void) {
+static inline __attribute__((unused)) NSData *get_clone_fake_apns_token_data(void) {
     NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
     NSString *apnsSeed = [NSString stringWithFormat:@"APNS:%@", seed];
     const char *cStr = [apnsSeed UTF8String];
@@ -3818,7 +3831,7 @@ static inline NSData *get_clone_fake_apns_token_data(void) {
     return [NSData dataWithBytes:hash length:32];
 }
 
-static inline NSData *get_clone_fake_voip_token_data(void) {
+static inline __attribute__((unused)) NSData *get_clone_fake_voip_token_data(void) {
     NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
     NSString *voipSeed = [NSString stringWithFormat:@"VOIP:%@", seed];
     const char *cStr = [voipSeed UTF8String];
@@ -3827,7 +3840,7 @@ static inline NSData *get_clone_fake_voip_token_data(void) {
     return [NSData dataWithBytes:hash length:32];
 }
 
-static inline NSString *hex_string_from_data(NSData *data) {
+static inline __attribute__((unused)) NSString *hex_string_from_data(NSData *data) {
     if (!data || data.length == 0) return @"";
     const unsigned char *bytes = (const unsigned char *)data.bytes;
     NSMutableString *hex = [NSMutableString stringWithCapacity:data.length * 2];
@@ -3996,7 +4009,7 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
 
 %end
 
-static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
+static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id registry, id delegate) {
     // Không nạp token fake cho Zalo Clone
     return;
 }
@@ -4011,6 +4024,14 @@ static void deliver_clone_voip_token_to_registry(id registry, id delegate) {
 }
 
 - (void)setDesiredPushTypes:(NSSet *)types {
+    if (is_tweak_active() && is_original_zalo_app() && [ZTSettings sharedSettings].justGeneratedColdBoot) {
+        logAudit(@"PUSH-REGISTRY", @"[VOIP-RESET] Đã hủy đăng ký phiên VoIP cũ với apsd để bắt Apple cấp lại Token mới cho Profile mới 🔄");
+        %orig([NSSet set]);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            %orig(types);
+        });
+        return;
+    }
     %orig;
 }
 
@@ -4774,7 +4795,15 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
         }
     }
 
-    // 4. Khử rò rỉ model máy thật, múi giờ và ngôn ngữ trong Body nếu gửi lên centralized.zaloapp.com
+    // 4. Khử rò rỉ hoặc làm mới Header zcid nếu có
+    NSString *hdrZcid = [mutReq valueForHTTPHeaderField:@"zcid"];
+    if (hdrZcid && settings.spoofedZCID.length > 0 && ![hdrZcid isEqualToString:settings.spoofedZCID]) {
+        [mutReq setValue:settings.spoofedZCID forHTTPHeaderField:@"zcid"];
+        modified = YES;
+        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã đồng bộ Header zcid sang Profile mới: %@...", [settings.spoofedZCID substringToIndex:MIN(24, (int)settings.spoofedZCID.length)]]);
+    }
+
+    // 5. Khử rò rỉ model máy thật, múi giờ và ngôn ngữ trong Body nếu gửi lên centralized.zaloapp.com
     NSString *urlStr = origReq.URL.absoluteString ?: @"";
     if ([urlStr containsString:@"centralized.zaloapp.com"]) {
         NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
@@ -4799,11 +4828,73 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                 if ((settings.enableFakeTimeZone || isUSRegion) && settings.timeZoneName.length > 0) {
                     NSString *targetTZ = settings.timeZoneName;
                     NSString *escapedTargetTZ = [targetTZ stringByReplacingOccurrencesOfString:@"/" withString:@"\\/"];
+                    // 1. Raw JSON
                     if ([mutBody containsString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\""] || [mutBody containsString:@"\"tz\":\"Asia/Ho_Chi_Minh\""]) {
                         [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", escapedTargetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
                         [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", targetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
                         bodyModified = YES;
                         logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ múi giờ VN 'Asia/Ho_Chi_Minh' trong centralized telemetry -> [ĐÃ FAKE] %@", targetTZ]);
+                    }
+                    // 2. URL-encoded (%22tz%22%3A%22...%22)
+                    NSRange encTzRange = [mutBody rangeOfString:@"%22tz%22%3A%22(.*?)%22" options:NSRegularExpressionSearch];
+                    if (encTzRange.location != NSNotFound) {
+                        NSString *matchedTzParam = [mutBody substringWithRange:encTzRange];
+                        if ([matchedTzParam containsString:@"Asia"] || [matchedTzParam containsString:@"Ho%5FChi%5FMinh"] || [matchedTzParam containsString:@"Ho_Chi_Minh"]) {
+                            NSString *encTargetTZ = [targetTZ stringByReplacingOccurrencesOfString:@"/" withString:@"%5C%2F"];
+                            NSString *repTzParam = [NSString stringWithFormat:@"%%22tz%%22%%3A%%22%@%%22", encTargetTZ];
+                            [mutBody replaceOccurrencesOfString:matchedTzParam withString:repTzParam options:0 range:NSMakeRange(0, mutBody.length)];
+                            bodyModified = YES;
+                            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa múi giờ URL-encoded trong centralized -> [ĐÃ FAKE] %@", targetTZ]);
+                        }
+                    }
+                }
+
+                // Đồng bộ độ phân giải màn hình (ss / screenSize)
+                if (settings.spoofedScreenSize.length > 0) {
+                    NSRange ssFormRange = [mutBody rangeOfString:@"screenSize=\\d+x\\d+" options:NSRegularExpressionSearch];
+                    if (ssFormRange.location != NSNotFound) {
+                        NSString *oldSs = [mutBody substringWithRange:ssFormRange];
+                        NSString *newSs = [NSString stringWithFormat:@"screenSize=%@", settings.spoofedScreenSize];
+                        if (![oldSs isEqualToString:newSs]) {
+                            [mutBody replaceOccurrencesOfString:oldSs withString:newSs options:0 range:NSMakeRange(0, mutBody.length)];
+                            bodyModified = YES;
+                        }
+                    }
+                    NSRange ssEncRange = [mutBody rangeOfString:@"%22ss%22%3A%22\\d+x\\d+%22" options:NSRegularExpressionSearch];
+                    if (ssEncRange.location != NSNotFound) {
+                        NSString *oldSs = [mutBody substringWithRange:ssEncRange];
+                        NSString *newSs = [NSString stringWithFormat:@"%%22ss%%22%%3A%%22%@%%22", settings.spoofedScreenSize];
+                        if (![oldSs isEqualToString:newSs]) {
+                            [mutBody replaceOccurrencesOfString:oldSs withString:newSs options:0 range:NSMakeRange(0, mutBody.length)];
+                            bodyModified = YES;
+                        }
+                    }
+                }
+
+                // Chuẩn hóa device_id trong centralized zaid telemetry
+                if ([mutBody containsString:@"1674575222"] || (settings.birthTimeSec > 0 && [mutBody containsString:@"device_id"])) {
+                    uint64_t bTime = (settings.birthTimeSec > 1400000000ULL) ? settings.birthTimeSec : 1690000000ULL;
+                    uint64_t ts1 = bTime * 1000ULL + (uint64_t)arc4random_uniform(999);
+                    uint64_t ts2 = ts1 + 1600000ULL + (uint64_t)arc4random_uniform(800000);
+                    uint64_t ts3 = ts2 + 400000ULL + (uint64_t)arc4random_uniform(400000);
+                    NSString *newDevId = [NSString stringWithFormat:@"%llu-%llu-%llu", ts1, ts2, ts3];
+
+                    NSRange devIdEncRange = [mutBody rangeOfString:@"%22device(?:%5F|_)id%22%3A%22(.*?)%22" options:NSRegularExpressionSearch];
+                    if (devIdEncRange.location != NSNotFound) {
+                        NSString *oldDevIdParam = [mutBody substringWithRange:devIdEncRange];
+                        NSString *encNewDevId = [newDevId stringByReplacingOccurrencesOfString:@"-" withString:@"%2D"];
+                        NSString *repDevIdParam = [NSString stringWithFormat:@"%%22device%%5Fid%%22%%3A%%22%@%%22", encNewDevId];
+                        [mutBody replaceOccurrencesOfString:oldDevIdParam withString:repDevIdParam options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa device_id trong centralized telemetry -> [ĐỒNG BỘ THEO MÁY MỚI] %@", newDevId]);
+                    }
+                    NSRange devIdRawRange = [mutBody rangeOfString:@"\"device_id\":\"(.*?)\"" options:NSRegularExpressionSearch];
+                    if (devIdRawRange.location != NSNotFound) {
+                        NSString *oldDevIdParam = [mutBody substringWithRange:devIdRawRange];
+                        NSString *repDevIdParam = [NSString stringWithFormat:@"\"device_id\":\"%@\"", newDevId];
+                        [mutBody replaceOccurrencesOfString:oldDevIdParam withString:repDevIdParam options:0 range:NSMakeRange(0, mutBody.length)];
+                        bodyModified = YES;
+                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa device_id trong centralized telemetry -> [ĐỒNG BỘ THEO MÁY MỚI] %@", newDevId]);
                     }
                 }
 
@@ -5062,11 +5153,33 @@ static void swizzle_session_delegate_class(Class cls) {
 
 - (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
     request = sanitize_outbound_zalo_request(request, NULL);
-    if (is_tweak_active() && !is_original_zalo_app() && request && request.URL) {
+    if (request && request.URL) {
         NSString *absUrl = request.URL.absoluteString;
         if ([absUrl containsString:@"talk-m.zaloapp.com/api/fcm"] && [absUrl containsString:@"method=submitToken"]) {
-            logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
-            return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]]);
+            NSString *curVoipToken = @"";
+            NSURLComponents *components = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
+            for (NSURLQueryItem *item in components.queryItems) {
+                if ([item.name isEqualToString:@"token"]) {
+                    curVoipToken = item.value ?: @"";
+                    break;
+                }
+            }
+            if (curVoipToken.length > 0) {
+                ZTSettings *st = [ZTSettings sharedSettings];
+                NSString *status = @"";
+                if (st.lastVoIPToken.length > 0 && [st.lastVoIPToken isEqualToString:curVoipToken]) {
+                    status = @"⚠️ [TRÙNG LẶP VỚI LẦN TRƯỚC - ĐANG DÙNG CHUNG PHẦN CỨNG]";
+                } else {
+                    status = @"✨ [TOKEN MỚI TỪ APPLE / ĐƯỢC CẤP LẠI]";
+                }
+                st.lastVoIPToken = curVoipToken;
+                [st saveSettings];
+                logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [VOIP PUSH SUBMIT] %@ Token: %@ (Đang gửi lên server VNG tự nhiên)", status, curVoipToken]);
+            }
+            if (is_tweak_active() && !is_original_zalo_app()) {
+                logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
+                return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]]);
+            }
         }
     }
     NSURLSessionDataTask *task = %orig(request);
