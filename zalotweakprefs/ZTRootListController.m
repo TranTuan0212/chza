@@ -1490,8 +1490,8 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 }
             });
 
-            updateProgress(@"[90%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Đồng bộ cấu hình...", 0.2);
-            updateProgress(@"[100%] 🎉 Hoàn tất dọn dẹp sạch sẽ!", 0.25);
+            updateProgress(@"[90%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Đồng bộ cấu hình...", 0.90f, 0.2);
+            updateProgress(@"[100%] 🎉 Hoàn tất dọn dẹp sạch sẽ!", 1.0f, 0.25);
 
             // Hoàn tất: Đóng progress alert và hiển thị kết quả
             dispatch_async(dispatch_get_main_queue(), ^{
