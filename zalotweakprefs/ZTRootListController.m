@@ -433,18 +433,23 @@ static BOOL zt_reinstall_zalo_ipa(NSString *ipaPath, NSMutableArray<NSString *> 
         return NO;
     }
 
-    // 1. Thử appinst
+    // 1. Thử appinst (AppSync Unified) - quét toàn bộ đường dẫn trên Rootful, Rootless, Roothide, Xina
     const char *appinstPaths[] = {
-        "/var/jb/usr/bin/appinst",
+        "/var/jb/usr/bin/appinst",          // Rootless / Roothide / Dopamine / Palera1n
+        "/usr/bin/appinst",                 // Rootful (unc0ver, Taurine, Checkra1n, Chimera)
         "/var/jb/bin/appinst",
-        "/usr/bin/appinst",
         "/bin/appinst",
+        "/usr/local/bin/appinst",
+        "/var/jb/usr/local/bin/appinst",
+        "/var/Liy/usr/bin/appinst",         // XinaA15
+        "/var/Liy/bin/appinst",
         NULL
     };
     for (int i = 0; appinstPaths[i] != NULL; i++) {
         if (access(appinstPaths[i], X_OK) == 0) {
             const char *argv[] = {appinstPaths[i], [ipaPath UTF8String], NULL};
             int ret = zt_run_cmd(appinstPaths[i], argv);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy appinst (%s) ret=%d", appinstPaths[i], ret]);
             if (ret == 0) {
                 zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Cài đặt Zalo thành công qua appinst (%s)", appinstPaths[i]]);
                 return YES;
@@ -452,17 +457,47 @@ static BOOL zt_reinstall_zalo_ipa(NSString *ipaPath, NSMutableArray<NSString *> 
         }
     }
 
-    // 2. Thử trollstore install
+    // 2. Thử TrollStore Helper động qua LSApplicationProxy (tìm thấy bất kể TrollStore nằm ở đâu)
+    Class proxyClass = NSClassFromString(@"LSApplicationProxy");
+    if (proxyClass && [proxyClass respondsToSelector:@selector(applicationProxyForIdentifier:)]) {
+        id tsProxy = [proxyClass performSelector:@selector(applicationProxyForIdentifier:) withObject:@"com.opa334.TrollStore"];
+        if (tsProxy && [tsProxy respondsToSelector:@selector(bundleURL)]) {
+            NSURL *tsURL = [tsProxy performSelector:@selector(bundleURL)];
+            if (tsURL && tsURL.path) {
+                NSString *tsHelper = [tsURL.path stringByAppendingPathComponent:@"trollstorehelper"];
+                if (access([tsHelper UTF8String], X_OK) == 0) {
+                    const char *argv[] = {[tsHelper UTF8String], "install", [ipaPath UTF8String], NULL};
+                    int ret = zt_run_cmd([tsHelper UTF8String], argv);
+                    zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy trollstorehelper động (%@) ret=%d", tsHelper, ret]);
+                    if (ret == 0) {
+                        zt_log_to_audit(@"REINSTALL", @"Cài đặt Zalo thành công qua trollstorehelper động");
+                        return YES;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Thử TrollStore Helper tĩnh qua các đường dẫn cố định
     const char *tsPaths[] = {
+        "/var/jb/Applications/TrollStore.app/trollstorehelper",
+        "/Applications/TrollStore.app/trollstorehelper",
+        "/var/jb/usr/bin/trollstorehelper",
+        "/usr/bin/trollstorehelper",
+        "/var/jb/usr/local/bin/trollstorehelper",
+        "/usr/local/bin/trollstorehelper",
         "/var/jb/usr/bin/trollstore",
         "/usr/bin/trollstore",
-        "/Applications/TrollStore.app/trollstorehelper",
+        "/var/jb/usr/bin/trollstoreinstaller",
+        "/usr/bin/trollstoreinstaller",
+        "/var/Liy/usr/bin/trollstore",
         NULL
     };
     for (int i = 0; tsPaths[i] != NULL; i++) {
         if (access(tsPaths[i], X_OK) == 0) {
             const char *argv[] = {tsPaths[i], "install", [ipaPath UTF8String], NULL};
             int ret = zt_run_cmd(tsPaths[i], argv);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Chạy trollstore (%s) ret=%d", tsPaths[i], ret]);
             if (ret == 0) {
                 zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"Cài đặt Zalo thành công qua trollstore (%s)", tsPaths[i]]);
                 return YES;
@@ -470,33 +505,62 @@ static BOOL zt_reinstall_zalo_ipa(NSString *ipaPath, NSMutableArray<NSString *> 
         }
     }
 
-    // 3. Thử LSApplicationWorkspace installApplication:withOptions:error:usingBlock:
+    // 4. Thử LSApplicationWorkspace với toàn bộ selector cài đặt của iOS (hoạt động khi có AppSync Unified)
     Class wsClass = NSClassFromString(@"LSApplicationWorkspace");
     if (wsClass && [wsClass respondsToSelector:@selector(defaultWorkspace)]) {
         id ws = [wsClass performSelector:@selector(defaultWorkspace)];
-        SEL inSel = sel_registerName("installApplication:withOptions:error:usingBlock:");
-        if (ws && [ws respondsToSelector:inSel]) {
+        NSURL *url = [NSURL fileURLWithPath:ipaPath];
+        NSDictionary *opts = @{@"PackageType": @"Customer"};
+
+        // 4.1 Selector chuẩn: installApplication:withOptions:error:
+        SEL sErr = sel_registerName("installApplication:withOptions:error:");
+        if (ws && [ws respondsToSelector:sErr]) {
             NSError *instErr = nil;
-            NSURL *url = [NSURL fileURLWithPath:ipaPath];
-            NSDictionary *opts = @{@"PackageType": @"Customer"};
-            NSMethodSignature *sig = [ws methodSignatureForSelector:inSel];
-            if (sig) {
-                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                [inv setTarget:ws];
-                [inv setSelector:inSel];
-                [inv setArgument:&url atIndex:2];
-                [inv setArgument:&opts atIndex:3];
-                [inv setArgument:&instErr atIndex:4];
-                id nilBlock = nil;
-                [inv setArgument:&nilBlock atIndex:5];
-                [inv invoke];
-                BOOL res = NO;
-                [inv getReturnValue:&res];
-                if (res) {
-                    zt_log_to_audit(@"REINSTALL", @"Cài đặt Zalo thành công qua LSApplicationWorkspace installApplication");
-                    return YES;
-                }
-            }
+            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *, NSError **) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **))[ws methodForSelector:sErr];
+            BOOL ok = fn(ws, sErr, url, opts, &instErr);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions:error: -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
+            if (ok) return YES;
+
+            instErr = nil;
+            ok = fn(ws, sErr, url, @{}, &instErr);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication (opts rỗng) -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
+            if (ok) return YES;
+        }
+
+        // 4.2 Selector gọn: installApplication:withOptions:
+        SEL sNoErr = sel_registerName("installApplication:withOptions:");
+        if (ws && [ws respondsToSelector:sNoErr]) {
+            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *))[ws methodForSelector:sNoErr];
+            BOOL ok = fn(ws, sNoErr, url, opts);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions: -> %d", ok]);
+            if (ok) return YES;
+
+            ok = fn(ws, sNoErr, url, @{});
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions (opts rỗng) -> %d", ok]);
+            if (ok) return YES;
+        }
+
+        // 4.3 Selector khối: installApplication:withOptions:error:usingBlock:
+        SEL sBlock = sel_registerName("installApplication:withOptions:error:usingBlock:");
+        if (ws && [ws respondsToSelector:sBlock]) {
+            NSError *instErr = nil;
+            BOOL (*fn)(id, SEL, NSURL *, NSDictionary *, NSError **, id) = (BOOL (*)(id, SEL, NSURL *, NSDictionary *, NSError **, id))[ws methodForSelector:sBlock];
+            BOOL ok = fn(ws, sBlock, url, opts, &instErr, nil);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"LSApplicationWorkspace installApplication:withOptions:error:usingBlock: -> %d (Lỗi: %@)", ok, instErr ? instErr.localizedDescription : @"không có"]);
+            if (ok) return YES;
+        }
+    }
+
+    // 5. Thử qua MobileInstallation.framework (MobileInstallationInstall)
+    void *mi = dlopen("/System/Library/PrivateFrameworks/MobileInstallation.framework/MobileInstallation", RTLD_NOW);
+    if (mi) {
+        typedef int (*MIInstallFunc)(CFStringRef path, CFDictionaryRef parameters, void *callback, CFStringRef unknown);
+        MIInstallFunc miInstall = (MIInstallFunc)dlsym(mi, "MobileInstallationInstall");
+        if (miInstall) {
+            NSDictionary *miOpts = @{@"ApplicationType": @"User", @"PackageType": @"Customer"};
+            int ret = miInstall((__bridge CFStringRef)ipaPath, (__bridge CFDictionaryRef)miOpts, NULL, NULL);
+            zt_log_to_audit(@"REINSTALL", [NSString stringWithFormat:@"MobileInstallationInstall -> %d", ret]);
+            if (ret == 0) return YES;
         }
     }
 
@@ -2259,15 +2323,29 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
                     if (errors.count > 0 && !reinstalled) {
                         NSMutableString *errDetail = [NSMutableString string];
-                        [errDetail appendFormat:@"Phát hiện %lu vấn đề trong quá trình cài đặt:\n\n", (unsigned long)errors.count];
+                        [errDetail appendFormat:@"Chưa thể cài đặt ngầm Zalo tự động:\n\n"];
                         for (NSUInteger i = 0; i < errors.count; i++) {
-                            [errDetail appendFormat:@"%lu. %@\n", (unsigned long)(i + 1), errors[i]];
+                            [errDetail appendFormat:@"• %@\n", errors[i]];
                         }
-                        [errDetail appendString:@"\nBạn có thể mở Filza hoặc TrollStore để cài lại file IPA tại /var/mobile/Media/ZaloTweak_Zalo.ipa."];
+                        [errDetail appendString:@"\n📁 File IPA đã lưu tại: /var/mobile/Media/ZaloTweak_Zalo.ipa\n\n"
+                                                 @"💡 Gợi ý cho máy không dùng TrollStore:\n"
+                                                 @"Cài gói 'AppSync Unified' từ nguồn: https://cydia.akemi.ai/ (qua Sileo/Zebra) để tweak có thể tự động cài đặt Zalo từ IPA mà không bị Apple chặn chữ ký."];
+
                         UIAlertController *errAlert = [UIAlertController alertControllerWithTitle:@"⚠️ THÔNG BÁO TIẾN TRÌNH"
                                                                                           message:errDetail
                                                                                    preferredStyle:UIAlertControllerStyleAlert];
-                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
+
+                        NSURL *tsURL = [NSURL URLWithString:[NSString stringWithFormat:@"trollstore://install?url=file://%@", [ipaPath stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]]];
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Cài Qua TrollStore" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                            [[UIApplication sharedApplication] openURL:tsURL options:@{} completionHandler:nil];
+                        }]];
+
+                        NSURL *filzaURL = [NSURL URLWithString:[NSString stringWithFormat:@"filza://view%@", [ipaPath stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLPathAllowedCharacterSet]]]];
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Mở Bằng Filza" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+                            [[UIApplication sharedApplication] openURL:filzaURL options:@{} completionHandler:nil];
+                        }]];
+
+                        [errAlert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleCancel handler:nil]];
                         [self presentViewController:errAlert animated:YES completion:nil];
                     } else {
                         NSString *msg = [NSString stringWithFormat:@"Đã hoàn tất chu trình Gỡ & Cài đặt lại Zalo tự động:\n\n"
