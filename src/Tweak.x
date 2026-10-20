@@ -3867,6 +3867,7 @@ static inline __attribute__((unused)) NSString *hex_string_from_data(NSData *dat
 
 @interface NSObject (ZTPKPushRegistrySupport)
 - (void)pushRegistry:(id)registry didUpdatePushCredentials:(id)credentials forType:(NSString *)type;
+- (NSData *)token;
 @end
 
 %hook NSUserDefaults
@@ -4063,7 +4064,7 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 OrigCredIMP origImp = (OrigCredIMP)method_getImplementation(credMethod);
                 IMP customCredImp = imp_implementationWithBlock(^(id self_del, id registry, id creds, NSString *type) {
                     if (creds && [creds respondsToSelector:@selector(token)]) {
-                        NSData *tokData = [creds token];
+                        NSData *tokData = [creds valueForKey:@"token"];
                         if (tokData && tokData.length > 0) {
                             const unsigned char *b = (const unsigned char *)[tokData bytes];
                             NSUInteger len = [tokData length];
