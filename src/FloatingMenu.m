@@ -1667,9 +1667,7 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
 
 - (void)startInAppDeepWipeSequenceWithRegion:(NSString *)targetRegion preferredCarrier:(nullable NSString *)preferredCarrier from:(UIViewController *)top {
     UIAlertController *progressAlert = [UIAlertController alertControllerWithTitle:@"🧹 ĐANG DEEP WIPE HỆ THỐNG..."
-                                                                           message:@"[0%] Đang ghi nhận IP mạng...
-
-"
+                                                                           message:@"[0%] Đang ghi nhận IP mạng...\n\n"
                                                                     preferredStyle:UIAlertControllerStyleAlert];
 
     UIProgressView *progressView = [[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleDefault];
@@ -1688,9 +1686,7 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
     [top presentViewController:progressAlert animated:YES completion:^{
         fetch_public_ip(^(NSString *currentIP) {
             dispatch_sync(dispatch_get_main_queue(), ^{
-                progressAlert.message = @"[15%] 📡 Đang hủy đăng ký push & Drain RunLoop (150ms)...
-
-";
+                progressAlert.message = @"[15%] 📡 Đang hủy đăng ký push & Drain RunLoop (150ms)...\n\n";
                 [progressView setProgress:0.15f animated:YES];
             });
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
