@@ -313,9 +313,8 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     write_audit_log(@"TEST-VOIP-TOKEN", [NSString stringWithFormat:@"BundleId='%@', isOrig=%d -> %@ (%@)", mainBid, isOrigApp, voipPass ? @"PASSED ✅" : @"FAILED ❌", voipDesc]);
 
     // 8.1 Test Zalo Client Certificate ID (zcid)
-    NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
-    NSString *currZcid = prefDict[@"currentZCID"] ?: [ZTSettings sharedSettings].currentZCID;
-    NSString *lastWipedZcid = prefDict[@"lastWipedZCID"] ?: [ZTSettings sharedSettings].lastWipedZCID;
+    NSString *currZcid = get_stored_zcid();
+    NSString *lastWipedZcid = get_stored_last_wiped_zcid();
     BOOL zcidPass = NO;
     NSString *zcidDesc = nil;
     if (currZcid.length > 0) {
@@ -372,6 +371,56 @@ static NSString *get_zt_prefs_filepath(void) {
         if (p) return [NSString stringWithUTF8String:p];
     }
     return [NSString stringWithUTF8String:base];
+}
+
+static NSString *get_stored_zcid(void) {
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+            if (shared) {
+                id val = [shared valueForKey:@"currentZCID"];
+                if ([val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
+                    return (NSString *)val;
+                }
+            }
+#pragma clang diagnostic pop
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (dict && [dict[@"currentZCID"] isKindOfClass:[NSString class]]) {
+        return dict[@"currentZCID"];
+    }
+    return @"";
+}
+
+static NSString *get_stored_last_wiped_zcid(void) {
+    Class settingsClass = NSClassFromString(@"ZTSettings");
+    if (settingsClass) {
+        SEL selShared = NSSelectorFromString(@"sharedSettings");
+        if ([settingsClass respondsToSelector:selShared]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            id shared = [settingsClass performSelector:selShared];
+            if (shared) {
+                id val = [shared valueForKey:@"lastWipedZCID"];
+                if ([val isKindOfClass:[NSString class]] && [(NSString *)val length] > 0) {
+                    return (NSString *)val;
+                }
+            }
+#pragma clang diagnostic pop
+        }
+    }
+    NSString *path = get_zt_prefs_filepath();
+    NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (dict && [dict[@"lastWipedZCID"] isKindOfClass:[NSString class]]) {
+        return dict[@"lastWipedZCID"];
+    }
+    return @"";
 }
 
 static NSString *get_stored_centralized_did(void) {
@@ -2098,11 +2147,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                                               value:self.info.zagidStatusText ?: @"Khớp phiên định danh"
                                               badge:self.info.zagidReceivedPassed ? @"Hợp lệ ✅" : @"Chưa có ⚠️"
                                           isWarning:!self.info.zagidReceivedPassed]];
-    NSString *currZcid = [[ZTSettings sharedSettings] currentZCID];
-    if (!currZcid || currZcid.length == 0) {
-        NSDictionary *prefDict = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
-        currZcid = prefDict[@"currentZCID"];
-    }
+    NSString *currZcid = get_stored_zcid();
     NSString *zcidBadge = (currZcid.length >= 32) ? @"Độc Nhất ✅" : @"Tự Sinh ⏳";
     NSString *zcidDisplay = (currZcid.length > 20) ? [NSString stringWithFormat:@"%@...%@ (%lu ký tự)", [currZcid substringToIndex:10], [currZcid substringFromIndex:currZcid.length - 8], (unsigned long)currZcid.length] : (currZcid.length > 0 ? currZcid : @"Chờ Zalo tự tạo qua Keychain... ⏳");
     [inner addArrangedSubview:[self createRowWithKey:@"Định Danh Zalo (zcid)"
