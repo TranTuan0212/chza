@@ -1836,10 +1836,21 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         Class pkClass = NSClassFromString(@"PKPushRegistry");
         if (pkClass) {
             @try {
-                id registry = [[pkClass alloc] initWithQueue:dispatch_get_main_queue()];
-                if ([registry respondsToSelector:@selector(setDesiredPushTypes:)]) {
-                    [registry setDesiredPushTypes:[NSSet set]];
-                    NSLog(@"[ZaloTweak-APNs] 📡 Đã gửi yêu cầu setDesiredPushTypes:empty đến PushKit");
+                SEL initSel = sel_registerName("initWithQueue:");
+                SEL setTypesSel = sel_registerName("setDesiredPushTypes:");
+                Method initM = class_getInstanceMethod(pkClass, initSel);
+                Method setTypesM = class_getInstanceMethod(pkClass, setTypesSel);
+                if (initM && setTypesM) {
+                    id (*initFn)(id, SEL, dispatch_queue_t) = (id (*)(id, SEL, dispatch_queue_t))method_getImplementation(initM);
+                    void (*setTypesFn)(id, SEL, id) = (void (*)(id, SEL, id))method_getImplementation(setTypesM);
+                    id allocObj = [pkClass alloc];
+                    if (allocObj && initFn) {
+                        id registry = initFn(allocObj, initSel, dispatch_get_main_queue());
+                        if (registry && setTypesFn) {
+                            setTypesFn(registry, setTypesSel, [NSSet set]);
+                            NSLog(@"[ZaloTweak-APNs] 📡 Đã gửi yêu cầu setDesiredPushTypes:empty đến PushKit");
+                        }
+                    }
                 }
             } @catch (NSException *ex) {
                 NSLog(@"[ZaloTweak-APNs] Bắt exception khi unregister PushKit: %@", ex.reason);
