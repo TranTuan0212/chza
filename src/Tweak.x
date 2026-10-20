@@ -5566,10 +5566,19 @@ static NSString *get_runtime_environment_desc(void) {
 static void pushUnregisterCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if ([[UIApplication sharedApplication] respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
-            logAudit(@"APNS-ROTATE", @"📡 [SETTINGS-WIPE] Nhận tín hiệu từ Cài đặt -> Hủy đăng ký push với Apple và xả RunLoop Mach IPC...");
+            logAudit(@"APNS-ROTATE", @"📡 [SETTINGS-WIPE] Nhận tín hiệu từ Cài đặt -> Hủy đăng ký push APNs & VoIP với Apple và xả RunLoop Mach IPC...");
             [[UIApplication sharedApplication] unregisterForRemoteNotifications];
-            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.18]];
         }
+        Class pkClass = NSClassFromString(@"PKPushRegistry");
+        if (pkClass) {
+            @try {
+                id registry = [[pkClass alloc] initWithQueue:dispatch_get_main_queue()];
+                if ([registry respondsToSelector:@selector(setDesiredPushTypes:)]) {
+                    [registry setDesiredPushTypes:[NSSet set]];
+                }
+            } @catch (NSException *ex) {}
+        }
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.18]];
         exit(0);
     });
 }

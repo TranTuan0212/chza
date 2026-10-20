@@ -550,24 +550,36 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
                 id envObj = dict[envKey];
                 if ([envObj isKindOfClass:[NSDictionary class]]) {
                     NSMutableDictionary *tokens = [envObj mutableCopy];
-                    BOOL keyChanged = NO;
-                    for (NSString *bid in get_known_zalo_bundle_ids()) {
-                        if (tokens[bid]) {
-                            [tokens removeObjectForKey:bid];
-                            keyChanged = YES;
+                    NSMutableArray *keysToRemove = [NSMutableArray array];
+                    for (id k in tokens) {
+                        if ([k isKindOfClass:[NSString class]]) {
+                            NSString *lk = [((NSString *)k) lowercaseString];
+                            if ([lk containsString:@"zingalo"] || [lk containsString:@"zalo"]) {
+                                [keysToRemove addObject:k];
+                            }
                         }
                     }
-                    if (keyChanged) {
+                    if (keysToRemove.count > 0) {
+                        [tokens removeObjectsForKeys:keysToRemove];
                         dict[envKey] = tokens;
                         anyChanged = YES;
+                        NSLog(@"[ZaloTweak-APNs] Đã xóa %lu push topic (APNs & VoIP) trong %@: %@", (unsigned long)keysToRemove.count, envKey, keysToRemove);
                     }
                 }
             }
-            for (NSString *bid in get_known_zalo_bundle_ids()) {
-                if (dict[bid]) {
-                    [dict removeObjectForKey:bid];
-                    anyChanged = YES;
+            NSMutableArray *rootKeysToRemove = [NSMutableArray array];
+            for (id k in dict) {
+                if ([k isKindOfClass:[NSString class]]) {
+                    NSString *lk = [((NSString *)k) lowercaseString];
+                    if ([lk containsString:@"zingalo"] || [lk containsString:@"zalo"]) {
+                        [rootKeysToRemove addObject:k];
+                    }
                 }
+            }
+            if (rootKeysToRemove.count > 0) {
+                [dict removeObjectsForKeys:rootKeysToRemove];
+                anyChanged = YES;
+                NSLog(@"[ZaloTweak-APNs] Đã xóa %lu root push keys trong apsd.plist: %@", (unsigned long)rootKeysToRemove.count, rootKeysToRemove);
             }
 
             // Ghi in-place atomically:NO để giữ nguyên inode, owner và permissions gốc của file
@@ -587,7 +599,7 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
         }
     }
 
-    // 1.1. Xóa bản ghi cache riêng của Zalo trong PushStore
+    // 1.1. Xóa bản ghi cache riêng của Zalo (APNs và VoIP) trong PushStore
     NSArray *pushStoreDirs = @[
         @"/var/mobile/Library/SpringBoard/PushStore",
         @"/private/var/mobile/Library/SpringBoard/PushStore",
@@ -597,17 +609,16 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
         if (![fm fileExistsAtPath:psDir]) continue;
         NSArray *files = [fm contentsOfDirectoryAtPath:psDir error:nil];
         for (NSString *file in files) {
-            for (NSString *bid in get_known_zalo_bundle_ids()) {
-                if ([file containsString:bid]) {
-                    NSString *target = [psDir stringByAppendingPathComponent:file];
-                    NSError *rmErr = nil;
-                    if (![fm removeItemAtPath:target error:&rmErr]) {
-                        NSString *err = [NSString stringWithFormat:@"[PushStore] Lỗi xóa file %@: %@", file, rmErr.localizedDescription];
-                        NSLog(@"[ZaloTweak-APNs] %@", err);
-                        if (errors) [errors addObject:err];
-                    } else {
-                        NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
-                    }
+            NSString *lfile = [file lowercaseString];
+            if ([lfile containsString:@"zingalo"] || [lfile containsString:@"zalo"]) {
+                NSString *target = [psDir stringByAppendingPathComponent:file];
+                NSError *rmErr = nil;
+                if (![fm removeItemAtPath:target error:&rmErr]) {
+                    NSString *err = [NSString stringWithFormat:@"[PushStore] Lỗi xóa file %@: %@", file, rmErr.localizedDescription];
+                    NSLog(@"[ZaloTweak-APNs] %@", err);
+                    if (errors) [errors addObject:err];
+                } else {
+                    NSLog(@"[ZaloTweak-APNs] Đã xóa push store cache: %@", target);
                 }
             }
         }

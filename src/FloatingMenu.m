@@ -1827,13 +1827,25 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         });
     };
     
-    // 0. Hủy đăng ký push notification với Apple Gateway
+    // 0. Hủy đăng ký push notification (APNs và VoIP) với Apple Gateway
     void (^doUnregisterPushBlock)(void) = ^{
         if ([[UIApplication sharedApplication] respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
             [[UIApplication sharedApplication] unregisterForRemoteNotifications];
             NSLog(@"[ZaloTweak-APNs] 📡 Đã gửi yêu cầu unregisterForRemoteNotifications đến Apple Push Daemon (apsd)");
-            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
         }
+        Class pkClass = NSClassFromString(@"PKPushRegistry");
+        if (pkClass) {
+            @try {
+                id registry = [[pkClass alloc] initWithQueue:dispatch_get_main_queue()];
+                if ([registry respondsToSelector:@selector(setDesiredPushTypes:)]) {
+                    [registry setDesiredPushTypes:[NSSet set]];
+                    NSLog(@"[ZaloTweak-APNs] 📡 Đã gửi yêu cầu setDesiredPushTypes:empty đến PushKit");
+                }
+            } @catch (NSException *ex) {
+                NSLog(@"[ZaloTweak-APNs] Bắt exception khi unregister PushKit: %@", ex.reason);
+            }
+        }
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
     };
     if ([NSThread isMainThread]) {
         doUnregisterPushBlock();
