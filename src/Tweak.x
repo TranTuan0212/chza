@@ -4954,33 +4954,6 @@ static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSDat
                     }
                 }
 
-                // Chuẩn hóa device_id trong centralized zaid telemetry
-                if ([mutBody containsString:@"1674575222"] || (settings.birthTimeSec > 0 && [mutBody containsString:@"device_id"])) {
-                    uint64_t bTime = (settings.birthTimeSec > 1400000000ULL) ? settings.birthTimeSec : 1690000000ULL;
-                    uint64_t ts1 = bTime * 1000ULL + (uint64_t)arc4random_uniform(999);
-                    uint64_t ts2 = ts1 + 1600000ULL + (uint64_t)arc4random_uniform(800000);
-                    uint64_t ts3 = ts2 + 400000ULL + (uint64_t)arc4random_uniform(400000);
-                    NSString *newDevId = [NSString stringWithFormat:@"%llu-%llu-%llu", ts1, ts2, ts3];
-
-                    NSRange devIdEncRange = [mutBody rangeOfString:@"%22device(?:%5F|_)id%22%3A%22(.*?)%22" options:NSRegularExpressionSearch];
-                    if (devIdEncRange.location != NSNotFound) {
-                        NSString *oldDevIdParam = [mutBody substringWithRange:devIdEncRange];
-                        NSString *encNewDevId = [newDevId stringByReplacingOccurrencesOfString:@"-" withString:@"%2D"];
-                        NSString *repDevIdParam = [NSString stringWithFormat:@"%%22device%%5Fid%%22%%3A%%22%@%%22", encNewDevId];
-                        [mutBody replaceOccurrencesOfString:oldDevIdParam withString:repDevIdParam options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa device_id trong centralized telemetry -> [ĐỒNG BỘ THEO MÁY MỚI] %@", newDevId]);
-                    }
-                    NSRange devIdRawRange = [mutBody rangeOfString:@"\"device_id\":\"(.*?)\"" options:NSRegularExpressionSearch];
-                    if (devIdRawRange.location != NSNotFound) {
-                        NSString *oldDevIdParam = [mutBody substringWithRange:devIdRawRange];
-                        NSString *repDevIdParam = [NSString stringWithFormat:@"\"device_id\":\"%@\"", newDevId];
-                        [mutBody replaceOccurrencesOfString:oldDevIdParam withString:repDevIdParam options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa device_id trong centralized telemetry -> [ĐỒNG BỘ THEO MÁY MỚI] %@", newDevId]);
-                    }
-                }
-
                 if (isUSRegion) {
                     if ([mutBody containsString:@"\"lang\":\"vi-VN\""] || [mutBody containsString:@"\"lang\":\"vi_VN\""]) {
                         [mutBody replaceOccurrencesOfString:@"\"lang\":\"vi-VN\"" withString:@"\"lang\":\"en-US\"" options:0 range:NSMakeRange(0, mutBody.length)];
