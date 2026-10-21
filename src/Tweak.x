@@ -5201,6 +5201,34 @@ static void recursively_collect_dialog_texts(UIView *view, NSMutableArray<NSStri
     }
 }
 
+static void log_controller_ivars_if_relevant(UIViewController *vc, NSString *label) {
+    if (!vc) return;
+    NSString *clsName = NSStringFromClass([vc class]);
+    if ([clsName containsString:@"ZT"] || [clsName containsString:@"UIEditingOverlay"]) return;
+    
+    unsigned int count = 0;
+    Ivar *ivars = class_copyIvarList([vc class], &count);
+    NSMutableArray *ivarDetails = [NSMutableArray array];
+    for (unsigned int i = 0; i < count; i++) {
+        const char *name = ivar_getName(ivars[i]);
+        if (name) {
+            NSString *nameStr = [NSString stringWithUTF8String:name];
+            @try {
+                id val = object_getIvar(vc, ivars[i]);
+                if (val && ![val isKindOfClass:[UIView class]] && ![val isKindOfClass:[UIViewController class]]) {
+                    NSString *valDesc = [val description];
+                    if (valDesc.length > 500) valDesc = [valDesc substringToIndex:500];
+                    [ivarDetails addObject:[NSString stringWithFormat:@"%@ = %@", nameStr, valDesc]];
+                }
+            } @catch (NSException *e) {}
+        }
+    }
+    if (ivars) free(ivars);
+    if (ivarDetails.count > 0) {
+        logAudit(@"VC-DATA-IVARS", [NSString stringWithFormat:@"🔍 [%@ IVARS CỦA %@]:\n   • %@", label ?: @"THÔNG SỐ", clsName, [ivarDetails componentsJoinedByString:@"\n   • "]]);
+    }
+}
+
 %hook UIViewController
 
 - (void)viewDidLoad {
@@ -5209,30 +5237,11 @@ static void recursively_collect_dialog_texts(UIView *view, NSMutableArray<NSStri
         NSString *clsName = NSStringFromClass([self class]);
         if ([clsName rangeOfString:@"Deactivat" options:NSCaseInsensitiveSearch].location != NSNotFound ||
             [clsName rangeOfString:@"AccountLock" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [clsName rangeOfString:@"SecurityCheck" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            [clsName rangeOfString:@"SecurityCheck" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [clsName rangeOfString:@"ZInstantActionList" options:NSCaseInsensitiveSearch].location != NSNotFound) {
             
-            logAudit(@"DEACT-CONTROLLER", [NSString stringWithFormat:@"🛑 [DEACTIVATION VIEW LOADED]: %@", clsName]);
-            
-            unsigned int count = 0;
-            Ivar *ivars = class_copyIvarList([self class], &count);
-            NSMutableArray *ivarDetails = [NSMutableArray array];
-            for (unsigned int i = 0; i < count; i++) {
-                const char *name = ivar_getName(ivars[i]);
-                if (name) {
-                    NSString *nameStr = [NSString stringWithUTF8String:name];
-                    @try {
-                        id val = object_getIvar(self, ivars[i]);
-                        if (val) {
-                            [ivarDetails addObject:[NSString stringWithFormat:@"%@ = %@", nameStr, val]];
-                        }
-                    } @catch (NSException *e) {}
-                }
-            }
-            if (ivars) free(ivars);
-            if (ivarDetails.count > 0) {
-                logAudit(@"DEACT-IVARS", [NSString stringWithFormat:@"🔍 [IVARS CỦA %@]:\n   • %@", clsName, [ivarDetails componentsJoinedByString:@"\n   • "]]);
-            }
-            
+            logAudit(@"DEACT-CONTROLLER", [NSString stringWithFormat:@"🛑 [CONTROLLER LOADED]: %@", clsName]);
+            log_controller_ivars_if_relevant(self, @"CONTROLLER-LOAD");
             NSArray *syms = [NSThread callStackSymbols];
             logAudit(@"DEACT-CALLSTACK", [NSString stringWithFormat:@"↳ CALL STACK KÍCH HOẠT %@:\n   ↳ %@", clsName, [syms componentsJoinedByString:@"\n   ↳ "]]);
         }
@@ -5294,10 +5303,18 @@ static void recursively_collect_dialog_texts(UIView *view, NSMutableArray<NSStri
                 [checkStr rangeOfString:@"deact" options:NSCaseInsensitiveSearch].location != NSNotFound ||
                 [checkStr rangeOfString:@"ban" options:NSCaseInsensitiveSearch].location != NSNotFound ||
                 [checkStr rangeOfString:@"kick" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                [checkStr rangeOfString:@"security" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                [checkStr rangeOfString:@"security" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"ZInstant" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"ActionList" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                
+                log_controller_ivars_if_relevant(targetVC, @"PRESENT-TARGET");
+                if (viewControllerToPresent != targetVC) {
+                    log_controller_ivars_if_relevant(viewControllerToPresent, @"PRESENT-CONTAINER");
+                }
+                
                 NSArray *syms = [NSThread callStackSymbols];
                 NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
-                logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PRESENT MÀN HÌNH BẢO MẬT/KHÓA ACC] Controller: %@%@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", vcClass, extraInfo, stackTrace]);
+                logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PRESENT MÀN HÌNH BẢO MẬT/ZINSTANT] Controller: %@%@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", vcClass, extraInfo, stackTrace]);
             }
         }
     }
