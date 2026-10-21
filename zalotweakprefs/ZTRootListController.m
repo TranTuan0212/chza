@@ -1278,12 +1278,21 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 mnc = @"04";
             } else if ([p3 isEqualToString:@"091"] || [p3 isEqualToString:@"094"] || [p3 isEqualToString:@"088"] ||
                        [p3 isEqualToString:@"081"] || [p3 isEqualToString:@"082"] || [p3 isEqualToString:@"083"] ||
-                       [p3 isEqualToString:@"084"] || [p3 isEqualToString:@"085"] || [p3 isEqualToString:@"087"] || [p3 isEqualToString:@"055"]) {
+                       [p3 isEqualToString:@"084"] || [p3 isEqualToString:@"085"]) {
                 carrier = @"VINAPHONE";
                 mnc = @"02";
+            } else if ([p3 isEqualToString:@"087"]) {
+                carrier = @"ITelecom";
+                mnc = @"08";
+            } else if ([p3 isEqualToString:@"055"]) {
+                carrier = @"Wintel";
+                mnc = @"09";
             } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"] || [p3 isEqualToString:@"052"]) {
                 carrier = @"Vietnamobile";
                 mnc = @"05";
+            } else if ([p3 isEqualToString:@"099"] || [p3 isEqualToString:@"059"]) {
+                carrier = @"Gmobile";
+                mnc = @"07";
             }
         }
         if (outCarrierName) *outCarrierName = carrier;
@@ -1433,6 +1442,30 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
     [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM MobiFone (452-01)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE"];
+        });
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Vietnamobile (452-05)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"Vietnamobile"];
+        });
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Gmobile (452-07)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"Gmobile"];
+        });
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM ITelecom (452-08)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"ITelecom"];
+        });
+    }]];
+
+    [sheet addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Wintel (452-09)" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self performWipeAndApplyWithRegion:@"VN" preferredCarrier:@"Wintel"];
         });
     }]];
 
