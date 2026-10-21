@@ -826,6 +826,9 @@ static void purge_entire_sandbox_safely(void) {
         self.screenScale = [dict[@"screenScale"] doubleValue] ?: defS;
         self.bootTimeSec = [dict[@"bootTimeSec"] unsignedLongLongValue] ?: 0;
         self.birthTimeSec = [dict[@"birthTimeSec"] unsignedLongLongValue] ?: 0;
+        self.deltaVarSec = [dict[@"deltaVarSec"] unsignedIntValue] ?: 0;
+        self.deltaMobileSec = [dict[@"deltaMobileSec"] unsignedIntValue] ?: 0;
+        self.deltaSandboxSec = [dict[@"deltaSandboxSec"] unsignedIntValue] ?: 0;
         self.autoSyncTimezoneWithIP = dict[@"autoSyncTimezoneWithIP"] != nil ? [dict[@"autoSyncTimezoneWithIP"] boolValue] : YES;
         self.enableFakeTimeZone = dict[@"enableFakeTimeZone"] != nil ? [dict[@"enableFakeTimeZone"] boolValue] : YES;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
@@ -1042,6 +1045,9 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"screenScale"] = @(self.screenScale);
     dict[@"bootTimeSec"] = @(self.bootTimeSec);
     dict[@"birthTimeSec"] = @(self.birthTimeSec);
+    dict[@"deltaVarSec"] = @(self.deltaVarSec);
+    dict[@"deltaMobileSec"] = @(self.deltaMobileSec);
+    dict[@"deltaSandboxSec"] = @(self.deltaSandboxSec);
     dict[@"autoSyncTimezoneWithIP"] = @(self.autoSyncTimezoneWithIP);
     dict[@"enableFakeTimeZone"] = @(self.enableFakeTimeZone);
     dict[@"bootSessionUUID"] = self.bootSessionUUID ?: @"";
@@ -1156,6 +1162,9 @@ NSString *generate_random_mac(void) {
     self.batteryState = p.batteryState;
     self.bootTimeSec = p.bootTimeSec;
     self.birthTimeSec = p.birthTimeSec;
+    self.deltaVarSec = p.deltaVarSec;
+    self.deltaMobileSec = p.deltaMobileSec;
+    self.deltaSandboxSec = p.deltaSandboxSec;
     self.autoSyncTimezoneWithIP = YES;
     self.bootSessionUUID = p.bootSessionUUID;
     self.spoofedIDFV = p.spoofedIDFV;
@@ -3034,21 +3043,22 @@ static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t b
         return base_birth; // Tầng 0: Gốc hệ thống Root filesystem
     }
 
-    // Tầng 1: /var hoặc /private/var (Thư mục dữ liệu hệ thống, khởi tạo sau root ~30-60s)
-    uint64_t delta_var = 45ULL + ((base_birth * 37ULL) % 30ULL);
+    ZTSettings *s = [ZTSettings sharedSettings];
+    // Tầng 1: /var hoặc /private/var (Thư mục dữ liệu hệ thống, format sau root)
+    uint64_t delta_var = s.deltaVarSec > 0 ? (uint64_t)s.deltaVarSec : (45ULL + ((base_birth * 37ULL) % 45ULL));
     if (strcmp(path, "/var") == 0 || strcmp(path, "/private/var") == 0) {
         return base_birth + delta_var;
     }
 
-    // Tầng 2: /var/mobile hoặc /private/var/mobile (Thư mục người dùng mobile, tạo sau root ~90-150s)
-    uint64_t delta_mobile = delta_var + 65ULL + ((base_birth * 104729ULL) % 60ULL);
+    // Tầng 2: /var/mobile hoặc /private/var/mobile (Thư mục người dùng mobile, tạo sau khi setup)
+    uint64_t delta_mobile = s.deltaMobileSec > 0 ? (uint64_t)s.deltaMobileSec : (delta_var + 65ULL + ((base_birth * 104729ULL) % 180ULL));
     if (strcmp(path, "/var/mobile") == 0 || strcmp(path, "/private/var/mobile") == 0 ||
         strcmp(path, "/var/mobile/") == 0 || strcmp(path, "/private/var/mobile/") == 0) {
         return base_birth + delta_mobile;
     }
 
     // Tầng 3: Sandbox App Container / Library / Documents (Khởi tạo khi app cài đặt hoặc chạy)
-    uint64_t delta_sandbox = delta_mobile + 180ULL + ((base_birth * 1299709ULL) % 300ULL);
+    uint64_t delta_sandbox = s.deltaSandboxSec > 0 ? (uint64_t)s.deltaSandboxSec : (delta_mobile + 180ULL + ((base_birth * 1299709ULL) % 600ULL));
     if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/Preferences") != NULL) {
         uint64_t delta_lib = delta_sandbox + 25ULL + ((base_birth / 13ULL) % 30ULL);
         return base_birth + delta_lib;

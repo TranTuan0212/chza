@@ -553,6 +553,20 @@ static NSString *detect_real_system_machine(void) {
         profile.birthTimeSec = profile.bootTimeSec - (86400ULL * (30ULL + arc4random_uniform(250)) + arc4random_uniform(86399));
     }
 
+    // Độ lệch thời gian các phân vùng hệ thống hoàn toàn logic theo chuỗi sự kiện:
+    // 1. /var format & mount sau root filesystem 25s - 90s
+    profile.deltaVarSec = 25 + arc4random_uniform(65);
+    // 2. /var/mobile tạo khi hoàn tất setup máy (sau /var từ 45s - 240s)
+    profile.deltaMobileSec = profile.deltaVarSec + 45 + arc4random_uniform(195);
+    // 3. Sandbox Zalo: Cài sau kích hoạt máy từ vài ngày đến vài tuần (nhưng trước bootTime)
+    uint64_t daysSpan = (profile.bootTimeSec > profile.birthTimeSec + 86400ULL * 10ULL) ? 
+        ((profile.bootTimeSec - profile.birthTimeSec) / 86400ULL) : 5ULL;
+    uint32_t randomDays = 2 + arc4random_uniform((uint32_t)MIN(daysSpan, 60ULL));
+    profile.deltaSandboxSec = (uint32_t)(randomDays * 86400ULL + arc4random_uniform(86400));
+    if (profile.birthTimeSec + profile.deltaSandboxSec >= profile.bootTimeSec) {
+        profile.deltaSandboxSec = (uint32_t)(profile.deltaMobileSec + 3600ULL + arc4random_uniform(7200));
+    }
+
     // Pin ngẫu nhiên (50% - 96%) và không cắm sạc
     profile.batteryLevel = 0.50f + ((float)arc4random_uniform(46)) / 100.0f;
     profile.batteryState = 1; // UIDeviceBatteryStateUnplugged

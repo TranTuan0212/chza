@@ -29,6 +29,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) NSInteger batteryState;     // 1 (Unplugged)
 @property (nonatomic, assign) uint64_t bootTimeSec;        // Uptime timestamp
 @property (nonatomic, assign) uint64_t birthTimeSec;       // APFS filesystem birthtime sec (chuẩn vòng đời Apple)
+@property (nonatomic, assign) uint32_t deltaVarSec;        // Độ lệch ngẫu nhiên của /var so với birthTime (s)
+@property (nonatomic, assign) uint32_t deltaMobileSec;     // Độ lệch ngẫu nhiên của /var/mobile so với birthTime (s)
+@property (nonatomic, assign) uint32_t deltaSandboxSec;    // Độ lệch ngẫu nhiên của Sandbox Zalo so với birthTime (s)
 @property (nonatomic, copy) NSString *bootSessionUUID;   // Boot session UUID
 @property (nonatomic, copy) NSString *spoofedIDFV;       // IDFV duy nhất
 @property (nonatomic, copy) NSString *spoofedIDFA;       // "00000000-0000-0000-0000-000000000000"

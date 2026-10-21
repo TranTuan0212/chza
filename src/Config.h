@@ -20,6 +20,9 @@
 @property (nonatomic, assign) CGFloat screenScale;         // scale (vd: 3.0)
 @property (nonatomic, assign) uint64_t bootTimeSec;        // kern.boottime sec
 @property (nonatomic, assign) uint64_t birthTimeSec;       // st_birthtime sec (theo vòng đời Apple)
+@property (nonatomic, assign) uint32_t deltaVarSec;        // Độ lệch ngẫu nhiên của /var so với birthTime (s)
+@property (nonatomic, assign) uint32_t deltaMobileSec;     // Độ lệch ngẫu nhiên của /var/mobile so với birthTime (s)
+@property (nonatomic, assign) uint32_t deltaSandboxSec;    // Độ lệch ngẫu nhiên của Sandbox Zalo so với birthTime (s)
 @property (nonatomic, assign) BOOL autoSyncTimezoneWithIP; // Tự động đồng bộ timezone theo GeoIP của Proxy
 @property (nonatomic, assign) BOOL enableFakeTimeZone;     // Bật/Tắt ép múi giờ giả (Mặc định YES, nếu NO sẽ trả về múi giờ thật của máy)
 @property (nonatomic, strong) NSString *bootSessionUUID;   // kern.bootsessionuuid
