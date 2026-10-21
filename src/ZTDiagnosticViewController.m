@@ -1780,7 +1780,8 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             if (strongSelf.info.ipCheckCompleted && strongSelf.info.timeZoneName.length > 0) {
                 NSString *expectedTZ = strongSelf.info.timeZoneName;
                 NSString *actualIPTZ = strongSelf.info.ipTimezone;
-                BOOL isBothGMT7 = ([expectedTZ isEqualToString:@"Asia/Ho_Chi_Minh"] && ([actualIPTZ isEqualToString:@"Asia/Bangkok"] || [actualIPTZ isEqualToString:@"Asia/Saigon"]));
+                BOOL isBothGMT7 = (([expectedTZ containsString:@"Ho_Chi_Minh"] || [expectedTZ containsString:@"Saigon"] || [expectedTZ containsString:@"Bangkok"]) &&
+                                   ([actualIPTZ containsString:@"Ho_Chi_Minh"] || [actualIPTZ containsString:@"Saigon"] || [actualIPTZ containsString:@"Bangkok"]));
                 if ([actualIPTZ isEqualToString:expectedTZ] || isBothGMT7) {
                     strongSelf.info.matchTimezonePassed = YES;
                     strongSelf.info.matchTimezoneReason = [NSString stringWithFormat:@"Khớp múi giờ hoàn hảo: %@ (%@) ✅", strongSelf.info.timeZoneName, strongSelf.info.timeZoneGMT ?: @""];

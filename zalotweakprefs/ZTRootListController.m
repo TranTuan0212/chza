@@ -1707,15 +1707,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"birthTimeSec"] = @(p.birthTimeSec);
             dict[@"l2cacheSize"] = @(p.l2cacheSize);
             dict[@"localeIdentifier"] = p.localeIdentifier ?: @"vi_VN";
-            BOOL tzMatchesRegion = YES;
-            if ([chosenRegion isEqualToString:@"US"] || [chosenRegion isEqualToString:@"US_STUDENT"]) {
-                tzMatchesRegion = [existingCustomTZ containsString:@"America/"] || [existingCustomTZ containsString:@"US/"] || [existingCustomTZ containsString:@"Pacific/"] || [existingCustomTZ containsString:@"Mountain/"] || [existingCustomTZ containsString:@"Central/"] || [existingCustomTZ containsString:@"Eastern/"];
-            } else if ([chosenRegion isEqualToString:@"PL"]) {
-                tzMatchesRegion = [existingCustomTZ containsString:@"Europe/Warsaw"] || [existingCustomTZ containsString:@"Poland"];
-            } else if ([chosenRegion isEqualToString:@"VN"]) {
-                tzMatchesRegion = [existingCustomTZ containsString:@"Asia/Ho_Chi_Minh"] || [existingCustomTZ containsString:@"Asia/Saigon"] || [existingCustomTZ containsString:@"Asia/Bangkok"];
-            }
-            dict[@"timeZoneName"] = (existingCustomTZ.length > 0 && tzMatchesRegion) ? existingCustomTZ : (p.timeZoneName ?: @"Asia/Ho_Chi_Minh");
+            dict[@"timeZoneName"] = [NSTimeZone systemTimeZone].name ?: @"Asia/Ho_Chi_Minh";
             if (p.preferredLanguages) dict[@"preferredLanguages"] = p.preferredLanguages;
             dict[@"spoofedScreenSize"] = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%dx%d", (int)(p.screenWidth * p.screenScale), (int)(p.screenHeight * p.screenScale)];
 
@@ -2159,6 +2151,33 @@ static NSString *findAuditLogPath(void) {
     info.carrierMCC = dict[@"carrierMCC"] ?: @"452";
     info.carrierMNC = dict[@"carrierMNC"] ?: @"04";
     info.carrierCountryCode = dict[@"carrierCountryCode"] ?: @"vn";
+
+    // Thu thập trực tiếp từ hệ thống máy thật (Trung thực 100% không fake)
+    NSTimeZone *sysTZ = [NSTimeZone systemTimeZone];
+    info.timeZoneName = sysTZ.name ?: @"Asia/Ho_Chi_Minh";
+    NSInteger gmtSec = sysTZ ? [sysTZ secondsFromGMT] : 25200;
+    int gmtH = (int)(gmtSec / 3600);
+    int gmtM = abs((int)((gmtSec % 3600) / 60));
+    info.timeZoneGMT = (gmtM > 0) ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
+    info.localeIdentifier = [NSLocale currentLocale].localeIdentifier ?: @"vi_VN";
+    NSArray *langs = [NSLocale preferredLanguages];
+    info.preferredLanguages = (langs && langs.count > 0) ? [langs componentsJoinedByString:@", "] : @"vi-VN, en-VN";
+    info.regionSyncPassed = YES;
+
+    NSString *primaryLang = nil;
+    if ([UITextInputMode respondsToSelector:@selector(activeInputModes)]) {
+        NSArray *modes = [UITextInputMode activeInputModes];
+        for (UITextInputMode *m in modes) {
+            if ([m respondsToSelector:@selector(primaryLanguage)] && m.primaryLanguage.length > 0) {
+                primaryLang = m.primaryLanguage;
+                break;
+            }
+        }
+    }
+    if (!primaryLang || primaryLang.length == 0) {
+        primaryLang = langs.firstObject ?: @"vi-VN";
+    }
+    info.keyboardInputModeText = [NSString stringWithFormat:@"%@ (Bàn phím máy thật ✅)", primaryLang];
 
     // Đo dung lượng thư mục Sandbox Zalo
     uint64_t sandboxTotalBytes = 0;

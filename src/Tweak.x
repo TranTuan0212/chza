@@ -2230,26 +2230,17 @@ static CTCarrier *get_fake_carrier(void) {
 %end
 
 // ==========================================
-// ĐỒNG BỘ VÙNG / QUỐC GIA: NSLocale & NSTimeZone
+// ĐỒNG BỘ VÙNG / QUỐC GIA: NSLocale (Múi Giờ NSTimeZone Thu Thập Thật Từ Máy)
 // ==========================================
 
 static NSLocale *s_cachedLocale = nil;
-static NSTimeZone *s_cachedTimeZone = nil;
 static __thread BOOL s_in_locale_hook = NO;
-static __thread BOOL s_in_tz_hook = NO;
 
 static void update_cached_locale_and_tz(void) {
-    if (s_in_locale_hook || s_in_tz_hook) return;
+    if (s_in_locale_hook) return;
     s_in_locale_hook = YES;
-    s_in_tz_hook = YES;
     NSString *locId = [ZTSettings sharedSettings].localeIdentifier ?: @"vi_VN";
-    NSString *tzName = [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh";
-    if ([[ZTSettings sharedSettings].regionMode isEqualToString:@"VN"] && ([tzName isEqualToString:@"Asia/Bangkok"] || [tzName isEqualToString:@"Asia/Saigon"])) {
-        tzName = @"Asia/Ho_Chi_Minh";
-    }
     s_cachedLocale = [NSLocale localeWithLocaleIdentifier:locId];
-    s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
-    s_in_tz_hook = NO;
     s_in_locale_hook = NO;
 }
 
@@ -2292,43 +2283,6 @@ static void update_cached_locale_and_tz(void) {
         logAudit(@"LOCALE-CHECK", [NSString stringWithFormat:@"Zalo đọc preferredLanguages -> [TRẢ VỀ %@]", [res componentsJoinedByString:@", "]]);
     }
     s_in_locale_hook = NO;
-    return res;
-}
-
-%end
-
-%hook NSTimeZone
-
-+ (NSTimeZone *)systemTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    NSTimeZone *res = s_cachedTimeZone ?: %orig;
-    s_in_tz_hook = NO;
-    return res;
-}
-
-+ (NSTimeZone *)localTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    NSTimeZone *res = s_cachedTimeZone ?: %orig;
-    s_in_tz_hook = NO;
-    return res;
-}
-
-+ (NSTimeZone *)defaultTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    if (!s_cachedTimeZone) {
-        update_cached_locale_and_tz();
-    }
-    NSTimeZone *res = s_cachedTimeZone ?: %orig;
-    s_in_tz_hook = NO;
     return res;
 }
 
@@ -5739,16 +5693,17 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
                 logAudit(@"CLONE-SYNC", @"[ZALO CLONE] Kích hoạt cơ chế chuẩn App Store: 1) Bẻ hướng C-layer CFBundleGetIdentifier & InfoDictionary -> vn.com.vng.zingalo | 2) Bẻ hướng NSBundle mainBundle -> vn.com.vng.zingalo | 3) Nạp APNs Device Token 32-byte SHA-256 | 4) Bỏ qua lỗi APNs iOS");
             }
 
-            // 1. Đồng bộ Vùng, Ngôn ngữ & Múi giờ
+            // 1. Đồng bộ Vùng, Ngôn ngữ & Múi giờ máy thật
             NSString *langStr = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
-            NSInteger gmtSec = s_cachedTimeZone ? [s_cachedTimeZone secondsFromGMT] : 25200;
+            NSTimeZone *sysTz = [NSTimeZone systemTimeZone];
+            NSInteger gmtSec = sysTz ? [sysTz secondsFromGMT] : 25200;
             int gmtH = (int)(gmtSec / 3600);
             int gmtM = abs((int)((gmtSec % 3600) / 60));
             NSString *gmtStr = gmtM > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
-            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🌍 [VÙNG / MÚI GIỜ] Region: %@ | Locale: %@ | TimeZone: %@ (%@) | Ngôn ngữ: [%@]",
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🌍 [VÙNG / MÚI GIỜ] Region: %@ | Locale: %@ | TimeZone: %@ (%@) [Thu thập thật từ máy] | Ngôn ngữ: [%@]",
                       s.regionMode ?: @"VN",
                       s.localeIdentifier ?: @"vi_VN",
-                      s.timeZoneName ?: @"Asia/Ho_Chi_Minh",
+                      sysTz.name ?: @"Asia/Ho_Chi_Minh",
                       gmtStr,
                       langStr]);
 

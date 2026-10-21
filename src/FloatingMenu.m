@@ -2585,19 +2585,16 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
 #endif
 
-    // 6. Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ
-    info.localeIdentifier = s.localeIdentifier ?: @"vi_VN";
-    if (s.enableFakeTimeZone) {
-        info.timeZoneName = s.timeZoneName ?: @"Asia/Ho_Chi_Minh";
-    } else {
-        info.timeZoneName = [NSTimeZone systemTimeZone].name ?: @"Asia/Ho_Chi_Minh";
-    }
-    NSTimeZone *tz = [NSTimeZone timeZoneWithName:info.timeZoneName];
-    NSInteger gmtSec = tz ? [tz secondsFromGMT] : 25200;
+    // 6. Đồng bộ Vùng, Múi Giờ & Ngôn Ngữ theo máy thật (Trung thực 100% không fake)
+    info.localeIdentifier = [NSLocale currentLocale].localeIdentifier ?: @"vi_VN";
+    NSTimeZone *sysTZ = [NSTimeZone systemTimeZone];
+    info.timeZoneName = sysTZ.name ?: @"Asia/Ho_Chi_Minh";
+    NSInteger gmtSec = sysTZ ? [sysTZ secondsFromGMT] : 25200;
     int gmtH = (int)(gmtSec / 3600);
     int gmtM = abs((int)((gmtSec % 3600) / 60));
     info.timeZoneGMT = (gmtM > 0) ? [NSString stringWithFormat:@"GMT%+d:%02d", gmtH, gmtM] : [NSString stringWithFormat:@"GMT%+d", gmtH];
-    info.preferredLanguages = [s.preferredLanguages componentsJoinedByString:@", "] ?: @"vi-VN, en-VN";
+    NSArray *langs = [NSLocale preferredLanguages];
+    info.preferredLanguages = (langs && langs.count > 0) ? [langs componentsJoinedByString:@", "] : @"vi-VN, en-VN";
 
     // Đồng bộ Bàn phím gõ (UITextInputMode)
     NSString *primaryLang = nil;
