@@ -5178,6 +5178,29 @@ static void swizzle_session_delegate_class(Class cls) {
 
 %end
 
+static void recursively_collect_dialog_texts(UIView *view, NSMutableArray<NSString *> *texts) {
+    if (!view) return;
+    if ([view isKindOfClass:[UILabel class]]) {
+        NSString *txt = ((UILabel *)view).text;
+        if (txt && [txt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
+            [texts addObject:[txt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+        }
+    } else if ([view isKindOfClass:[UIButton class]]) {
+        NSString *bt = [((UIButton *)view) titleForState:UIControlStateNormal];
+        if (bt && [bt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
+            [texts addObject:[NSString stringWithFormat:@"[Nút: %@]", [bt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]]];
+        }
+    } else if ([view isKindOfClass:[UITextView class]]) {
+        NSString *txt = ((UITextView *)view).text;
+        if (txt && [txt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
+            [texts addObject:[txt stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+        }
+    }
+    for (UIView *sub in view.subviews) {
+        recursively_collect_dialog_texts(sub, texts);
+    }
+}
+
 %hook UIViewController
 
 - (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
@@ -5189,6 +5212,38 @@ static void swizzle_session_delegate_class(Class cls) {
             if ([viewControllerToPresent isKindOfClass:[UIAlertController class]]) {
                 UIAlertController *ac = (UIAlertController *)viewControllerToPresent;
                 extraInfo = [NSString stringWithFormat:@" | Alert Title: '%@' | Message: '%@'", ac.title ?: @"", ac.message ?: @""];
+            } else if ([vcClass containsString:@"Dialog"] || [vcClass containsString:@"Alert"] || [vcClass containsString:@"Popup"] || [vcClass containsString:@"Notice"]) {
+                if (viewControllerToPresent.isViewLoaded) {
+                    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+                    recursively_collect_dialog_texts(viewControllerToPresent.view, texts);
+                    if (texts.count > 0) {
+                        extraInfo = [NSString stringWithFormat:@" | Dialog Content: [%@]", [texts componentsJoinedByString:@" | "]];
+                    }
+                } else {
+                    __weak UIViewController *weakVC = viewControllerToPresent;
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                        if (weakVC && weakVC.isViewLoaded) {
+                            NSMutableArray<NSString *> *texts = [NSMutableArray array];
+                            recursively_collect_dialog_texts(weakVC.view, texts);
+                            if (texts.count > 0) {
+                                NSString *content = [texts componentsJoinedByString:@" | "];
+                                logAudit(@"UI-DIALOG-CONTENT", [NSString stringWithFormat:@"📜 [NỘI DUNG DIALOG %@]: %@", NSStringFromClass([weakVC class]), content]);
+                                
+                                if ([content rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"khóa" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"tạm thời" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"vi phạm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"bảo mật" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"2020" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                                    [content rangeOfString:@"2028" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                                    NSArray *syms = [NSThread callStackSymbols];
+                                    NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+                                    logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PHÁT HIỆN DIALOG KHÓA ACC] %@ | Nội dung: %@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", NSStringFromClass([weakVC class]), content, stackTrace]);
+                                }
+                            }
+                        }
+                    });
+                }
             }
             logAudit(@"UI-PRESENT", [NSString stringWithFormat:@"📺 [HIỂN THỊ MÀN HÌNH / DIALOG] Controller: %@%@", vcClass, extraInfo]);
             
@@ -5261,18 +5316,20 @@ static void swizzle_session_delegate_class(Class cls) {
 
 - (void)postNotificationName:(NSNotificationName)aName object:(id)anObject userInfo:(NSDictionary *)aUserInfo {
     if ([ZTSettings sharedSettings].enableAuditLog && aName) {
-        if ([aName rangeOfString:@"deact" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"kick" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"ban" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"lock" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"accountstate" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"authfailure" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-            [aName rangeOfString:@"sessiontermi" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            
-            NSArray *syms = [NSThread callStackSymbols];
-            NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
-            logAudit(@"EVENT-DISPATCH", [NSString stringWithFormat:@"⚡ [EVENT TÀI KHOẢN/SECURITY]: '%@' | Object: %@ | UserInfo: %@\n   CALL STACK:\n   ↳ %@", aName, anObject, aUserInfo, stackTrace]);
+        if (![aName hasPrefix:@"_UI"] && ![aName hasPrefix:@"UI"] && ![aName hasPrefix:@"NS"]) {
+            if ([aName rangeOfString:@"deact" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"kick" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"ban" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"lock" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"accountstate" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"authfailure" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [aName rangeOfString:@"sessiontermi" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                
+                NSArray *syms = [NSThread callStackSymbols];
+                NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+                logAudit(@"EVENT-DISPATCH", [NSString stringWithFormat:@"⚡ [EVENT TÀI KHOẢN/SECURITY]: '%@' | Object: %@ | UserInfo: %@\n   CALL STACK:\n   ↳ %@", aName, anObject, aUserInfo, stackTrace]);
+            }
         }
     }
     %orig;
