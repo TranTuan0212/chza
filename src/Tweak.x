@@ -2703,6 +2703,30 @@ static pid_t my_fork(void) {
     return -1;
 }
 
+static int (*orig_connect)(int sockfd, const struct sockaddr *addr, socklen_t addrlen) = NULL;
+static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
+    if (addr && [ZTSettings sharedSettings].enableAuditLog) {
+        if (addr->sa_family == AF_INET) {
+            const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+            char ipStr[INET_ADDRSTRLEN] = {0};
+            inet_ntop(AF_INET, &(sin->sin_addr), ipStr, sizeof(ipStr));
+            uint16_t port = ntohs(sin->sin_port);
+            if (port != 53) {
+                logAudit(@"SOCKET-CONNECT", [NSString stringWithFormat:@"🔌 [TCP CONNECT] %s:%u (fd: %d)", ipStr, port, sockfd]);
+            }
+        } else if (addr->sa_family == AF_INET6) {
+            const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
+            char ipStr[INET6_ADDRSTRLEN] = {0};
+            inet_ntop(AF_INET6, &(sin6->sin6_addr), ipStr, sizeof(ipStr));
+            uint16_t port = ntohs(sin6->sin6_port);
+            if (port != 53) {
+                logAudit(@"SOCKET-CONNECT", [NSString stringWithFormat:@"🔌 [TCP IPv6 CONNECT] [%s]:%u (fd: %d)", ipStr, port, sockfd]);
+            }
+        }
+    }
+    return orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
+}
+
 
 
 // Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
@@ -5115,7 +5139,74 @@ static void swizzle_session_delegate_class(Class cls) {
 
 %end
 
+%hook UIAlertController
+
++ (instancetype)alertControllerWithTitle:(NSString *)title message:(NSString *)message preferredStyle:(UIAlertControllerStyle)preferredStyle {
+    UIAlertController *alert = %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        NSString *t = title ?: @"(Không có tiêu đề)";
+        NSString *m = message ?: @"(Không có nội dung)";
+        
+        logAudit(@"UI-ALERT", [NSString stringWithFormat:@"🚨 [POPUP ALERT] Tiêu đề: '%@' | Nội dung: '%@' | Style: %ld", t, m, (long)preferredStyle]);
+        
+        NSString *combined = [NSString stringWithFormat:@"%@ %@", t, m];
+        if ([combined rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"khóa" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"tạm thời" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"vi phạm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"bảo mật" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"2020" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"2028" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"quy định" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"bị đình chỉ" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [combined rangeOfString:@"chặn" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            
+            NSArray *syms = [NSThread callStackSymbols];
+            NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+            logAudit(@"ACCOUNT-LOCK-ALERT", [NSString stringWithFormat:@"🛑 [PHÁT HIỆN THÔNG BÁO KHÓA TÀI KHOẢN / BẢO MẬT]\n   Tiêu đề: %@\n   Nội dung: %@\n   TRUY VẾT NGUỒN PHÁT LỆNH (CALL STACK):\n   ↳ %@", t, m, stackTrace]);
+        }
+    }
+    return alert;
+}
+
+- (void)addAction:(UIAlertAction *)action {
+    %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog && action.title.length > 0) {
+        logAudit(@"UI-ALERT-ACTION", [NSString stringWithFormat:@"👉 [ALERT ACTION] Nút: '%@' (Style: %ld)", action.title, (long)action.style]);
+    }
+}
+
+%end
+
 %hook UIViewController
+
+- (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
+    if ([ZTSettings sharedSettings].enableAuditLog && viewControllerToPresent) {
+        NSString *vcClass = NSStringFromClass([viewControllerToPresent class]);
+        // Bỏ qua các controller nội bộ của Zalotweak để tránh spam log
+        if (![vcClass containsString:@"ZT"] && ![vcClass containsString:@"UIEditingOverlay"]) {
+            NSString *extraInfo = @"";
+            if ([viewControllerToPresent isKindOfClass:[UIAlertController class]]) {
+                UIAlertController *ac = (UIAlertController *)viewControllerToPresent;
+                extraInfo = [NSString stringWithFormat:@" | Alert Title: '%@' | Message: '%@'", ac.title ?: @"", ac.message ?: @""];
+            }
+            logAudit(@"UI-PRESENT", [NSString stringWithFormat:@"📺 [HIỂN THỊ MÀN HÌNH / DIALOG] Controller: %@%@", vcClass, extraInfo]);
+            
+            NSString *checkStr = [NSString stringWithFormat:@"%@ %@", vcClass, extraInfo];
+            if ([checkStr rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"khóa" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"deact" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"ban" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"kick" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                [checkStr rangeOfString:@"security" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                NSArray *syms = [NSThread callStackSymbols];
+                NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+                logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PRESENT MÀN HÌNH BẢO MẬT/KHÓA ACC] Controller: %@%@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", vcClass, extraInfo, stackTrace]);
+            }
+        }
+    }
+    %orig;
+}
 
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
@@ -5159,6 +5250,29 @@ static void swizzle_session_delegate_class(Class cls) {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [[ZTMenuManager sharedManager] presentMainMenuFrom:nil];
             });
+        }
+    }
+    %orig;
+}
+
+%end
+
+%hook NSNotificationCenter
+
+- (void)postNotificationName:(NSNotificationName)aName object:(id)anObject userInfo:(NSDictionary *)aUserInfo {
+    if ([ZTSettings sharedSettings].enableAuditLog && aName) {
+        if ([aName rangeOfString:@"deact" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"kick" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"ban" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"lock" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"accountstate" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"authfailure" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [aName rangeOfString:@"sessiontermi" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            
+            NSArray *syms = [NSThread callStackSymbols];
+            NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+            logAudit(@"EVENT-DISPATCH", [NSString stringWithFormat:@"⚡ [EVENT TÀI KHOẢN/SECURITY]: '%@' | Object: %@ | UserInfo: %@\n   CALL STACK:\n   ↳ %@", aName, anObject, aUserInfo, stackTrace]);
         }
     }
     %orig;
@@ -5296,7 +5410,13 @@ static NSArray<NSString *> *perform_zalo_security_modules_scan_now(void) {
             strcasestr(clsName, "Telemetry") ||
             strcasestr(clsName, "Fraud") ||
             strcasestr(clsName, "Tamper") ||
-            strcasestr(clsName, "Hook")) {
+            strcasestr(clsName, "Hook") ||
+            strcasestr(clsName, "Socket") ||
+            strcasestr(clsName, "Packet") ||
+            strcasestr(clsName, "Transport") ||
+            strcasestr(clsName, "Kick") ||
+            strcasestr(clsName, "Deact") ||
+            strcasestr(clsName, "Ban")) {
             [foundModules addObject:[NSString stringWithUTF8String:clsName]];
         }
     }
@@ -5384,6 +5504,7 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
         universal_hook_c_function("readlink", (void *)readlink, (void *)my_readlink, (void **)&orig_readlink);
         universal_hook_c_function("readlinkat", (void *)readlinkat, (void *)my_readlinkat, (void **)&orig_readlinkat);
         universal_hook_c_function("fork", (void *)fork, (void *)my_fork, (void **)&orig_fork);
+        universal_hook_c_function("connect", (void *)connect, (void *)my_connect, (void **)&orig_connect);
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
@@ -5400,11 +5521,12 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
                 { "readlink", (void *)my_readlink, (void **)&orig_readlink },
                 { "readlinkat", (void *)my_readlinkat, (void **)&orig_readlinkat },
                 { "fork", (void *)my_fork, (void **)&orig_fork },
+                { "connect", (void *)my_connect, (void **)&orig_connect },
                 { "uname", (void *)my_uname, (void **)&orig_uname },
                 { "sysctl", (void *)my_sysctl, (void **)&orig_sysctl },
                 { "sysctlbyname", (void *)my_sysctlbyname, (void **)&orig_sysctlbyname }
             };
-            rebind_symbols(inode64_rebs, 13);
+            rebind_symbols(inode64_rebs, 14);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
