@@ -5203,48 +5203,89 @@ static void recursively_collect_dialog_texts(UIView *view, NSMutableArray<NSStri
 
 %hook UIViewController
 
+- (void)viewDidLoad {
+    %orig;
+    if ([ZTSettings sharedSettings].enableAuditLog) {
+        NSString *clsName = NSStringFromClass([self class]);
+        if ([clsName rangeOfString:@"Deactivat" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [clsName rangeOfString:@"AccountLock" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+            [clsName rangeOfString:@"SecurityCheck" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+            
+            logAudit(@"DEACT-CONTROLLER", [NSString stringWithFormat:@"🛑 [DEACTIVATION VIEW LOADED]: %@", clsName]);
+            
+            unsigned int count = 0;
+            Ivar *ivars = class_copyIvarList([self class], &count);
+            NSMutableArray *ivarDetails = [NSMutableArray array];
+            for (unsigned int i = 0; i < count; i++) {
+                const char *name = ivar_getName(ivars[i]);
+                if (name) {
+                    NSString *nameStr = [NSString stringWithUTF8String:name];
+                    @try {
+                        id val = object_getIvar(self, ivars[i]);
+                        if (val) {
+                            [ivarDetails addObject:[NSString stringWithFormat:@"%@ = %@", nameStr, val]];
+                        }
+                    } @catch (NSException *e) {}
+                }
+            }
+            if (ivars) free(ivars);
+            if (ivarDetails.count > 0) {
+                logAudit(@"DEACT-IVARS", [NSString stringWithFormat:@"🔍 [IVARS CỦA %@]:\n   • %@", clsName, [ivarDetails componentsJoinedByString:@"\n   • "]]);
+            }
+            
+            NSArray *syms = [NSThread callStackSymbols];
+            logAudit(@"DEACT-CALLSTACK", [NSString stringWithFormat:@"↳ CALL STACK KÍCH HOẠT %@:\n   ↳ %@", clsName, [syms componentsJoinedByString:@"\n   ↳ "]]);
+        }
+    }
+}
+
 - (void)presentViewController:(UIViewController *)viewControllerToPresent animated:(BOOL)flag completion:(void (^)(void))completion {
     if ([ZTSettings sharedSettings].enableAuditLog && viewControllerToPresent) {
         NSString *vcClass = NSStringFromClass([viewControllerToPresent class]);
         // Bỏ qua các controller nội bộ của Zalotweak để tránh spam log
         if (![vcClass containsString:@"ZT"] && ![vcClass containsString:@"UIEditingOverlay"]) {
+            UIViewController *targetVC = viewControllerToPresent;
             NSString *extraInfo = @"";
-            if ([viewControllerToPresent isKindOfClass:[UIAlertController class]]) {
+            
+            if ([viewControllerToPresent isKindOfClass:[UINavigationController class]]) {
+                UINavigationController *nav = (UINavigationController *)viewControllerToPresent;
+                if (nav.topViewController) {
+                    targetVC = nav.topViewController;
+                    extraInfo = [NSString stringWithFormat:@" [TopVC: %@]", NSStringFromClass([targetVC class])];
+                }
+            } else if ([viewControllerToPresent isKindOfClass:[UIAlertController class]]) {
                 UIAlertController *ac = (UIAlertController *)viewControllerToPresent;
                 extraInfo = [NSString stringWithFormat:@" | Alert Title: '%@' | Message: '%@'", ac.title ?: @"", ac.message ?: @""];
-            } else if ([vcClass containsString:@"Dialog"] || [vcClass containsString:@"Alert"] || [vcClass containsString:@"Popup"] || [vcClass containsString:@"Notice"]) {
-                if (viewControllerToPresent.isViewLoaded) {
-                    NSMutableArray<NSString *> *texts = [NSMutableArray array];
-                    recursively_collect_dialog_texts(viewControllerToPresent.view, texts);
-                    if (texts.count > 0) {
-                        extraInfo = [NSString stringWithFormat:@" | Dialog Content: [%@]", [texts componentsJoinedByString:@" | "]];
-                    }
-                } else {
-                    __weak UIViewController *weakVC = viewControllerToPresent;
-                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                        if (weakVC && weakVC.isViewLoaded) {
-                            NSMutableArray<NSString *> *texts = [NSMutableArray array];
-                            recursively_collect_dialog_texts(weakVC.view, texts);
-                            if (texts.count > 0) {
-                                NSString *content = [texts componentsJoinedByString:@" | "];
-                                logAudit(@"UI-DIALOG-CONTENT", [NSString stringWithFormat:@"📜 [NỘI DUNG DIALOG %@]: %@", NSStringFromClass([weakVC class]), content]);
-                                
-                                if ([content rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"khóa" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"tạm thời" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"vi phạm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"bảo mật" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"2020" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                                    [content rangeOfString:@"2028" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                                    NSArray *syms = [NSThread callStackSymbols];
-                                    NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
-                                    logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PHÁT HIỆN DIALOG KHÓA ACC] %@ | Nội dung: %@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", NSStringFromClass([weakVC class]), content, stackTrace]);
-                                }
-                            }
-                        }
-                    });
-                }
             }
+            
+            __weak UIViewController *weakTarget = targetVC;
+            __weak UIViewController *weakPresented = viewControllerToPresent;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (weakTarget && weakTarget.isViewLoaded) {
+                    NSMutableArray<NSString *> *texts = [NSMutableArray array];
+                    recursively_collect_dialog_texts(weakTarget.view, texts);
+                    if (weakPresented && weakPresented != weakTarget && weakPresented.isViewLoaded) {
+                        recursively_collect_dialog_texts(weakPresented.view, texts);
+                    }
+                    if (texts.count > 0) {
+                        NSString *content = [texts componentsJoinedByString:@" | "];
+                        logAudit(@"UI-SCREEN-CONTENT", [NSString stringWithFormat:@"📜 [NỘI DUNG MÀN HÌNH %@]: %@", NSStringFromClass([weakTarget class]), content]);
+                        
+                        if ([content rangeOfString:@"vô hiệu" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"khóa" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"tạm thời" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"vi phạm" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"bảo mật" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"2020" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                            [content rangeOfString:@"2028" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                            NSArray *syms = [NSThread callStackSymbols];
+                            NSString *stackTrace = [syms componentsJoinedByString:@"\n   ↳ "];
+                            logAudit(@"ACCOUNT-LOCK-UI", [NSString stringWithFormat:@"🛑 [PHÁT HIỆN MÀN HÌNH KHÓA ACC] %@ | Nội dung: %@\n   CALL STACK LẦN VỀ HÀM PHÁT LỆNH:\n   ↳ %@", NSStringFromClass([weakTarget class]), content, stackTrace]);
+                        }
+                    }
+                }
+            });
+            
             logAudit(@"UI-PRESENT", [NSString stringWithFormat:@"📺 [HIỂN THỊ MÀN HÌNH / DIALOG] Controller: %@%@", vcClass, extraInfo]);
             
             NSString *checkStr = [NSString stringWithFormat:@"%@ %@", vcClass, extraInfo];
