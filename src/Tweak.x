@@ -2248,11 +2248,7 @@ static void update_cached_locale_and_tz(void) {
         tzName = @"Asia/Ho_Chi_Minh";
     }
     s_cachedLocale = [NSLocale localeWithLocaleIdentifier:locId];
-    if ([ZTSettings sharedSettings].enableFakeTimeZone) {
-        s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
-    } else {
-        s_cachedTimeZone = nil;
-    }
+    s_cachedTimeZone = [NSTimeZone timeZoneWithName:tzName];
     s_in_tz_hook = NO;
     s_in_locale_hook = NO;
 }
@@ -2304,15 +2300,36 @@ static void update_cached_locale_and_tz(void) {
 %hook NSTimeZone
 
 + (NSTimeZone *)systemTimeZone {
-    return %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    NSTimeZone *res = s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return res;
 }
 
 + (NSTimeZone *)localTimeZone {
-    return %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    NSTimeZone *res = s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return res;
 }
 
 + (NSTimeZone *)defaultTimeZone {
-    return %orig;
+    if (!is_tweak_active() || s_in_tz_hook) return %orig;
+    s_in_tz_hook = YES;
+    if (!s_cachedTimeZone) {
+        update_cached_locale_and_tz();
+    }
+    NSTimeZone *res = s_cachedTimeZone ?: %orig;
+    s_in_tz_hook = NO;
+    return res;
 }
 
 %end
