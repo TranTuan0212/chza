@@ -3029,15 +3029,38 @@ static inline BOOL should_fake_stat_path(const char *path) {
 }
 
 static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t base_birth) {
-    if (!path || base_birth == 0) return base_birth;
-    uint64_t delta_m = 180ULL + ((base_birth * 104729ULL) % 1800ULL) + (base_birth % 59ULL);
-    uint64_t delta_c = delta_m + 30ULL + ((base_birth * 1299709ULL) % 600ULL) + ((base_birth / 13ULL) % 43ULL);
-    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/tmp") != NULL || strstr(path, "/Preferences") != NULL) {
-        return base_birth + delta_c;
+    if (base_birth == 0) return base_birth;
+    if (!path || strcmp(path, "/") == 0 || strcmp(path, "/private") == 0) {
+        return base_birth; // Tầng 0: Gốc hệ thống Root filesystem
     }
-    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers/") != NULL || strstr(path, "/Application/") != NULL) {
-        return base_birth + delta_m;
+
+    // Tầng 1: /var hoặc /private/var (Thư mục dữ liệu hệ thống, khởi tạo sau root ~30-60s)
+    uint64_t delta_var = 45ULL + ((base_birth * 37ULL) % 30ULL);
+    if (strcmp(path, "/var") == 0 || strcmp(path, "/private/var") == 0) {
+        return base_birth + delta_var;
     }
+
+    // Tầng 2: /var/mobile hoặc /private/var/mobile (Thư mục người dùng mobile, tạo sau root ~90-150s)
+    uint64_t delta_mobile = delta_var + 65ULL + ((base_birth * 104729ULL) % 60ULL);
+    if (strcmp(path, "/var/mobile") == 0 || strcmp(path, "/private/var/mobile") == 0 ||
+        strcmp(path, "/var/mobile/") == 0 || strcmp(path, "/private/var/mobile/") == 0) {
+        return base_birth + delta_mobile;
+    }
+
+    // Tầng 3: Sandbox App Container / Library / Documents (Khởi tạo khi app cài đặt hoặc chạy)
+    uint64_t delta_sandbox = delta_mobile + 180ULL + ((base_birth * 1299709ULL) % 300ULL);
+    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/Preferences") != NULL) {
+        uint64_t delta_lib = delta_sandbox + 25ULL + ((base_birth / 13ULL) % 30ULL);
+        return base_birth + delta_lib;
+    }
+    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers") != NULL || strstr(path, "/Application") != NULL) {
+        return base_birth + delta_sandbox;
+    }
+
+    if (strstr(path, "mobile") != NULL) {
+        return base_birth + delta_mobile;
+    }
+
     return base_birth;
 }
 
@@ -3154,25 +3177,34 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
             time_t fake_mtime = 0, fake_ctime = 0;
             long nsec_b = 0, nsec_m = 0, nsec_c = 0;
             get_consistent_stat_times(effBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
-            size_t words = attrBufSize / sizeof(uint64_t);
-            uint64_t *ptr64 = (uint64_t *)attrBuf;
+            size_t words32 = attrBufSize / sizeof(uint32_t);
+            uint32_t *ptr32 = (uint32_t *)attrBuf;
             int timeIdx = 0;
-            for (size_t i = 0; i < words; ++i) {
-                if (ptr64[i] >= 1400000000ULL && ptr64[i] <= 2500000000ULL) {
+            for (size_t i = 0; i < words32; ++i) {
+                if (ptr32[i] >= 1400000000U && ptr32[i] <= 2500000000U) {
                     if (timeIdx == 0) {
-                        ptr64[i] = effBirth;
-                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = (uint64_t)nsec_b;
+                        ptr32[i] = (uint32_t)effBirth;
+                        if (sizeof(time_t) == 8 && i + 1 < words32 && ptr32[i + 1] == 0) {
+                            i++;
+                        }
+                        if (i + 1 < words32 && ptr32[i + 1] < 1000000000U) {
+                            ptr32[i + 1] = (uint32_t)nsec_b;
                         }
                     } else if (timeIdx == 1) {
-                        ptr64[i] = (uint64_t)fake_mtime;
-                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = (uint64_t)nsec_m;
+                        ptr32[i] = (uint32_t)fake_mtime;
+                        if (sizeof(time_t) == 8 && i + 1 < words32 && ptr32[i + 1] == 0) {
+                            i++;
+                        }
+                        if (i + 1 < words32 && ptr32[i + 1] < 1000000000U) {
+                            ptr32[i + 1] = (uint32_t)nsec_m;
                         }
                     } else {
-                        ptr64[i] = (uint64_t)fake_ctime;
-                        if (i + 1 < words && ptr64[i + 1] < 1000000000ULL) {
-                            ptr64[i + 1] = (uint64_t)nsec_c;
+                        ptr32[i] = (uint32_t)fake_ctime;
+                        if (sizeof(time_t) == 8 && i + 1 < words32 && ptr32[i + 1] == 0) {
+                            i++;
+                        }
+                        if (i + 1 < words32 && ptr32[i + 1] < 1000000000U) {
+                            ptr32[i + 1] = (uint32_t)nsec_c;
                         }
                     }
                     timeIdx++;
@@ -4786,7 +4818,7 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
                 }
             }
             if (alreadyClean) {
-                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] device_id từ ZAM3914 đã đồng bộ chuẩn 100%%: %@", devId]);
+                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"✨ [ZAID-RADAR] [ZAM3914 CHÍNH HÃNG] Zalo đã tự đọc stat hệ thống & tự sinh device_id chuẩn 100%% tự nhiên: %@ ✅", devId]);
                 return %orig;
             }
             time_t fake_mtime = 0, fake_ctime = 0;

@@ -2335,13 +2335,13 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     int r1 = stat("/var/mobile", &st_p1);
     int r2 = home ? stat([home UTF8String], &st_p2) : -1;
     int r3 = libDir ? stat([libDir UTF8String], &st_p3) : -1;
-    if (r1 == 0 && r2 == 0 && r3 == 0 && (!s.hasConfiguredProfile || expectedBirth == 0 || (uint64_t)st_p1.st_birthtimespec.tv_sec == expectedBirth)) {
+    if (r1 == 0 && r2 == 0 && r3 == 0 && (!s.hasConfiguredProfile || expectedBirth == 0 || ((uint64_t)st_p1.st_birthtimespec.tv_sec >= expectedBirth && (uint64_t)st_p1.st_birthtimespec.tv_sec <= expectedBirth + 3600ULL))) {
         uint64_t t1 = ((uint64_t)st_p1.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p1.st_birthtimespec.tv_nsec / 1000000ULL);
         uint64_t t2 = ((uint64_t)st_p2.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p2.st_birthtimespec.tv_nsec / 1000000ULL);
         uint64_t t3 = ((uint64_t)st_p3.st_birthtimespec.tv_sec) * 1000ULL + ((uint64_t)st_p3.st_birthtimespec.tv_nsec / 1000000ULL);
         info.hardwareDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", t1, t2, t3];
         BOOL isDistinct3 = (t1 > 0 && t2 > t1 && t3 > t2 && (t1 % 1000ULL) != 0);
-        info.deviceIdPassed = (s.hasConfiguredProfile && isDistinct3 && (expectedBirth == 0 || (uint64_t)st_p1.st_birthtimespec.tv_sec == expectedBirth));
+        info.deviceIdPassed = (s.hasConfiguredProfile && isDistinct3 && (expectedBirth == 0 || ((uint64_t)st_p1.st_birthtimespec.tv_sec >= expectedBirth && (uint64_t)st_p1.st_birthtimespec.tv_sec <= expectedBirth + 3600ULL)));
     } else if (s.hasConfiguredProfile && expectedBirth > 0) {
         uint64_t fakeBirth = expectedBirth;
         uint64_t delta_m = 180ULL + ((fakeBirth * 104729ULL) % 1800ULL) + (fakeBirth % 59ULL);
