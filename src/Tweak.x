@@ -2955,13 +2955,49 @@ static int my_fstatvfs(int fd, struct statvfs *buf) {
     return ret;
 }
 
-// Hook CacheDeleteCopyAvailableSpaceForVolume: Trả về NULL/0 chuẩn sandbox không entitlement như thiết bị thật uy tín (phiên trust)
+static uint64_t get_real_available_disk_space(void) {
+    struct statfs s;
+    if (statfs([NSHomeDirectory() UTF8String], &s) == 0) {
+        uint64_t bsize = s.f_bsize ? (uint64_t)s.f_bsize : 4096ULL;
+        uint64_t freeBytes = (uint64_t)s.f_bavail * bsize;
+        if (freeBytes > 0) return freeBytes;
+    }
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
+    NSNumber *freeSpace = attrs[NSFileSystemFreeSize];
+    if (freeSpace && [freeSpace unsignedLongLongValue] > 0) {
+        return [freeSpace unsignedLongLongValue];
+    }
+    return 18500000000ULL; // Fallback an toàn ~18.5 GB
+}
+
+// Hook CacheDeleteCopyAvailableSpaceForVolume: Trả về dung lượng bộ nhớ trống thực tế để chống báo lỗi 'Bộ nhớ đầy'
 static CFNumberRef (*orig_CacheDeleteCopyAvailableSpaceForVolume)(CFStringRef volume);
 static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume) {
-    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog) {
-        logAudit(@"DISK-CHECK", @"CacheDeleteCopyAvailableSpaceForVolume -> [CHUẨN SANDBOX APPLE: TRẢ VỀ NULL/0]");
+    if (!is_tweak_active()) {
+        return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
     }
-    return NULL;
+    if (orig_CacheDeleteCopyAvailableSpaceForVolume) {
+        CFNumberRef origNum = orig_CacheDeleteCopyAvailableSpaceForVolume(volume);
+        if (origNum) {
+            int64_t val = 0;
+            if (CFNumberGetValue(origNum, kCFNumberSInt64Type, &val) && val > 100000000LL) {
+                return origNum;
+            }
+            CFRelease(origNum);
+        }
+    }
+    uint64_t avail = 0;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.diskFreeSize > 0) {
+        avail = s.diskFreeSize;
+    } else {
+        avail = get_real_available_disk_space();
+    }
+    if (s.enableAuditLog) {
+        logAudit(@"DISK-CHECK", [NSString stringWithFormat:@"CacheDeleteCopyAvailableSpaceForVolume -> [TRẢ VỀ DUNG LƯỢNG TRỐNG KHẢ DỤNG %.2f GB]", (double)avail / (1024.0 * 1024.0 * 1024.0)]);
+    }
+    int64_t retVal = (int64_t)avail;
+    return CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt64Type, &retVal);
 }
 
 // Hook _CFCopySystemVersionDictionary & _CFCopyServerVersionDictionary để đồng bộ OS Build Version cho Firebase / Crashlytics
