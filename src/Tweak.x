@@ -5208,22 +5208,32 @@ static void log_controller_ivars_if_relevant(UIViewController *vc, NSString *lab
     
     unsigned int count = 0;
     Ivar *ivars = class_copyIvarList([vc class], &count);
+    if (!ivars) return;
     NSMutableArray *ivarDetails = [NSMutableArray array];
     for (unsigned int i = 0; i < count; i++) {
         const char *name = ivar_getName(ivars[i]);
-        if (name) {
-            NSString *nameStr = [NSString stringWithUTF8String:name];
-            @try {
-                id val = object_getIvar(vc, ivars[i]);
-                if (val && ![val isKindOfClass:[UIView class]] && ![val isKindOfClass:[UIViewController class]]) {
-                    NSString *valDesc = [val description];
-                    if (valDesc.length > 500) valDesc = [valDesc substringToIndex:500];
-                    [ivarDetails addObject:[NSString stringWithFormat:@"%@ = %@", nameStr, valDesc]];
-                }
-            } @catch (NSException *e) {}
-        }
+        const char *encoding = ivar_getTypeEncoding(ivars[i]);
+        if (!name || !encoding || encoding[0] != '@') continue;
+        
+        ptrdiff_t offset = ivar_getOffset(ivars[i]);
+        void *rawPtr = *(void **)((char *)(__bridge void *)vc + offset);
+        if (!rawPtr) continue;
+        
+        uintptr_t uPtr = (uintptr_t)rawPtr;
+        BOOL isTagged = (uPtr & (1ULL << 63)) != 0;
+        if (!isTagged && uPtr < 0x100000000ULL) continue;
+        
+        NSString *nameStr = [NSString stringWithUTF8String:name];
+        @try {
+            id val = (__bridge id)rawPtr;
+            if (val && ![val isKindOfClass:[UIView class]] && ![val isKindOfClass:[UIViewController class]]) {
+                NSString *valDesc = [val description];
+                if (valDesc.length > 500) valDesc = [valDesc substringToIndex:500];
+                [ivarDetails addObject:[NSString stringWithFormat:@"%@ = %@", nameStr, valDesc]];
+            }
+        } @catch (NSException *e) {}
     }
-    if (ivars) free(ivars);
+    free(ivars);
     if (ivarDetails.count > 0) {
         logAudit(@"VC-DATA-IVARS", [NSString stringWithFormat:@"🔍 [%@ IVARS CỦA %@]:\n   • %@", label ?: @"THÔNG SỐ", clsName, [ivarDetails componentsJoinedByString:@"\n   • "]]);
     }
