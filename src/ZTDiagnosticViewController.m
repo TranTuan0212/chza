@@ -714,9 +714,8 @@ static NSString *extract_carrier_brand(NSString *carrierStr) {
     NSString *lower = [carrierStr lowercaseString];
     if ([lower containsString:@"viettel"]) return @"Viettel";
     if ([lower containsString:@"vina"] || [lower containsString:@"itel"] || [lower containsString:@"wintel"]) return @"VINAPHONE";
-    if ([lower containsString:@"mobi"]) return @"VN MOBIFONE";
-    if ([lower containsString:@"vietnamobile"]) return @"Vietnamobile";
-    if ([lower containsString:@"gmobile"]) return @"Gmobile";
+    if ([lower containsString:@"mobi"] || [lower containsString:@"vietnamobile"]) return @"VN MOBIFONE";
+    if ([lower containsString:@"gmobile"]) return @"Viettel";
     if ([lower containsString:@"verizon"]) return @"Verizon";
     if ([lower containsString:@"at&t"]) return @"AT&T";
     if ([lower containsString:@"t-mobile"] || [lower containsString:@"mint"]) return @"T-Mobile";
@@ -3077,12 +3076,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         } else if ([cleanCarrier containsString:@"mobi"]) {
             carrierName = @"VN MOBIFONE";
             mnc = @"01";
-        } else if ([cleanCarrier containsString:@"vietnamobile"]) {
-            carrierName = @"Vietnamobile";
-            mnc = @"05";
-        } else if ([cleanCarrier containsString:@"gmobile"]) {
-            carrierName = @"Gmobile";
-            mnc = @"07";
+
         } else {
             carrierName = @"Viettel";
             mnc = @"04";

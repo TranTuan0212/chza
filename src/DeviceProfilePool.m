@@ -484,19 +484,9 @@ static NSString *detect_real_system_machine(void) {
         NSArray *defaultCarriers = @[
             @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
             @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
-            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
-            @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
-            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"}
+            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"}
         ];
-        NSArray *allCarriers = @[
-            @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
-            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
-            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
-            @{@"name": @"Vietnamobile",  @"mcc": @"452", @"mnc": @"05"},
-            @{@"name": @"Gmobile",       @"mcc": @"452", @"mnc": @"07"},
-            @{@"name": @"ITelecom",      @"mcc": @"452", @"mnc": @"08"},
-            @{@"name": @"Wintel",        @"mcc": @"452", @"mnc": @"09"}
-        ];
+        NSArray *allCarriers = defaultCarriers;
         NSDictionary *c = nil;
         if (preferredCarrier.length > 0) {
             NSString *cleanPref = [preferredCarrier lowercaseString];
@@ -506,11 +496,7 @@ static NSString *detect_real_system_machine(void) {
                 if ([cleanPref isEqualToString:cName] ||
                     ([cleanPref containsString:@"viettel"] && [cName isEqualToString:@"viettel"]) ||
                     ([cleanPref containsString:@"vina"] && [cName isEqualToString:@"vinaphone"]) ||
-                    ([cleanPref containsString:@"mobifone"] && [cName isEqualToString:@"vn mobifone"]) ||
-                    ([cleanPref containsString:@"vietnamobile"] && [cName isEqualToString:@"vietnamobile"]) ||
-                    ([cleanPref containsString:@"gmobile"] && [cName isEqualToString:@"gmobile"]) ||
-                    (([cleanPref containsString:@"itelecom"] || [cleanPref containsString:@"itecom"]) && [cName isEqualToString:@"itelecom"]) ||
-                    (([cleanPref containsString:@"wintel"] || [cleanPref containsString:@"reddi"]) && [cName isEqualToString:@"wintel"]) ||
+                    ([cleanPref containsString:@"mobi"] && [cName isEqualToString:@"vn mobifone"]) ||
                     [cleanPref isEqualToString:cMnc]) {
                     c = item;
                     break;

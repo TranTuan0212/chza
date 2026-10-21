@@ -1054,18 +1054,6 @@ UIViewController *ZTGetTopViewController(void) {
         } else if ([cleanPref containsString:@"mobi"]) {
             s.carrierName = @"VN MOBIFONE";
             s.carrierMNC = @"01";
-        } else if ([cleanPref containsString:@"vietnamobile"]) {
-            s.carrierName = @"Vietnamobile";
-            s.carrierMNC = @"05";
-        } else if ([cleanPref containsString:@"gmobile"]) {
-            s.carrierName = @"Gmobile";
-            s.carrierMNC = @"07";
-        } else if ([cleanPref containsString:@"itelecom"] || [cleanPref containsString:@"itecom"]) {
-            s.carrierName = @"ITelecom";
-            s.carrierMNC = @"08";
-        } else if ([cleanPref containsString:@"wintel"] || [cleanPref containsString:@"reddi"]) {
-            s.carrierName = @"Wintel";
-            s.carrierMNC = @"09";
         } else {
             s.carrierName = @"Viettel";
             s.carrierMNC = @"04";
@@ -1608,18 +1596,15 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
                        [p3 isEqualToString:@"084"] || [p3 isEqualToString:@"085"]) {
                 carrier = @"VINAPHONE";
                 mnc = @"02";
-            } else if ([p3 isEqualToString:@"087"]) {
-                carrier = @"ITelecom";
-                mnc = @"08";
-            } else if ([p3 isEqualToString:@"055"]) {
-                carrier = @"Wintel";
-                mnc = @"09";
+            } else if ([p3 isEqualToString:@"087"] || [p3 isEqualToString:@"055"]) {
+                carrier = @"VINAPHONE";
+                mnc = @"02";
             } else if ([p3 isEqualToString:@"092"] || [p3 isEqualToString:@"056"] || [p3 isEqualToString:@"058"] || [p3 isEqualToString:@"052"]) {
-                carrier = @"Vietnamobile";
-                mnc = @"05";
+                carrier = @"VN MOBIFONE";
+                mnc = @"01";
             } else if ([p3 isEqualToString:@"099"] || [p3 isEqualToString:@"059"]) {
-                carrier = @"Gmobile";
-                mnc = @"07";
+                carrier = @"Viettel";
+                mnc = @"04";
             }
         }
         if (outCarrierName) *outCarrierName = carrier;
@@ -1744,34 +1729,6 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIViewController *targetTop = get_top_view_controller() ?: top;
             [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"VN MOBIFONE" from:targetTop];
-        });
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Vietnamobile (452-05)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIViewController *targetTop = get_top_view_controller() ?: top;
-            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Vietnamobile" from:targetTop];
-        });
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Gmobile (452-07)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIViewController *targetTop = get_top_view_controller() ?: top;
-            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Gmobile" from:targetTop];
-        });
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM ITelecom (452-08)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIViewController *targetTop = get_top_view_controller() ?: top;
-            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"ITelecom" from:targetTop];
-        });
-    }]];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"🇻🇳 Wipe + Cắm SIM Wintel (452-09)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            UIViewController *targetTop = get_top_view_controller() ?: top;
-            [self startInAppDeepWipeSequenceWithRegion:@"VN" preferredCarrier:@"Wintel" from:targetTop];
         });
     }]];
 
