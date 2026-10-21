@@ -631,14 +631,8 @@ static void purge_all_zalo_keychain_safely(void) {
     ];
     NSArray *groups = @[
         @"",
-        @"CVB6BX97VM.group.keychain.vn.com.vng.zalo",
-        @"group.keychain.vn.com.vng.zalo",
         @"group.vn.com.vng.zingalo",
         @"group.noti.vn.com.vng.zingalo",
-        @"group.zcontacts.vn.com.vng.zingalo",
-        @"group.zfriends.vn.com.vng.zingalo",
-        @"group.zsettings.vn.com.vng.zingalo",
-        @"group.zgroups.vn.com.vng.zingalo",
         @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
@@ -646,10 +640,6 @@ static void purge_all_zalo_keychain_safely(void) {
     ];
 
     for (id secClass in secClasses) {
-        NSMutableDictionary *baseQuery = [NSMutableDictionary dictionary];
-        baseQuery[(__bridge id)kSecClass] = secClass;
-        SecItemDelete((__bridge CFDictionaryRef)baseQuery);
-
         for (NSString *grp in groups) {
             NSMutableDictionary *query = [NSMutableDictionary dictionary];
             query[(__bridge id)kSecClass] = secClass;
@@ -659,7 +649,7 @@ static void purge_all_zalo_keychain_safely(void) {
             SecItemDelete((__bridge CFDictionaryRef)query);
         }
     }
-    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain (bao gồm CVB6BX97VM.group.keychain.vn.com.vng.zalo) của Zalo!");
+    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain của Zalo!");
 }
 
 static void __attribute__((unused)) purge_webkit_data_safely(void) {
@@ -2703,30 +2693,6 @@ static pid_t my_fork(void) {
     return -1;
 }
 
-static int (*orig_connect)(int sockfd, const struct sockaddr *addr, socklen_t addrlen) = NULL;
-static int my_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    if (addr && [ZTSettings sharedSettings].enableAuditLog) {
-        if (addr->sa_family == AF_INET) {
-            const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
-            char ipStr[INET_ADDRSTRLEN] = {0};
-            inet_ntop(AF_INET, &(sin->sin_addr), ipStr, sizeof(ipStr));
-            uint16_t port = ntohs(sin->sin_port);
-            if (port != 53) {
-                logAudit(@"SOCKET-CONNECT", [NSString stringWithFormat:@"🔌 [TCP CONNECT] %s:%u (fd: %d)", ipStr, port, sockfd]);
-            }
-        } else if (addr->sa_family == AF_INET6) {
-            const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)addr;
-            char ipStr[INET6_ADDRSTRLEN] = {0};
-            inet_ntop(AF_INET6, &(sin6->sin6_addr), ipStr, sizeof(ipStr));
-            uint16_t port = ntohs(sin6->sin6_port);
-            if (port != 53) {
-                logAudit(@"SOCKET-CONNECT", [NSString stringWithFormat:@"🔌 [TCP IPv6 CONNECT] [%s]:%u (fd: %d)", ipStr, port, sockfd]);
-            }
-        }
-    }
-    return orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
-}
-
 
 
 // Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
@@ -3079,39 +3045,15 @@ static inline BOOL should_fake_stat_path(const char *path) {
 }
 
 static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t base_birth) {
-    if (base_birth == 0) return base_birth;
-    if (!path || strcmp(path, "/") == 0 || strcmp(path, "/private") == 0) {
-        return base_birth; // Tầng 0: Gốc hệ thống Root filesystem
+    if (!path || base_birth == 0) return base_birth;
+    uint64_t delta_m = 180ULL + ((base_birth * 104729ULL) % 1800ULL) + (base_birth % 59ULL);
+    uint64_t delta_c = delta_m + 30ULL + ((base_birth * 1299709ULL) % 600ULL) + ((base_birth / 13ULL) % 43ULL);
+    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/tmp") != NULL || strstr(path, "/Preferences") != NULL) {
+        return base_birth + delta_c;
     }
-
-    ZTSettings *s = [ZTSettings sharedSettings];
-    // Tầng 1: /var hoặc /private/var (Thư mục dữ liệu hệ thống, format sau root)
-    uint64_t delta_var = s.deltaVarSec > 0 ? (uint64_t)s.deltaVarSec : (45ULL + ((base_birth * 37ULL) % 45ULL));
-    if (strcmp(path, "/var") == 0 || strcmp(path, "/private/var") == 0) {
-        return base_birth + delta_var;
+    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers/") != NULL || strstr(path, "/Application/") != NULL) {
+        return base_birth + delta_m;
     }
-
-    // Tầng 2: /var/mobile hoặc /private/var/mobile (Thư mục người dùng mobile, tạo sau khi setup)
-    uint64_t delta_mobile = s.deltaMobileSec > 0 ? (uint64_t)s.deltaMobileSec : (delta_var + 65ULL + ((base_birth * 104729ULL) % 180ULL));
-    if (strcmp(path, "/var/mobile") == 0 || strcmp(path, "/private/var/mobile") == 0 ||
-        strcmp(path, "/var/mobile/") == 0 || strcmp(path, "/private/var/mobile/") == 0) {
-        return base_birth + delta_mobile;
-    }
-
-    // Tầng 3: Sandbox App Container / Library / Documents (Khởi tạo khi app cài đặt hoặc chạy)
-    uint64_t delta_sandbox = s.deltaSandboxSec > 0 ? (uint64_t)s.deltaSandboxSec : (delta_mobile + 180ULL + ((base_birth * 1299709ULL) % 600ULL));
-    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/Preferences") != NULL) {
-        uint64_t delta_lib = delta_sandbox + 25ULL + ((base_birth / 13ULL) % 30ULL);
-        return base_birth + delta_lib;
-    }
-    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers") != NULL || strstr(path, "/Application") != NULL) {
-        return base_birth + delta_sandbox;
-    }
-
-    if (strstr(path, "mobile") != NULL) {
-        return base_birth + delta_mobile;
-    }
-
     return base_birth;
 }
 
@@ -5629,7 +5571,6 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
         universal_hook_c_function("readlink", (void *)readlink, (void *)my_readlink, (void **)&orig_readlink);
         universal_hook_c_function("readlinkat", (void *)readlinkat, (void *)my_readlinkat, (void **)&orig_readlinkat);
         universal_hook_c_function("fork", (void *)fork, (void *)my_fork, (void **)&orig_fork);
-        universal_hook_c_function("connect", (void *)connect, (void *)my_connect, (void **)&orig_connect);
         universal_hook_c_function("stat", (void *)stat, (void *)my_stat, (void **)&orig_stat);
         universal_hook_c_function("lstat", (void *)lstat, (void *)my_lstat, (void **)&orig_lstat);
         universal_hook_c_function("fstat", (void *)fstat, (void *)my_fstat, (void **)&orig_fstat);
@@ -5646,12 +5587,11 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
                 { "readlink", (void *)my_readlink, (void **)&orig_readlink },
                 { "readlinkat", (void *)my_readlinkat, (void **)&orig_readlinkat },
                 { "fork", (void *)my_fork, (void **)&orig_fork },
-                { "connect", (void *)my_connect, (void **)&orig_connect },
                 { "uname", (void *)my_uname, (void **)&orig_uname },
                 { "sysctl", (void *)my_sysctl, (void **)&orig_sysctl },
                 { "sysctlbyname", (void *)my_sysctlbyname, (void **)&orig_sysctlbyname }
             };
-            rebind_symbols(inode64_rebs, 14);
+            rebind_symbols(inode64_rebs, 13);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {

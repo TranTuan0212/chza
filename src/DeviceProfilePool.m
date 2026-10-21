@@ -483,12 +483,10 @@ static NSString *detect_real_system_machine(void) {
 
         NSArray *defaultCarriers = @[
             @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
-            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
             @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"},
-            @{@"name": @"Vietnamobile",  @"mcc": @"452", @"mnc": @"05"},
-            @{@"name": @"Gmobile",       @"mcc": @"452", @"mnc": @"07"},
-            @{@"name": @"ITelecom",      @"mcc": @"452", @"mnc": @"08"},
-            @{@"name": @"Wintel",        @"mcc": @"452", @"mnc": @"09"}
+            @{@"name": @"VINAPHONE",     @"mcc": @"452", @"mnc": @"02"},
+            @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
+            @{@"name": @"VN MOBIFONE",   @"mcc": @"452", @"mnc": @"01"}
         ];
         NSArray *allCarriers = @[
             @{@"name": @"Viettel",       @"mcc": @"452", @"mnc": @"04"},
