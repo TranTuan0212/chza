@@ -496,6 +496,8 @@ static uint64_t get_real_disk_total_size(void) {
 // Forward declaration - hàm logAudit được định nghĩa ở phần sau
 static void logAudit(NSString *category, NSString *detail);
 
+static BOOL s_session_profile_locked = NO;
+
 @implementation ZTSettings
 
 + (instancetype)sharedSettings {
@@ -506,6 +508,7 @@ static void logAudit(NSString *category, NSString *detail);
     s_initializing = YES;
     instance = [[ZTSettings alloc] init];
     [instance loadSettings];
+    s_session_profile_locked = YES;
     s_initializing = NO;
     return instance;
 }
@@ -780,6 +783,18 @@ static void purge_entire_sandbox_safely(void) {
 - (void)loadSettings {
     NSString *path = getConfigPath();
     NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+    if (s_session_profile_locked) {
+        // Atomic Session Profile: Khi phiên đang hoạt động, chỉ cập nhật cờ hiển thị UI, tuyệt đối KHÔNG ghi đè thông số phần cứng / OS / MNO
+        if (dict) {
+            if (dict[@"showFloatingMenu"] != nil) {
+                self.showFloatingMenu = [dict[@"showFloatingMenu"] boolValue];
+            }
+            if (dict[@"enableAuditLog"] != nil) {
+                self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
+            }
+        }
+        return;
+    }
     if (!dict) {
         CFPreferencesAppSynchronize(CFSTR("com.sonhu.zalotweak"));
         CFDictionaryRef cfDict = CFPreferencesCopyMultiple(NULL, CFSTR("com.sonhu.zalotweak"), kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
@@ -830,14 +845,13 @@ static void purge_entire_sandbox_safely(void) {
         self.deltaMobileSec = [dict[@"deltaMobileSec"] unsignedIntValue] ?: 0;
         self.deltaSandboxSec = [dict[@"deltaSandboxSec"] unsignedIntValue] ?: 0;
         self.autoSyncTimezoneWithIP = dict[@"autoSyncTimezoneWithIP"] != nil ? [dict[@"autoSyncTimezoneWithIP"] boolValue] : YES;
-        self.enableFakeTimeZone = dict[@"enableFakeTimeZone"] != nil ? [dict[@"enableFakeTimeZone"] boolValue] : YES;
+        self.enableFakeTimeZone = dict[@"enableFakeTimeZone"] != nil ? [dict[@"enableFakeTimeZone"] boolValue] : NO;
         self.bootSessionUUID = dict[@"bootSessionUUID"] ?: @"";
         self.spoofedIDFV = dict[@"spoofedIDFV"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
         self.spoofedIDFA = dict[@"spoofedIDFA"] ?: @"00000000-0000-0000-0000-000000000000";
         self.profileId = dict[@"profileId"] ?: (self.hasConfiguredProfile ? [[NSUUID UUID] UUIDString] : @"");
-        self.diskTotalSize = [dict[@"diskTotalSize"] unsignedLongLongValue] ?: get_real_disk_total_size();
-        uint64_t defFree = (self.diskTotalSize > 0) ? (uint64_t)(self.diskTotalSize * 0.65) : 20000000000ULL;
-        self.diskFreeSize = [dict[@"diskFreeSize"] unsignedLongLongValue] ?: defFree;
+        self.diskTotalSize = (dict[@"diskTotalSize"] != nil) ? [dict[@"diskTotalSize"] unsignedLongLongValue] : 0ULL;
+        self.diskFreeSize = (dict[@"diskFreeSize"] != nil) ? [dict[@"diskFreeSize"] unsignedLongLongValue] : 0ULL;
         self.enableAuditLog = [dict[@"enableAuditLog"] boolValue];
         self.lastWipedIDFV = dict[@"lastWipedIDFV"] ?: @"";
         self.lastWipedIP = dict[@"lastWipedIP"] ?: @"";
@@ -867,6 +881,7 @@ static void purge_entire_sandbox_safely(void) {
             }
             self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"vi-VN", @"en-VN"];
         }
+        self.darwinKernelRelease = dict[@"darwinKernelRelease"] ?: @"";
         self.spoofedSerial = dict[@"spoofedSerial"] ?: @"";
         self.spoofedWifiMAC = dict[@"spoofedWifiMAC"] ?: @"";
         self.spoofedBluetoothMAC = dict[@"spoofedBluetoothMAC"] ?: @"";
@@ -958,6 +973,15 @@ static void purge_entire_sandbox_safely(void) {
             }
             [self saveSettings];
         }
+
+        if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
+            uint64_t tSandbox = self.birthTimeSec + (self.deltaSandboxSec > 0 ? (uint64_t)self.deltaSandboxSec : 180ULL);
+            uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
+            uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
+            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
+            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+        }
     } else {
         self.enabled = YES;
         self.showFloatingMenu = YES;
@@ -1038,6 +1062,7 @@ static void purge_entire_sandbox_safely(void) {
     dict[@"deviceName"] = self.deviceName;
     dict[@"systemVersion"] = self.systemVersion;
     dict[@"kernOsVersion"] = self.kernOsVersion;
+    if (self.darwinKernelRelease) dict[@"darwinKernelRelease"] = self.darwinKernelRelease;
     dict[@"ncpu"] = @(self.ncpu);
     dict[@"memsize"] = @(self.memsize);
     dict[@"screenWidth"] = @(self.screenWidth);
@@ -1124,6 +1149,10 @@ NSString *generate_random_mac(void) {
 }
 
 - (void)generateNewProfile {
+    if (s_session_profile_locked && !self.isShuttingDownForDeepWipe) {
+        logAudit(@"PROFILE-LOCK", @"🔒 [ATOMIC LOCK] Tiến trình đang hoạt động: Khóa cố định Profile, từ chối tạo mới trong cùng phiên!");
+        return;
+    }
     if (!ZTSecurityCheckLicenseFast()) {
         logAudit(@"SECURITY", @"[AUTH] ❌ Từ chối cấp Profile: Chưa kích hoạt bản quyền hợp lệ hoặc phát hiện can thiệp nhị phân!");
         return;
@@ -1144,6 +1173,7 @@ NSString *generate_random_mac(void) {
     self.screenScale = p.screenScale;
     self.systemVersion = p.systemVersion;
     self.kernOsVersion = p.kernOsVersion;
+    self.darwinKernelRelease = p.darwinKernelRelease;
     self.diskTotalSize = p.diskTotalSize;
     self.diskFreeSize = p.diskFreeSize;
     self.deviceName = p.deviceName;
@@ -1362,13 +1392,17 @@ static void logAudit(NSString *category, NSString *detail) {
 // ==========================================
 
 static NSString *get_darwin_kernel_release(NSString *sysVer) {
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.darwinKernelRelease && s.darwinKernelRelease.length > 0) {
+        return s.darwinKernelRelease;
+    }
     if (!sysVer || sysVer.length == 0) return @"21.6.0";
     NSArray<NSString *> *components = [sysVer componentsSeparatedByString:@"."];
     if (components.count == 0) return @"21.6.0";
     NSInteger major = [components[0] integerValue];
     NSInteger minor = components.count > 1 ? [components[1] integerValue] : 0;
     NSInteger darwinMajor = major + 6;
-    NSInteger darwinMinor = minor;
+    NSInteger darwinMinor = (major <= 16) ? 6 : minor;
     return [NSString stringWithFormat:@"%ld.%ld.0", (long)darwinMajor, (long)darwinMinor];
 }
 
@@ -1590,6 +1624,20 @@ static int my_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *
         return 0;
     }
 
+    if (strcmp(name, "kern.version") == 0) {
+        NSString *releaseStr = get_darwin_kernel_release(settings.systemVersion);
+        NSString *kVer = [NSString stringWithFormat:@"Darwin Kernel Version %@: root:xnu/RELEASE_ARM64", releaseStr ?: @"24.4.0"];
+        const char *val = [kVer UTF8String];
+        size_t val_len = strlen(val) + 1;
+        if (oldp && oldlenp) {
+            size_t copy_len = (*oldlenp < val_len) ? *oldlenp : val_len;
+            memcpy(oldp, val, copy_len);
+        }
+        if (oldlenp) *oldlenp = val_len;
+        s_in_sysctlbyname = NO;
+        return 0;
+    }
+
     if (strcmp(name, "hw.ncpu") == 0 ||
         strcmp(name, "hw.logicalcpu") == 0 ||
         strcmp(name, "hw.physicalcpu") == 0 ||
@@ -1735,6 +1783,9 @@ static int my_uname(struct utsname *buf) {
         NSString *releaseStr = get_darwin_kernel_release(settings.systemVersion);
         if (releaseStr.length > 0) {
             strlcpy(buf->release, [releaseStr UTF8String], sizeof(buf->release));
+            char verBuf[sizeof(buf->version)];
+            snprintf(verBuf, sizeof(verBuf), "Darwin Kernel Version %s: root:xnu/RELEASE_ARM64", [releaseStr UTF8String]);
+            strlcpy(buf->version, verBuf, sizeof(buf->version));
         }
     }
     s_in_uname = NO;
@@ -2263,81 +2314,15 @@ static void update_cached_locale_and_tz(void) {
 %hook NSTimeZone
 
 + (NSTimeZone *)systemTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    NSTimeZone *result = nil;
-    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        result = %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
-        }
-    } else {
-        if (!s_cachedTimeZone) {
-            update_cached_locale_and_tz();
-        }
-        result = s_cachedTimeZone ?: %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
-            int hours = (int)(gmtSec / 3600);
-            int mins = abs((int)((gmtSec % 3600) / 60));
-            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc systemTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-        }
-    }
-    s_in_tz_hook = NO;
-    return result;
+    return %orig;
 }
 
 + (NSTimeZone *)localTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    NSTimeZone *result = nil;
-    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        result = %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
-        }
-    } else {
-        if (!s_cachedTimeZone) {
-            update_cached_locale_and_tz();
-        }
-        result = s_cachedTimeZone ?: %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
-            int hours = (int)(gmtSec / 3600);
-            int mins = abs((int)((gmtSec % 3600) / 60));
-            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc localTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-        }
-    }
-    s_in_tz_hook = NO;
-    return result;
+    return %orig;
 }
 
 + (NSTimeZone *)defaultTimeZone {
-    if (!is_tweak_active() || s_in_tz_hook) return %orig;
-    s_in_tz_hook = YES;
-    NSTimeZone *result = nil;
-    if (![ZTSettings sharedSettings].enableFakeTimeZone) {
-        result = %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ GIỜ THẬT MÁY: %@] (Đang Tắt Fake Múi Giờ)", result ? result.name : @"(null)"]);
-        }
-    } else {
-        if (!s_cachedTimeZone) {
-            update_cached_locale_and_tz();
-        }
-        result = s_cachedTimeZone ?: %orig;
-        if ([ZTSettings sharedSettings].enableAuditLog) {
-            NSInteger gmtSec = result ? [result secondsFromGMT] : 25200;
-            int hours = (int)(gmtSec / 3600);
-            int mins = abs((int)((gmtSec % 3600) / 60));
-            NSString *gmtStr = mins > 0 ? [NSString stringWithFormat:@"GMT%+d:%02d", hours, mins] : [NSString stringWithFormat:@"GMT%+d", hours];
-            logAudit(@"TIMEZONE-CHECK", [NSString stringWithFormat:@"Zalo đọc defaultTimeZone -> [TRẢ VỀ %@ (%@)]", [ZTSettings sharedSettings].timeZoneName ?: @"Asia/Ho_Chi_Minh", gmtStr]);
-        }
-    }
-    s_in_tz_hook = NO;
-    return result;
+    return %orig;
 }
 
 %end
@@ -2970,17 +2955,13 @@ static int my_fstatvfs(int fd, struct statvfs *buf) {
     return ret;
 }
 
-// Hook CacheDeleteCopyAvailableSpaceForVolume để chống Zalo đọc dung lượng thật từ daemon 'deleted'
+// Hook CacheDeleteCopyAvailableSpaceForVolume: Trả về NULL/0 chuẩn sandbox không entitlement như thiết bị thật uy tín (phiên trust)
 static CFNumberRef (*orig_CacheDeleteCopyAvailableSpaceForVolume)(CFStringRef volume);
 static CFNumberRef my_CacheDeleteCopyAvailableSpaceForVolume(CFStringRef volume) {
-    if (is_tweak_active()) {
-        uint64_t fakeFree = [ZTSettings sharedSettings].diskFreeSize;
-        if (fakeFree > 0) {
-            logAudit(@"DISK-CHECK", [NSString stringWithFormat:@"CacheDeleteCopyAvailableSpaceForVolume -> [ĐÃ FAKE DUNG LƯỢNG TRỐNG %.1f GB]", (double)fakeFree / (1000.0 * 1000.0 * 1000.0)]);
-            return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &fakeFree);
-        }
+    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog) {
+        logAudit(@"DISK-CHECK", @"CacheDeleteCopyAvailableSpaceForVolume -> [CHUẨN SANDBOX APPLE: TRẢ VỀ NULL/0]");
     }
-    return orig_CacheDeleteCopyAvailableSpaceForVolume ? orig_CacheDeleteCopyAvailableSpaceForVolume(volume) : NULL;
+    return NULL;
 }
 
 // Hook _CFCopySystemVersionDictionary & _CFCopyServerVersionDictionary để đồng bộ OS Build Version cho Firebase / Crashlytics
@@ -3418,36 +3399,12 @@ static CFTypeRef my_MGCopyAnswer(CFStringRef property) {
         s_in_mg = NO;
         return settings.deviceModel ? (__bridge_retained CFTypeRef)[settings.deviceModel copy] : (orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL);
     }
-    if ([prop isEqualToString:@"TotalDiskCapacity"] || [prop isEqualToString:@"TotalDataCapacity"]) {
+    if ([prop isEqualToString:@"TotalDiskCapacity"] || [prop isEqualToString:@"TotalDataCapacity"] || [prop isEqualToString:@"TotalDataAvailable"] || [prop isEqualToString:@"DiskUsage"]) {
         s_in_mg = NO;
-        uint64_t total = settings.diskTotalSize > 0 ? settings.diskTotalSize : 64000000000ULL;
         if (settings.enableAuditLog) {
-            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(%@) -> [ĐÃ FAKE TOTAL DISK %llu bytes]", prop, total]);
+            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(%@) -> [CHUẨN SANDBOX APPLE: TRẢ VỀ NULL/0]", prop]);
         }
-        return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &total);
-    }
-    if ([prop isEqualToString:@"TotalDataAvailable"]) {
-        s_in_mg = NO;
-        uint64_t free = settings.diskFreeSize > 0 ? settings.diskFreeSize : 32000000000ULL;
-        if (settings.enableAuditLog) {
-            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(TotalDataAvailable) -> [ĐÃ FAKE FREE DISK %llu bytes]", free]);
-        }
-        return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &free);
-    }
-    if ([prop isEqualToString:@"DiskUsage"]) {
-        s_in_mg = NO;
-        uint64_t total = settings.diskTotalSize > 0 ? settings.diskTotalSize : 64000000000ULL;
-        uint64_t free = settings.diskFreeSize > 0 ? settings.diskFreeSize : 32000000000ULL;
-        if (settings.enableAuditLog) {
-            logAudit(@"RADAR-MG", [NSString stringWithFormat:@"MobileGestalt MGCopyAnswer(DiskUsage) -> [ĐÃ FAKE DISK DICTIONARY]"]);
-        }
-        NSDictionary *usage = @{
-            @"TotalDiskCapacity": @(total),
-            @"TotalDataCapacity": @(total),
-            @"TotalDataAvailable": @(free),
-            @"AmountDataReserved": @(1024ULL * 1024ULL * 512ULL)
-        };
-        return (__bridge_retained CFTypeRef)usage;
+        return NULL;
     }
 
     s_in_mg = NO;
@@ -3549,8 +3506,11 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
     if (!is_tweak_active()) {
         return attrs;
     }
-    NSMutableDictionary *fakeAttrs = attrs ? [attrs mutableCopy] : [NSMutableDictionary dictionary];
     ZTSettings *settings = [ZTSettings sharedSettings];
+    if (settings.diskTotalSize == 0 && settings.diskFreeSize == 0) {
+        return attrs;
+    }
+    NSMutableDictionary *fakeAttrs = attrs ? [attrs mutableCopy] : [NSMutableDictionary dictionary];
     if (settings.diskTotalSize > 0) {
         fakeAttrs[NSFileSystemSize] = @(settings.diskTotalSize);
     }
@@ -4851,265 +4811,19 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 %end
 
 // ==========================================
-// BỘ ĐỊNH TUYẾN, LÀM SẠCH VÀ REWRITE GÓI TIN MẠNG ZALO
+// BỘ ĐỊNH TUYẾN MẠNG: ZERO NETWORK INTERVENTION
 // ==========================================
 
 static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSData **ioBodyData) {
     if (!origReq || !is_tweak_active()) return origReq;
-    ZTSettings *settings = [ZTSettings sharedSettings];
-    if (settings.deviceMachine.length == 0) return origReq;
-
-    NSMutableURLRequest *mutReq = [origReq mutableCopy];
-    BOOL modified = NO;
-
-    // 1. Kiểm tra và bẻ lái Header extInfo (chỉ khử tên mã phần cứng thật nếu bị lọt, KHÔNG tự bịa dId hay sửa lệch mno với Body đã ký sig)
-    NSString *extInfo = [mutReq valueForHTTPHeaderField:@"extInfo"];
-    if (extInfo) {
-        NSMutableString *newExt = [extInfo mutableCopy];
-        BOOL extModified = NO;
-        NSString *realM = get_real_hardware_machine();
-        if (realM.length > 0 && settings.deviceMachine.length > 0 && [newExt containsString:realM]) {
-            if (![realM isEqualToString:settings.deviceMachine]) {
-                [newExt replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, newExt.length)];
-                extModified = YES;
-            }
-        }
-        NSString *mnoCode = (settings.carrierMCC.length > 0 && settings.carrierMNC.length > 0) ?
-            [NSString stringWithFormat:@"%@%@", settings.carrierMCC, settings.carrierMNC] : @"45204";
-        if ([newExt containsString:@"\"mno\":\"\""]) {
-            NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", mnoCode];
-            [newExt replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, newExt.length)];
-            extModified = YES;
-            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền MNO chuẩn ITU vào Header extInfo: %@", mnoCode]);
-        }
-        if (extModified) {
-            [mutReq setValue:newExt forHTTPHeaderField:@"extInfo"];
-            modified = YES;
-        }
-    }
-
-    // 2. Khử rò rỉ OS Build Version trong Crashlytics Header
-    NSString *crashBuild = [mutReq valueForHTTPHeaderField:@"X-Crashlytics-OS-Build-Version"];
-    if (crashBuild && settings.kernOsVersion.length > 0 && ![crashBuild isEqualToString:settings.kernOsVersion]) {
-        [mutReq setValue:settings.kernOsVersion forHTTPHeaderField:@"X-Crashlytics-OS-Build-Version"];
-        modified = YES;
-    }
-    NSString *crashDisplay = [mutReq valueForHTTPHeaderField:@"X-Crashlytics-OS-Display-Version"];
-    if (crashDisplay && settings.systemVersion.length > 0 && ![crashDisplay isEqualToString:settings.systemVersion]) {
-        [mutReq setValue:settings.systemVersion forHTTPHeaderField:@"X-Crashlytics-OS-Display-Version"];
-        modified = YES;
-    }
-
-    // 3. Khử rò rỉ ngôn ngữ Tiếng Việt trong Header Accept-Language nếu Profile là Mỹ / Quốc tế
-    NSString *acceptLang = [mutReq valueForHTTPHeaderField:@"Accept-Language"];
-    if (acceptLang) {
-        BOOL isUSRegion = [settings.regionMode isEqualToString:@"US"] || [settings.regionMode isEqualToString:@"US_STUDENT"];
-        BOOL isPLRegion = [settings.regionMode isEqualToString:@"PL"];
-        if (isUSRegion && ([acceptLang containsString:@"vi-VN"] || [acceptLang containsString:@"vi;"] || [acceptLang containsString:@"vi,"])) {
-            [mutReq setValue:@"en-US,en;q=0.9" forHTTPHeaderField:@"Accept-Language"];
-            modified = YES;
-            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ tiếng Việt trong Accept-Language: '%@' -> [ĐÃ CHUẨN HOÁ] en-US,en;q=0.9", acceptLang]);
-        } else if (isPLRegion && ([acceptLang containsString:@"vi-VN"] || [acceptLang containsString:@"vi;"])) {
-            [mutReq setValue:@"pl-PL,pl;q=0.9,en;q=0.8" forHTTPHeaderField:@"Accept-Language"];
-            modified = YES;
-            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ tiếng Việt trong Accept-Language: '%@' -> [ĐÃ CHUẨN HOÁ] pl-PL,pl;q=0.9,en;q=0.8", acceptLang]);
-        }
-    }
-
-    // 4. Giám sát & đối chiếu Header zcid do Zalo tự đọc thông số máy mới sinh ra
-    NSString *hdrZcid = [mutReq valueForHTTPHeaderField:@"zcid"];
-    if (hdrZcid && hdrZcid.length > 0) {
-        if (settings.lastWipedZCID.length > 0 && [settings.lastWipedZCID isEqualToString:hdrZcid]) {
-            logAudit(@"ZCID-AUDIT", [NSString stringWithFormat:@"⚠️ [CẢNH BÁO DEBUG] zcid BỊ TRÙNG VỚI NICK TRƯỚC: %@... (Chưa xoay được zcid)", [hdrZcid substringToIndex:MIN(24, (int)hdrZcid.length)]]);
-        } else if (![settings.currentZCID isEqualToString:hdrZcid]) {
-            settings.currentZCID = hdrZcid;
-            [settings saveSettings];
-            logAudit(@"ZCID-AUDIT", [NSString stringWithFormat:@"✨ [ZCID CHÍNH HÃNG MỚI] Zalo đã tự đọc thông số máy mới & tự sinh zcid: %@... (Độ dài: %lu hex chars) ✅", [hdrZcid substringToIndex:MIN(24, (int)hdrZcid.length)], (unsigned long)hdrZcid.length]);
-        }
-    }
-
-    // 5. Khử rò rỉ model máy thật, múi giờ và ngôn ngữ trong Body nếu gửi lên centralized.zaloapp.com
-    NSString *urlStr = origReq.URL.absoluteString ?: @"";
-    if ([urlStr containsString:@"centralized.zaloapp.com"]) {
-        NSData *body = (ioBodyData && *ioBodyData) ? *ioBodyData : mutReq.HTTPBody;
-        if (body && body.length > 0) {
-            NSString *bodyStr = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
-            // TUYỆT ĐỐI KHÔNG sửa body nếu request đã ký chữ ký điện tử (chứa sig= hoặc "sig":)
-            // Việc thay đổi bất kỳ ký tự nào sau khi Zalo đã ký sẽ làm hỏng hash -> server trả về error -31 "Invalid signature"
-            if (bodyStr && bodyStr.length > 0 && ![bodyStr containsString:@"sig="] && ![bodyStr containsString:@"\"sig\":"]) {
-                NSString *realM = get_real_hardware_machine();
-                BOOL bodyModified = NO;
-                NSMutableString *mutBody = [bodyStr mutableCopy];
-                if (realM.length > 0 && [mutBody containsString:realM]) {
-                    if (![realM isEqualToString:settings.deviceMachine]) {
-                        [mutBody replaceOccurrencesOfString:realM withString:settings.deviceMachine options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ model máy thật '%@' trong body -> [ĐÃ FAKE] %@", realM, settings.deviceMachine]);
-                    }
-                }
-
-                // Chuẩn hoá múi giờ gửi lên centralized.zaloapp.com telemetry
-                BOOL isUSRegion = [settings.regionMode isEqualToString:@"US"] || [settings.regionMode isEqualToString:@"US_STUDENT"];
-                if ((settings.enableFakeTimeZone || isUSRegion) && settings.timeZoneName.length > 0) {
-                    NSString *targetTZ = settings.timeZoneName;
-                    NSString *escapedTargetTZ = [targetTZ stringByReplacingOccurrencesOfString:@"/" withString:@"\\/"];
-                    // 1. Raw JSON
-                    if ([mutBody containsString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\""] || [mutBody containsString:@"\"tz\":\"Asia/Ho_Chi_Minh\""]) {
-                        [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia\\/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", escapedTargetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
-                        [mutBody replaceOccurrencesOfString:@"\"tz\":\"Asia/Ho_Chi_Minh\"" withString:[NSString stringWithFormat:@"\"tz\":\"%@\"", targetTZ] options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                        logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã khử rò rỉ múi giờ VN 'Asia/Ho_Chi_Minh' trong centralized telemetry -> [ĐÃ FAKE] %@", targetTZ]);
-                    }
-                    // 2. URL-encoded (%22tz%22%3A%22...%22)
-                    NSRange encTzRange = [mutBody rangeOfString:@"%22tz%22%3A%22(.*?)%22" options:NSRegularExpressionSearch];
-                    if (encTzRange.location != NSNotFound) {
-                        NSString *matchedTzParam = [mutBody substringWithRange:encTzRange];
-                        if ([matchedTzParam containsString:@"Asia"] || [matchedTzParam containsString:@"Ho%5FChi%5FMinh"] || [matchedTzParam containsString:@"Ho_Chi_Minh"]) {
-                            NSString *encTargetTZ = [targetTZ stringByReplacingOccurrencesOfString:@"/" withString:@"%5C%2F"];
-                            NSString *repTzParam = [NSString stringWithFormat:@"%%22tz%%22%%3A%%22%@%%22", encTargetTZ];
-                            [mutBody replaceOccurrencesOfString:matchedTzParam withString:repTzParam options:0 range:NSMakeRange(0, mutBody.length)];
-                            bodyModified = YES;
-                            logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã chuẩn hóa múi giờ URL-encoded trong centralized -> [ĐÃ FAKE] %@", targetTZ]);
-                        }
-                    }
-                }
-
-                // Đồng bộ độ phân giải màn hình (ss / screenSize)
-                if (settings.spoofedScreenSize.length > 0) {
-                    NSRange ssFormRange = [mutBody rangeOfString:@"screenSize=\\d+x\\d+" options:NSRegularExpressionSearch];
-                    if (ssFormRange.location != NSNotFound) {
-                        NSString *oldSs = [mutBody substringWithRange:ssFormRange];
-                        NSString *newSs = [NSString stringWithFormat:@"screenSize=%@", settings.spoofedScreenSize];
-                        if (![oldSs isEqualToString:newSs]) {
-                            [mutBody replaceOccurrencesOfString:oldSs withString:newSs options:0 range:NSMakeRange(0, mutBody.length)];
-                            bodyModified = YES;
-                        }
-                    }
-                    NSRange ssEncRange = [mutBody rangeOfString:@"%22ss%22%3A%22\\d+x\\d+%22" options:NSRegularExpressionSearch];
-                    if (ssEncRange.location != NSNotFound) {
-                        NSString *oldSs = [mutBody substringWithRange:ssEncRange];
-                        NSString *newSs = [NSString stringWithFormat:@"%%22ss%%22%%3A%%22%@%%22", settings.spoofedScreenSize];
-                        if (![oldSs isEqualToString:newSs]) {
-                            [mutBody replaceOccurrencesOfString:oldSs withString:newSs options:0 range:NSMakeRange(0, mutBody.length)];
-                            bodyModified = YES;
-                        }
-                    }
-                }
-
-                if (isUSRegion) {
-                    if ([mutBody containsString:@"\"lang\":\"vi-VN\""] || [mutBody containsString:@"\"lang\":\"vi_VN\""]) {
-                        [mutBody replaceOccurrencesOfString:@"\"lang\":\"vi-VN\"" withString:@"\"lang\":\"en-US\"" options:0 range:NSMakeRange(0, mutBody.length)];
-                        [mutBody replaceOccurrencesOfString:@"\"lang\":\"vi_VN\"" withString:@"\"lang\":\"en-US\"" options:0 range:NSMakeRange(0, mutBody.length)];
-                        bodyModified = YES;
-                        logAudit(@"OUTBOUND-SANITIZE", @"Đã khử rò rỉ ngôn ngữ vi-VN trong centralized telemetry -> [ĐÃ FAKE] en-US");
-                    }
-                }
-
-                NSString *mnoCode = (settings.carrierMCC.length > 0 && settings.carrierMNC.length > 0) ?
-                    [NSString stringWithFormat:@"%@%@", settings.carrierMCC, settings.carrierMNC] : @"45204";
-                if ([mutBody containsString:@"\"mno\":\"\""]) {
-                    NSString *mnoStr = [NSString stringWithFormat:@"\"mno\":\"%@\"", mnoCode];
-                    [mutBody replaceOccurrencesOfString:@"\"mno\":\"\"" withString:mnoStr options:0 range:NSMakeRange(0, mutBody.length)];
-                    bodyModified = YES;
-                    logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã điền MNO chuẩn ITU vào centralized telemetry body: %@", mnoCode]);
-                }
-
-                // Tạo độ trễ tự nhiên giữa firstTimeInstallApp và firstTimeOpenApp nếu chúng trùng khít ms
-                if ([mutBody containsString:@"\"firstTimeInstallApp\""] && [mutBody containsString:@"\"firstTimeOpenApp\""]) {
-                    NSRange rOpen = [mutBody rangeOfString:@"\"firstTimeOpenApp\":\"(\\d+)\"" options:NSRegularExpressionSearch];
-                    NSRange rInst = [mutBody rangeOfString:@"\"firstTimeInstallApp\":\"(\\d+)\"" options:NSRegularExpressionSearch];
-                    if (rOpen.location != NSNotFound && rInst.location != NSNotFound) {
-                        NSString *sOpen = [mutBody substringWithRange:rOpen];
-                        NSString *sInst = [mutBody substringWithRange:rInst];
-                        NSScanner *scanO = [NSScanner scannerWithString:sOpen];
-                        NSScanner *scanI = [NSScanner scannerWithString:sInst];
-                        [scanO scanUpToCharactersFromSet:[NSCharacterSet decimalDigitCharacterSet] intoString:nil];
-                        [scanI scanUpToCharactersFromSet:[NSCharacterSet decimalDigitCharacterSet] intoString:nil];
-                        unsigned long long tOpen = 0, tInst = 0;
-                        if ([scanO scanUnsignedLongLong:&tOpen] && [scanI scanUnsignedLongLong:&tInst]) {
-                            if (tOpen == tInst && tOpen > 1000000000000ULL) {
-                                unsigned long long offset = 35000ULL + (unsigned long long)arc4random_uniform(40000);
-                                unsigned long long naturalInstall = tOpen - offset;
-                                NSString *oldInstField = [NSString stringWithFormat:@"\"firstTimeInstallApp\":\"%llu\"", tInst];
-                                NSString *newInstField = [NSString stringWithFormat:@"\"firstTimeInstallApp\":\"%llu\"", naturalInstall];
-                                [mutBody replaceOccurrencesOfString:oldInstField withString:newInstField options:0 range:NSMakeRange(0, mutBody.length)];
-                                bodyModified = YES;
-                                logAudit(@"OUTBOUND-SANITIZE", [NSString stringWithFormat:@"Đã tạo độ trễ tự nhiên: firstTimeInstallApp lùi %llus so với firstTimeOpenApp", offset / 1000ULL]);
-                            }
-                        }
-                    }
-                }
-
-                if (bodyModified) {
-                    NSData *newBody = [mutBody dataUsingEncoding:NSUTF8StringEncoding];
-                    if (ioBodyData && *ioBodyData) {
-                        *ioBodyData = newBody;
-                    } else {
-                        mutReq.HTTPBody = newBody;
-                    }
-                    modified = YES;
-                }
-            }
-        }
-    }
-
-    return modified ? mutReq : origReq;
+    // ZERO NETWORK INTERVENTION:
+    // Toàn bộ thông số thiết bị đã được chuẩn hóa tự nhiên từ các API gốc của OS (UIDevice, uname, sysctl, NSLocale, CTCarrier...).
+    // Tuyệt đối không can thiệp, bóc tách hay sửa đổi header, body hoặc mốc thời gian của gói tin mạng!
+    return origReq;
 }
 
 static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, NSData *origRespData) {
-    if (!origRespData || origRespData.length == 0 || !is_tweak_active()) return origRespData;
-    NSString *url = req.URL.absoluteString ?: @"";
-    if (![url containsString:@"register.zaloapp.com/api/helper/getDefaultCountry"]) return origRespData;
-
-    ZTSettings *s = [ZTSettings sharedSettings];
-    if (s.carrierMCC.length == 0 || s.carrierMNC.length == 0) return origRespData;
-
-    NSError *err = nil;
-    id jsonObj = [NSJSONSerialization JSONObjectWithData:origRespData options:NSJSONReadingMutableContainers error:&err];
-    if ([jsonObj isKindOfClass:[NSDictionary class]]) {
-        NSMutableDictionary *root = [jsonObj isKindOfClass:[NSMutableDictionary class]] ? (NSMutableDictionary *)jsonObj : [jsonObj mutableCopy];
-        id dataObj = root[@"data"];
-        if ([dataObj isKindOfClass:[NSDictionary class]]) {
-            NSMutableDictionary *dataDict = [dataObj isKindOfClass:[NSMutableDictionary class]] ? (NSMutableDictionary *)dataObj : [dataObj mutableCopy];
-            id mccObj = dataDict[@"mcc_mnc"];
-            NSMutableDictionary *mccDict = [mccObj isKindOfClass:[NSDictionary class]] ? [mccObj mutableCopy] : [NSMutableDictionary dictionary];
-
-            NSString *oldMcc = [NSString stringWithFormat:@"%@", mccDict[@"mcc"] ?: @""];
-            NSString *oldMnc = [NSString stringWithFormat:@"%@", mccDict[@"mnc"] ?: @""];
-
-            // Nếu đang Tắt Fake Múi Giờ và GeoIP máy chủ báo khác quốc gia với SIM Profile,
-            // giữ nguyên phản hồi gốc của Server để tránh xung đột cờ quốc gia giữa Client và Server!
-            if (oldMcc.length > 0 && ![oldMcc isEqualToString:s.carrierMCC] && !s.enableFakeTimeZone) {
-                logAudit(@"MNC-NORMALIZER", [NSString stringWithFormat:@"⚠️ GeoIP Server trả về MCC '%@' (MNC '%@') khác SIM Profile %@/%@ -> [GIỮ NGUYÊN GEOIP SERVER ĐỂ TRÁNH LỆCH PHA]", oldMcc, oldMnc, s.carrierMCC, s.carrierMNC]);
-                return origRespData;
-            }
-
-            mccDict[@"mcc"] = s.carrierMCC;
-            mccDict[@"mnc"] = s.carrierMNC;
-
-            if ([s.regionMode isEqualToString:@"US"] || [s.regionMode isEqualToString:@"US_STUDENT"]) {
-                mccDict[@"isocountrycodes"] = @"US/USA";
-                mccDict[@"countrycode"] = @(1);
-                mccDict[@"country"] = @"United States";
-            } else if ([s.regionMode isEqualToString:@"PL"]) {
-                mccDict[@"isocountrycodes"] = @"PL/POL";
-                mccDict[@"countrycode"] = @(48);
-                mccDict[@"country"] = @"Poland";
-            } else {
-                mccDict[@"isocountrycodes"] = @"VN/VNM";
-                mccDict[@"countrycode"] = @(84);
-                mccDict[@"country"] = @"Viet Nam";
-            }
-            dataDict[@"mcc_mnc"] = mccDict;
-            root[@"data"] = dataDict;
-
-            NSData *newData = [NSJSONSerialization dataWithJSONObject:root options:0 error:nil];
-            if (newData) {
-                logAudit(@"MNC-NORMALIZER", [NSString stringWithFormat:@"getDefaultCountry GeoIP mnc '%@' -> [ĐÃ ÉP KHỚP SIM PROFILE] %@/%@ (%@)", oldMnc, s.carrierMCC, s.carrierMNC, s.carrierName]);
-                return newData;
-            }
-        }
-    }
+    // Không can thiệp phản hồi mạng từ server
     return origRespData;
 }
 
@@ -5476,29 +5190,8 @@ static void swizzle_session_delegate_class(Class cls) {
         }
         if ([ZTSettings sharedSettings].justGeneratedColdBoot) {
             [ZTSettings sharedSettings].justGeneratedColdBoot = NO;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                UIViewController *presenter = ZTGetTopViewController() ?: self;
-                if (!presenter || !presenter.view.window) return;
-                ZTSettings *s = [ZTSettings sharedSettings];
-                NSString *rDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
-                                  ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
-                                  ([s.regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
-                NSString *welcomeMsg = [NSString stringWithFormat:
-                    @"🎉 THIẾT BỊ MỚI TINH ĐÃ KÍCH HOẠT!\n\n"
-                    @"• Tên máy: %@\n"
-                    @"• SIM & Vùng: %@ (%@ - MCC %@)\n"
-                    @"• IDFV Mới: %@\n"
-                    @"• IDFA: 00000000-0000-0000-0000-000000000000 (Apple ATT Denied)\n"
-                    @"• PushKit VoIP: Sẵn sàng nhận token cuộc gọi ⏳\n"
-                    @"• Định Danh zcid: Tự sinh mới khi gửi gói tin đầu ⏳\n\n"
-                    @"🟢 Môi trường sạch sẽ 100%%, sẵn sàng Reg Acc an toàn!",
-                    s.deviceName, rDesc, s.carrierName, s.carrierMCC, s.spoofedIDFV];
-                
-                UIAlertController *wAlert = [UIAlertController alertControllerWithTitle:@"⚡ ZALOTWEAK COLD-BOOT"
-                                                                                message:welcomeMsg
-                                                                         preferredStyle:UIAlertControllerStyleAlert];
-                [wAlert addAction:[UIAlertAction actionWithTitle:@"Bắt Đầu Sử Dụng" style:UIAlertActionStyleDefault handler:nil]];
-                [presenter presentViewController:wAlert animated:YES completion:nil];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [[ZTMenuManager sharedManager] showColdBootBanner];
             });
         }
     }
@@ -5769,9 +5462,12 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
                 { "fstatvfs", (void *)my_fstatvfs, (void **)&orig_fstatvfs },
                 { "readlink", (void *)my_readlink, (void **)&orig_readlink },
                 { "readlinkat", (void *)my_readlinkat, (void **)&orig_readlinkat },
-                { "fork", (void *)my_fork, (void **)&orig_fork }
+                { "fork", (void *)my_fork, (void **)&orig_fork },
+                { "uname", (void *)my_uname, (void **)&orig_uname },
+                { "sysctl", (void *)my_sysctl, (void **)&orig_sysctl },
+                { "sysctlbyname", (void *)my_sysctlbyname, (void **)&orig_sysctlbyname }
             };
-            rebind_symbols(inode64_rebs, 10);
+            rebind_symbols(inode64_rebs, 13);
         }
         void *cdFunc = dlsym(RTLD_DEFAULT, "CacheDeleteCopyAvailableSpaceForVolume");
         if (cdFunc) {
@@ -5845,13 +5541,13 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
             NSLog(@"[ZaloTweak] 🟢 Bản quyền hợp lệ: %@", [[ZTSecurityManager sharedManager] getLicenseStatusText]);
         }
 
-        NSLog(@"[ZaloTweak] Đã khởi tạo hoàn chỉnh - Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Disk: %llu GB",
+        NSLog(@"[ZaloTweak] Đã khởi tạo hoàn chỉnh - Model: %@ | Res: %.0fx%.0f@%.0fx | IDFV: %@ | Disk: %@",
               [ZTSettings sharedSettings].deviceMachine,
               [ZTSettings sharedSettings].screenWidth,
               [ZTSettings sharedSettings].screenHeight,
               [ZTSettings sharedSettings].screenScale,
               [ZTSettings sharedSettings].spoofedIDFV,
-              [ZTSettings sharedSettings].diskTotalSize / (1000000000ULL));
+              [ZTSettings sharedSettings].diskTotalSize > 0 ? [NSString stringWithFormat:@"%llu GB", [ZTSettings sharedSettings].diskTotalSize / (1000000000ULL)] : @"APFS Thật (Passthrough)");
 
         NSString *envDesc = get_runtime_environment_desc();
         NSLog(@"[ZaloTweak] 🚀 Môi trường: %@", envDesc);
@@ -5944,13 +5640,13 @@ __attribute__((visibility("default"))) NSArray<NSString *> *zt_get_discovered_se
 
             double contUp = 0, awakeUp = 0;
             get_consistent_uptimes(&contUp, &awakeUp);
-            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🕒 [THỜI GIAN/Ổ ĐĨA] st_birthtime: %s (%llu) | BootTime: %s | ContCPU: %.0fs (%.1fh) | AwakeCPU: %.0fs (%.1fh) | Disk: %llu GB",
+            logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🕒 [THỜI GIAN/Ổ ĐĨA] st_birthtime: %s (%llu) | BootTime: %s | ContCPU: %.0fs (%.1fh) | AwakeCPU: %.0fs (%.1fh) | Disk: %@",
                       bTimeBuf,
                       (unsigned long long)fake_ctime,
                       bootBuf,
                       contUp, contUp / 3600.0,
                       awakeUp, awakeUp / 3600.0,
-                      s.diskTotalSize / (1000000000ULL)]);
+                      s.diskTotalSize > 0 ? [NSString stringWithFormat:@"%llu GB", s.diskTotalSize / (1000000000ULL)] : @"APFS Thật (Passthrough)"]);
 
             if (!is_original_zalo_app()) {
                 logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Clone: Đã chặn Token APNs Fake & Triệt tiêu submitToken (Chống Apple BadDeviceToken ban 3h) | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");

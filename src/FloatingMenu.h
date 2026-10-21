@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)sharedManager;
 - (void)setupInAppMenu;
 - (void)tryAttachFloatingButton;
+- (void)showColdBootBanner;
 - (void)presentMainMenuFrom:(nullable UIViewController *)presentingVC;
 - (void)showPreRegDiagnosticFrom:(UIViewController *)top;
 - (void)showAdvancedSettingsFrom:(UIViewController *)top;

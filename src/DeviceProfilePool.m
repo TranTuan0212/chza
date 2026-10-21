@@ -99,52 +99,64 @@ typedef struct {
     const char *build;   // "19H386", "21G93"
     int major;           // 15, 16, 17, 18
     BOOL legacyOnly;     // Chỉ dành cho thiết bị ngừng hỗ trợ (iPhone 6s/7 cho 15.8.x, iPhone 8/X cho 16.7.x)
+    uint64_t releaseTimestamp; // Thời điểm Apple chính thức phát hành bản dựng IPSW này (chuẩn giờ Cupertino 17:00 / 18:00 UTC)
+    const char *darwinRelease; // Bản phát hành Darwin Kernel chính xác: vd "21.6.0", "22.6.0", "24.2.0"
 } AppleOSRelease;
 
-// Bảng phiên bản iOS thực tế & Build ID chính xác của Apple (Tối thiểu 15.1+ để Zalo hoạt động chuẩn)
+// Bảng phiên bản iOS thực tế & Build ID chính xác của Apple (Tối thiểu 15.1+ để tương thích hệ thống)
 static const AppleOSRelease kAppleOSReleases[] = {
     // iOS 15 Releases (iPhone 6s / 6s Plus / SE 1 / iPhone 7 / 7 Plus)
-    {"15.4.1", "19E258",  15, NO},
-    {"15.5",   "19F77",   15, NO},
-    {"15.6",   "19G69",   15, NO},
-    {"15.6.1", "19G82",   15, NO},
-    {"15.7",   "19H12",   15, NO},
-    {"15.7.1", "19H117",  15, NO},
-    {"15.7.2", "19H218",  15, NO},
-    {"15.7.5", "19H332",  15, NO},
-    {"15.8",   "19H370",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
-    {"15.8.1", "19H380",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
-    {"15.8.2", "19H384",  15, YES}, // Độc quyền A9/A10 (iPhone 6s / 7)
-    {"15.8.3", "19H386",  15, YES}, // Bản phát hành chính thức cuối cùng của Apple cho A9/A10
+    {"15.4.1", "19E258",  15, NO,  1648746000ULL, "21.4.0"}, // 31/03/2022 17:00 UTC
+    {"15.5",   "19F77",   15, NO,  1652720400ULL, "21.5.0"}, // 16/05/2022 17:00 UTC
+    {"15.6",   "19G69",   15, NO,  1658336400ULL, "21.6.0"}, // 20/07/2022 17:00 UTC
+    {"15.6.1", "19G82",   15, NO,  1660755600ULL, "21.6.0"}, // 17/08/2022 17:00 UTC
+    {"15.7",   "19H12",   15, NO,  1663002000ULL, "21.6.0"}, // 12/09/2022 17:00 UTC
+    {"15.7.1", "19H117",  15, NO,  1666890000ULL, "21.6.0"}, // 27/10/2022 17:00 UTC
+    {"15.7.2", "19H218",  15, NO,  1670950800ULL, "21.6.0"}, // 13/12/2022 17:00 UTC
+    {"15.7.5", "19H332",  15, NO,  1681146000ULL, "21.6.0"}, // 10/04/2023 17:00 UTC
+    {"15.8",   "19H370",  15, YES, 1698253200ULL, "21.6.0"}, // 25/10/2023 17:00 UTC
+    {"15.8.1", "19H380",  15, YES, 1705946400ULL, "21.6.0"}, // 22/01/2024 18:00 UTC
+    {"15.8.2", "19H384",  15, YES, 1709661600ULL, "21.6.0"}, // 05/03/2024 18:00 UTC
+    {"15.8.3", "19H386",  15, YES, 1722272400ULL, "21.6.0"}, // 29/07/2024 17:00 UTC
+    {"15.8.4", "19H390",  15, YES, 1743440400ULL, "21.6.0"}, // 31/03/2025 17:00 UTC
+    {"15.8.5", "19H394",  15, YES, 1757955600ULL, "21.6.0"}, // 15/09/2025 17:00 UTC
+    {"15.8.6", "19H402",  15, YES, 1769450400ULL, "21.6.0"}, // 26/01/2026 18:00 UTC
+    {"15.8.7", "19H411",  15, YES, 1773248400ULL, "21.6.0"}, // 11/03/2026 17:00 UTC
 
     // iOS 16 Releases (iPhone 8 / 8 Plus / X)
-    {"16.5",    "20F66",  16, NO},
-    {"16.6",    "20G75",  16, NO},
-    {"16.6.1",  "20G81",  16, NO},
-    {"16.7.2",  "20H115", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
-    {"16.7.5",  "20H307", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
-    {"16.7.10", "20H350", 16, YES}, // Độc quyền A11 (iPhone 8 / 8 Plus / X)
+    {"16.5",    "20F66",  16, NO,  1684429200ULL, "22.5.0"}, // 18/05/2023 17:00 UTC
+    {"16.6",    "20G75",  16, NO,  1690218000ULL, "22.6.0"}, // 24/07/2023 17:00 UTC
+    {"16.6.1",  "20G81",  16, NO,  1694106000ULL, "22.6.0"}, // 07/09/2023 17:00 UTC
+    {"16.7.2",  "20H115", 16, YES, 1698253200ULL, "22.6.0"}, // 25/10/2023 17:00 UTC
+    {"16.7.5",  "20H307", 16, YES, 1705946400ULL, "22.6.0"}, // 22/01/2024 18:00 UTC
+    {"16.7.10", "20H350", 16, YES, 1723050000ULL, "22.6.0"}, // 07/08/2024 17:00 UTC
+    {"16.7.11", "20H360", 16, YES, 1743440400ULL, "22.6.0"}, // 31/03/2025 17:00 UTC
+    {"16.7.12", "20H364", 16, YES, 1757955600ULL, "22.6.0"}, // 15/09/2025 17:00 UTC
+    {"16.7.13", "20H365", 16, YES, 1769450400ULL, "22.6.0"}, // 26/01/2026 18:00 UTC
+    {"16.7.14", "20H370", 16, YES, 1770055200ULL, "22.6.0"}, // 02/02/2026 18:00 UTC
 
     // iOS 17 Releases
-    {"17.4",   "21E219",  17, NO},
-    {"17.4.1", "21E236",  17, NO},
-    {"17.5",   "21F79",   17, NO},
-    {"17.5.1", "21F90",   17, NO},
-    {"17.6",   "21G80",   17, NO},
-    {"17.6.1", "21G93",   17, NO},
-    {"17.7",   "21H16",   17, NO},
-    {"17.7.1", "21H216",  17, NO},
-    {"17.7.2", "21H221",  17, NO},
+    {"17.4",   "21E219",  17, NO,  1709661600ULL, "23.4.0"}, // 05/03/2024 18:00 UTC
+    {"17.4.1", "21E236",  17, NO,  1711040400ULL, "23.4.0"}, // 21/03/2024 17:00 UTC
+    {"17.5",   "21F79",   17, NO,  1715619600ULL, "23.5.0"}, // 13/05/2024 17:00 UTC
+    {"17.5.1", "21F90",   17, NO,  1716224400ULL, "23.5.0"}, // 20/05/2024 17:00 UTC
+    {"17.6",   "21G80",   17, NO,  1722272400ULL, "23.6.0"}, // 29/07/2024 17:00 UTC
+    {"17.6.1", "21G93",   17, NO,  1723050000ULL, "23.6.0"}, // 07/08/2024 17:00 UTC
+    {"17.7",   "21H16",   17, NO,  1726506000ULL, "23.6.0"}, // 16/09/2024 17:00 UTC
+    {"17.7.1", "21H216",  17, NO,  1730134800ULL, "23.6.0"}, // 28/10/2024 17:00 UTC
+    {"17.7.2", "21H221",  17, NO,  1732039200ULL, "23.6.0"}, // 19/11/2024 18:00 UTC
 
     // iOS 18 Releases (Bản phát hành chính thức Apple IPSW)
-    {"18.0",   "22A3354", 18, NO},
-    {"18.0.1", "22A3370", 18, NO},
-    {"18.1",   "22B83",   18, NO},
-    {"18.1.1", "22B91",   18, NO},
-    {"18.2",   "22C152",  18, NO},
-    {"18.2.1", "22C161",  18, NO},
-    {"18.3",   "22D63",   18, NO},
-    {"18.3.1", "22D72",   18, NO}
+    {"18.0",   "22A3354", 18, NO,  1726506000ULL, "24.0.0"}, // 16/09/2024 17:00 UTC
+    {"18.0.1", "22A3370", 18, NO,  1727974800ULL, "24.0.0"}, // 03/10/2024 17:00 UTC
+    {"18.1",   "22B83",   18, NO,  1730134800ULL, "24.1.0"}, // 28/10/2024 17:00 UTC
+    {"18.1.1", "22B91",   18, NO,  1732039200ULL, "24.1.0"}, // 19/11/2024 18:00 UTC
+    {"18.2",   "22C152",  18, NO,  1733936400ULL, "24.2.0"}, // 11/12/2024 18:00 UTC
+    {"18.2.1", "22C161",  18, NO,  1736186400ULL, "24.2.0"}, // 06/01/2025 18:00 UTC
+    {"18.3",   "22D63",   18, NO,  1737997200ULL, "24.3.0"}, // 27/01/2025 18:00 UTC
+    {"18.3.1", "22D72",   18, NO,  1739210400ULL, "24.3.0"}, // 10/02/2025 18:00 UTC
+    {"18.3.2", "22D82",   18, NO,  1741802400ULL, "24.3.0"}, // 12/03/2025 18:00 UTC
+    {"18.4",   "22E210",  18, NO,  1743440400ULL, "24.4.0"}  // 31/03/2025 17:00 UTC
 };
 
 NSString *generate_apple_serial(void) {
@@ -302,29 +314,34 @@ static NSString *detect_real_system_machine(void) {
 
     profile.systemVersion = [NSString stringWithUTF8String:chosenOS->version];
     profile.kernOsVersion = [NSString stringWithUTF8String:chosenOS->build];
+    profile.darwinKernelRelease = [NSString stringWithUTF8String:chosenOS->darwinRelease];
 
-    // 3. CHỌN BỘ NHỚ Ổ CỨNG HỢP LỆ VỚI DÒNG MÁY ĐÓ (Trừ phân vùng APFS Container, bội số 4096)
+    // 3. CHỌN BỘ NHỚ Ổ CỨNG HỢP LỆ VỚI DÒNG MÁY ĐÓ (Mô hình APFS Space Sharing)
     int diskCount = 0;
     while (spec.supportedDisks[diskCount] != 0 && diskCount < 5) {
         diskCount++;
     }
     uint64_t nominalDisk = spec.supportedDisks[arc4random_uniform((uint32_t)diskCount)];
-    uint64_t nominalBlocks = nominalDisk / 4096ULL;
 
-    // Phân vùng APFS Container: Preboot, Recovery, System container chiếm khoảng 1.8% - 3.2% tổng block
-    // Dao động lẻ chi tiết tới từng block đơn lẻ để triệt tiêu hoàn toàn các số chẵn hàng chục nghìn / hàng triệu byte
-    double containerOverheadRatio = 0.0180 + (((double)arc4random_uniform(1400)) / 100000.0);
-    uint64_t overheadBlocks = (uint64_t)(nominalBlocks * containerOverheadRatio) + (uint64_t)(100 + arc4random_uniform(2048));
-    uint64_t totalBlocks = nominalBlocks - overheadBlocks;
-    profile.diskTotalSize = totalBlocks * 4096ULL;
-
-    // Dung lượng trống tự nhiên (từ 28% đến 68% tổng số block), lẻ tới từng block
-    double freeBlockRatio = 0.280 + (((double)arc4random_uniform(4000)) / 10000.0);
-    uint64_t freeBlocks = (uint64_t)(totalBlocks * freeBlockRatio) + (uint64_t)(100 + arc4random_uniform(1024));
-    if (freeBlocks >= totalBlocks) {
-        freeBlocks = totalBlocks - (610351ULL + (uint64_t)arc4random_uniform(4096));
+    // Dung lượng thực Flash NAND: Decimal GB (10^9 bytes)
+    // Hệ thống APFS chia sẻ không gian: Phân vùng Data (/private/var) chia sẻ cùng Sealed System Volume (SSV)
+    // SSV: iOS 15 (~4.2 - 4.9 GB), iOS 16 (~5.2 - 6.2 GB), iOS 17/18 (~7.8 - 9.4 GB)
+    // Preboot, Recovery, VM, APFS metadata: ~1.0 - 1.8 GB
+    double systemVolumeGB = 0;
+    if (chosenOS->major <= 15) {
+        systemVolumeGB = 4.2 + (((double)arc4random_uniform(700)) / 1000.0);
+    } else if (chosenOS->major == 16) {
+        systemVolumeGB = 5.2 + (((double)arc4random_uniform(1000)) / 1000.0);
+    } else {
+        systemVolumeGB = 7.8 + (((double)arc4random_uniform(1600)) / 1000.0);
     }
-    profile.diskFreeSize = freeBlocks * 4096ULL;
+    double auxiliaryOverheadGB = 1.0 + (((double)arc4random_uniform(800)) / 1000.0);
+    uint64_t nonDataBytes = (uint64_t)((systemVolumeGB + auxiliaryOverheadGB) * 1000000000.0);
+
+    // 3. THIẾT LẬP DUNG LƯỢNG Ổ CỨNG: CHẾ ĐỘ NATIVE PASSTHROUGH CHUẨN TRUST
+    // Passthrough phần cứng APFS thật: 0 = Không can thiệp, nhường quyền hoàn toàn cho Darwin Kernel & NAND Flash
+    profile.diskTotalSize = 0;
+    profile.diskFreeSize = 0;
 
     // 4. KHO HƠN 100 TÊN THIẾT BỊ TỰ NHIÊN THEO VÙNG
     NSString *curRegion = region ?: @"VN";
@@ -537,34 +554,166 @@ static NSString *detect_real_system_machine(void) {
     profile.profileId = [[NSUUID UUID] UUIDString];
     profile.bootSessionUUID = [[NSUUID UUID] UUIDString];
 
-    // Uptime ngẫu nhiên tự nhiên của người dùng iPhone thật (phân tán rộng từ 3 đến 28 ngày trước) kèm jitter giây lẻ
-    uint32_t days = 3 + arc4random_uniform(26); // 3 đến 28 ngày
-    uint32_t randomOffset = (days * 86400) + arc4random_uniform(86400);
-    profile.bootTimeSec = (uint64_t)[[NSDate date] timeIntervalSince1970] - randomOffset;
+    uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
 
-    // Ngày sinh ổ đĩa chuẩn xác theo vòng đời sản xuất của Apple
-    uint64_t launch = spec.launchTimestamp ?: 1568160000ULL;
-    uint64_t eol = spec.eolTimestamp ?: (launch + 94608000ULL);
-    uint64_t span = (eol > launch) ? (eol - launch) : 86400ULL;
-    // Mỗi lần sinh Profile cấp mới, đảm bảo ngày sinh phân tán ngẫu nhiên và có jitter lẻ
-    profile.birthTimeSec = launch + arc4random_uniform((uint32_t)span) + arc4random_uniform(86399);
-    // Đảm bảo ngày xuất xưởng / cài đặt luôn xảy ra trước BootTime ít nhất vài tuần và không trùng giây
-    if (profile.birthTimeSec >= profile.bootTimeSec) {
-        profile.birthTimeSec = profile.bootTimeSec - (86400ULL * (30ULL + arc4random_uniform(250)) + arc4random_uniform(86399));
+    // Uptime ngẫu nhiên tự nhiên theo phân bố người dùng thiết bị di động thật:
+    // 20% máy mới khởi động gần đây (12h - 3 ngày)
+    // 60% máy hoạt động ổn định thông thường (3 - 24 ngày)
+    // 20% máy chạy dài ngày không tắt (25 - 60 ngày)
+    uint32_t uptimeRoll = arc4random_uniform(100);
+    uint32_t uptimeSec = 0;
+    if (uptimeRoll < 20) {
+        uptimeSec = 43200 + arc4random_uniform(86400 * 3); // 12h - 3 ngày
+    } else if (uptimeRoll < 80) {
+        uptimeSec = 86400 * (3 + arc4random_uniform(21)) + arc4random_uniform(86399); // 3 - 24 ngày
+    } else {
+        uptimeSec = 86400 * (25 + arc4random_uniform(36)) + arc4random_uniform(86399); // 25 - 60 ngày
+    }
+    profile.bootTimeSec = nowSec - uptimeSec;
+    if (profile.bootTimeSec % 60 == 0) profile.bootTimeSec += (1 + arc4random_uniform(58));
+
+    // Ngày sinh phân vùng hệ thống APFS chuẩn xác theo chu kỳ ký số Apple SHSH (APFS Sealed Snapshot Timeline)
+    // Xác định thời điểm đóng cửa sổ ký số (SHSH Signing Window) của Apple
+    uint64_t signingClose = 0;
+    const AppleOSRelease *nextOS = NULL;
+    for (size_t i = 0; i < osCount; i++) {
+        if (&kAppleOSReleases[i] == chosenOS) continue;
+        if (kAppleOSReleases[i].major >= spec.minIOS && kAppleOSReleases[i].major <= spec.maxIOS) {
+            if (kAppleOSReleases[i].legacyOnly && !isLegacyOnlyDevice) continue;
+            if (kAppleOSReleases[i].releaseTimestamp > chosenOS->releaseTimestamp) {
+                if (nextOS == NULL || kAppleOSReleases[i].releaseTimestamp < nextOS->releaseTimestamp) {
+                    nextOS = &kAppleOSReleases[i];
+                }
+            }
+        }
     }
 
-    // Độ lệch thời gian các phân vùng hệ thống hoàn toàn logic theo chuỗi sự kiện:
-    // 1. /var format & mount sau root filesystem 25s - 90s
-    profile.deltaVarSec = 25 + arc4random_uniform(65);
-    // 2. /var/mobile tạo khi hoàn tất setup máy (sau /var từ 45s - 240s)
-    profile.deltaMobileSec = profile.deltaVarSec + 45 + arc4random_uniform(195);
-    // 3. Sandbox Zalo: Cài sau kích hoạt máy từ vài ngày đến vài tuần (nhưng trước bootTime)
-    uint64_t daysSpan = (profile.bootTimeSec > profile.birthTimeSec + 86400ULL * 10ULL) ? 
-        ((profile.bootTimeSec - profile.birthTimeSec) / 86400ULL) : 5ULL;
-    uint32_t randomDays = 2 + arc4random_uniform((uint32_t)MIN(daysSpan, 60ULL));
-    profile.deltaSandboxSec = (uint32_t)(randomDays * 86400ULL + arc4random_uniform(86400));
-    if (profile.birthTimeSec + profile.deltaSandboxSec >= profile.bootTimeSec) {
-        profile.deltaSandboxSec = (uint32_t)(profile.deltaMobileSec + 3600ULL + arc4random_uniform(7200));
+    BOOL isEOLHardware = (spec.maxIOS <= 16);
+    BOOL isFinalForHardware = isEOLHardware && (nextOS == NULL);
+    if (!isFinalForHardware) {
+        // Active devices hoặc bản OS trung gian:
+        // Cửa sổ đóng ký số của Apple diễn ra trong ngày làm việc (thứ Hai - thứ Sáu), giờ làm việc California
+        uint64_t baseRelease = nextOS ? nextOS->releaseTimestamp : (chosenOS->releaseTimestamp + 86400ULL * 14ULL);
+        uint32_t daysOffset = 5 + arc4random_uniform(9); // 5 - 13 ngày sau bản kế tiếp
+        // Thêm giờ/phút/giây ngẫu nhiên trong khung giờ làm việc California (17:00 - 00:30 UTC), không tròn phút/giây
+        uint64_t rawClose = baseRelease + 86400ULL * daysOffset + (3600ULL * arc4random_uniform(7)) + (60ULL * arc4random_uniform(59)) + (1ULL + arc4random_uniform(58));
+        // Kiểm tra thứ trong tuần: epoch ngày 0 (1970-01-01) là thứ Năm (Thursday = 4)
+        uint32_t dayOfWeek = (uint32_t)((rawClose / 86400ULL + 4ULL) % 7ULL);
+        if (dayOfWeek == 0) { // Chủ nhật -> chuyển sang thứ Hai (+1 ngày)
+            rawClose += 86400ULL + (1ULL + arc4random_uniform(3600));
+        } else if (dayOfWeek == 6) { // Thứ Bảy -> chuyển sang thứ Hai (+2 ngày)
+            rawClose += 86400ULL * 2ULL + (1ULL + arc4random_uniform(3600));
+        }
+        signingClose = rawClose;
+    } else {
+        // Bản cập nhật cuối cùng của dòng máy EOL được Apple duy trì ký liên tục cho phần cứng đó
+        signingClose = (profile.bootTimeSec > 86400ULL * 3) ? (profile.bootTimeSec - 86400ULL * 3) : nowSec;
+    }
+
+    uint64_t osRelease = chosenOS->releaseTimestamp ?: 1648746000ULL;
+    // Bắt đầu cài đặt sau khi Apple phát hành từ vài giờ đến vài ngày
+    uint64_t minBirth = osRelease + 3600ULL * (4ULL + arc4random_uniform(72)); // 4h - 3 ngày sau phát hành
+
+    // Điểm kết thúc cài đặt không được vượt quá thời điểm đóng ký số và phải trước bootTimeSec
+    uint64_t maxBirth = signingClose;
+    if (maxBirth > profile.bootTimeSec) {
+        maxBirth = (profile.bootTimeSec > 86400ULL * 3) ? (profile.bootTimeSec - 86400ULL * 3) : profile.bootTimeSec;
+    }
+
+    if (maxBirth > minBirth) {
+        uint64_t span = maxBirth - minBirth;
+        profile.birthTimeSec = minBirth + arc4random_uniform((uint32_t)MIN(span, 31536000ULL));
+    } else {
+        profile.birthTimeSec = minBirth;
+    }
+
+    // Bảo đảm ngày cài đặt hệ thống luôn trước BootTime và không tròn phút :00
+    if (profile.birthTimeSec >= profile.bootTimeSec) {
+        profile.birthTimeSec = profile.bootTimeSec - (86400ULL * (3ULL + arc4random_uniform(15)) + arc4random_uniform(86399));
+    }
+    if (profile.birthTimeSec % 60 == 0) profile.birthTimeSec += (1 + arc4random_uniform(58));
+
+    // Tính toán dung lượng lưu trữ thực tế theo Tuổi thọ máy (Storage Wear Model)
+    uint64_t deviceAgeDays = (nowSec > profile.birthTimeSec) ? ((nowSec - profile.birthTimeSec) / 86400ULL) : 0ULL;
+    double freeBlockRatio;
+    if (deviceAgeDays < 7) {
+        // Máy mới thiết lập/cài đặt dưới 7 ngày: Dung lượng trống rất cao (75% - 90%)
+        freeBlockRatio = 0.750 + (((double)arc4random_uniform(1500)) / 10000.0);
+    } else if (deviceAgeDays < 60) {
+        // Máy sử dụng ngắn hạn (1 - 2 tháng): Dung lượng trống trung bình (50% - 75%)
+        freeBlockRatio = 0.500 + (((double)arc4random_uniform(2500)) / 10000.0);
+    } else {
+        // Máy đã qua sử dụng dài hạn (> 2 tháng): Dung lượng tích lũy theo mức tiêu hao thực tế
+        if (nominalDisk <= 16000000000ULL) {
+            freeBlockRatio = 0.160 + (((double)arc4random_uniform(1600)) / 10000.0); // 16% - 32%
+        } else if (nominalDisk <= 64000000000ULL) {
+            freeBlockRatio = 0.250 + (((double)arc4random_uniform(3000)) / 10000.0); // 25% - 55%
+        } else {
+            freeBlockRatio = 0.350 + (((double)arc4random_uniform(3500)) / 10000.0); // 35% - 70%
+        }
+    }
+    if (profile.diskTotalSize > 0) {
+        uint64_t totalBlocks = profile.diskTotalSize / 4096ULL;
+        uint64_t freeBlocks = (uint64_t)(totalBlocks * freeBlockRatio) + (uint64_t)(100 + arc4random_uniform(1024));
+        if (freeBlocks >= totalBlocks) {
+            freeBlocks = totalBlocks - (610351ULL + (uint64_t)arc4random_uniform(4096));
+        }
+        profile.diskFreeSize = freeBlocks * 4096ULL;
+    } else {
+        profile.diskFreeSize = 0; // Chế độ Passthrough: Trả về 0 để hệ điều hành tự động đọc dữ liệu thật từ Kernel
+    }
+
+    // Độ lệch thời gian format /var và hoàn tất thiết lập hồ sơ người dùng /var/mobile
+    // Phản ánh sự biến thiên hành vi người dùng trong Setup Assistant:
+    profile.deltaVarSec = 18 + arc4random_uniform(58); // 18s - 75s
+    uint32_t setupRoll = arc4random_uniform(100);
+    if (setupRoll < 60) {
+        // 60% thiết lập nhanh: 1.5 - 4.5 phút
+        profile.deltaMobileSec = profile.deltaVarSec + 90 + arc4random_uniform(180);
+    } else if (setupRoll < 90) {
+        // 30% thiết lập bình thường (chọn Wi-Fi, Apple ID, Face ID): 5 - 15 phút
+        profile.deltaMobileSec = profile.deltaVarSec + 300 + arc4random_uniform(600);
+    } else {
+        // 10% thiết lập gián đoạn hoặc đồng bộ dữ liệu: 18 - 45 phút
+        profile.deltaMobileSec = profile.deltaVarSec + 1100 + arc4random_uniform(1600);
+    }
+
+    // 3. Sandbox Container: Được tạo sau khi có user profile /var/mobile và trước thời điểm hiện tại
+    // Kịch bản tạo container:
+    // 35% Kịch bản A: Ứng dụng khôi phục cùng với hệ thống ban đầu -> Tạo container trong 1h - 48h sau setup
+    // 65% Kịch bản B: Ứng dụng tải mới từ App Store trong quá trình dùng máy -> Tạo container phân bố tự nhiên
+    BOOL isContainerFromBackup = (arc4random_uniform(100) < 35);
+    if (isContainerFromBackup) {
+        profile.deltaSandboxSec = profile.deltaMobileSec + 3600ULL + arc4random_uniform(86400 * 2);
+    } else {
+        uint64_t minSandbox = profile.birthTimeSec + profile.deltaMobileSec + 60ULL;
+        uint64_t maxSandbox = (nowSec > minSandbox + 3600ULL) ? (nowSec - 1800ULL) : minSandbox;
+        if (maxSandbox > minSandbox) {
+            uint64_t sandboxSpan = maxSandbox - minSandbox;
+            profile.deltaSandboxSec = profile.deltaMobileSec + 60ULL + (uint32_t)((arc4random_uniform(10000) / 10000.0) * sandboxSpan);
+        } else {
+            profile.deltaSandboxSec = profile.deltaMobileSec + 3600ULL + arc4random_uniform(7200);
+        }
+    }
+
+    // Khử triệt để hiện tượng giây tròn :00, trùng phút/giây và tròn giờ chẵn giữa T_sandbox và T_boot
+    uint64_t candSandbox = profile.birthTimeSec + profile.deltaSandboxSec;
+    if (candSandbox % 60 == 0) {
+        profile.deltaSandboxSec += (1 + arc4random_uniform(58));
+        candSandbox = profile.birthTimeSec + profile.deltaSandboxSec;
+    }
+    if (candSandbox % 60 == profile.bootTimeSec % 60) {
+        profile.deltaSandboxSec += (1 + arc4random_uniform(58));
+        candSandbox = profile.birthTimeSec + profile.deltaSandboxSec;
+    }
+    uint64_t diffBoot = (candSandbox > profile.bootTimeSec) ? (candSandbox - profile.bootTimeSec) : (profile.bootTimeSec - candSandbox);
+    if (diffBoot % 3600 < 60) {
+        profile.deltaSandboxSec += (67 + arc4random_uniform(280));
+    }
+
+    // Bảo đảm giới hạn trên không vượt quá thời điểm hiện tại
+    if (profile.birthTimeSec + profile.deltaSandboxSec >= nowSec) {
+        profile.deltaSandboxSec = (uint32_t)(nowSec - profile.birthTimeSec - (1800ULL + arc4random_uniform(1800)));
     }
 
     // Pin ngẫu nhiên (50% - 96%) và không cắm sạc

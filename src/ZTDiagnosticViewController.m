@@ -110,8 +110,8 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     if (isSettingsProcess) {
         double totalGB = fakeTotal > 0 ? ((double)fakeTotal / (1024.0 * 1024.0 * 1024.0)) : 128.0;
         info.nsurlDiskPassed = YES;
-        info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB (Khớp Profile Fake Zalo ✅)", totalGB];
-        write_audit_log(@"TEST-NSURL-DISK", [NSString stringWithFormat:@"com.apple.Preferences: NSURLVolume test bỏ qua (Profile fakeTotal: %llu) -> PASSED ✅", fakeTotal]);
+        info.nsurlDiskText = fakeTotal > 0 ? [NSString stringWithFormat:@"Total: %.0f GB (Khớp Profile ✅)", totalGB] : @"APFS Thật (Passthrough Chuẩn Trust ✅)";
+        write_audit_log(@"TEST-NSURL-DISK", [NSString stringWithFormat:@"Preferences: NSURLVolume test bỏ qua (Profile fakeTotal: %llu) -> PASSED ✅", fakeTotal]);
     } else {
         NSURL *homeURL = [NSURL fileURLWithPath:NSHomeDirectory()];
         id totalCapVal = nil;
@@ -132,7 +132,11 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
             }
         }
         info.nsurlDiskPassed = nsurlDiskPass;
-        info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB | Trống: %.1f GB %@", totalGB, availGB, nsurlDiskPass ? @"(Hook chuẩn ✅)" : @"(Lệch dung lượng ⚠️)"];
+        if (fakeTotal == 0) {
+            info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.1f GB | Trống: %.1f GB (APFS Thật - Chuẩn Trust ✅)", totalGB, availGB];
+        } else {
+            info.nsurlDiskText = [NSString stringWithFormat:@"Total: %.0f GB | Trống: %.1f GB %@", totalGB, availGB, nsurlDiskPass ? @"(Hook chuẩn ✅)" : @"(Lệch dung lượng ⚠️)"];
+        }
         write_audit_log(@"TEST-NSURL-DISK", [NSString stringWithFormat:@"Total: %.2f GB, Avail: %.2f GB, fakeTotal: %llu -> %@", totalGB, availGB, fakeTotal, nsurlDiskPass ? @"PASSED ✅" : @"FAILED ❌"]);
     }
 
@@ -140,8 +144,8 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
     if (isSettingsProcess) {
         double vfsTotalGB = fakeTotal > 0 ? ((double)fakeTotal / (1024.0 * 1024.0 * 1024.0)) : 128.0;
         info.statvfsPassed = YES;
-        info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB (Khớp Fake Zalo ✅)", vfsTotalGB];
-        write_audit_log(@"TEST-STATVFS", [NSString stringWithFormat:@"com.apple.Preferences: statvfs test bỏ qua (Profile fakeTotal: %llu) -> PASSED ✅", fakeTotal]);
+        info.statvfsText = fakeTotal > 0 ? [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB (Khớp Profile ✅)", vfsTotalGB] : @"statvfs(\"/var\"): APFS Thật (Passthrough ✅)";
+        write_audit_log(@"TEST-STATVFS", [NSString stringWithFormat:@"Preferences: statvfs test bỏ qua (Profile fakeTotal: %llu) -> PASSED ✅", fakeTotal]);
     } else {
         struct statvfs vfs;
         memset(&vfs, 0, sizeof(vfs));
@@ -153,7 +157,11 @@ void ZTRun8AntiBanTests(ZTDiagnosticInfo *info) {
             statvfsPass = statvfsPass && ((fabs(vfsTotalGB - ((double)fakeTotal / 1e9)) < 2.0) || (vfsTotal == fakeTotal));
         }
         info.statvfsPassed = statvfsPass;
-        info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB %@", vfsTotalGB, statvfsPass ? @"(Khớp Fake ✅)" : @"(Lệch dung lượng ⚠️)"];
+        if (fakeTotal == 0) {
+            info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.1f GB (APFS Thật - Chuẩn Trust ✅)", vfsTotalGB];
+        } else {
+            info.statvfsText = [NSString stringWithFormat:@"statvfs(\"/var\"): %.0f GB %@", vfsTotalGB, statvfsPass ? @"(Khớp Profile ✅)" : @"(Lệch dung lượng ⚠️)"];
+        }
         write_audit_log(@"TEST-STATVFS", [NSString stringWithFormat:@"statvfs ret=%d, total=%.2f GB -> %@", vfsRet, vfsTotalGB, statvfsPass ? @"PASSED ✅" : @"FAILED ❌"]);
     }
 
@@ -476,36 +484,8 @@ static BOOL is_zt_auto_sync_timezone_enabled(void) {
 }
 
 static void update_zt_synced_timezone_pref(NSString *tzName) {
-    if (!tzName || tzName.length == 0) return;
-    if ([tzName isEqualToString:@"Asia/Bangkok"] || [tzName isEqualToString:@"Asia/Saigon"]) {
-        tzName = @"Asia/Ho_Chi_Minh";
-    }
-    Class settingsClass = NSClassFromString(@"ZTSettings");
-    if (settingsClass) {
-        SEL selShared = NSSelectorFromString(@"sharedSettings");
-        if ([settingsClass respondsToSelector:selShared]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-            id shared = [settingsClass performSelector:selShared];
-            if (shared) {
-                [shared setValue:tzName forKey:@"timeZoneName"];
-                SEL selSave = NSSelectorFromString(@"saveSettings");
-                if ([shared respondsToSelector:selSave]) {
-                    [shared performSelector:selSave];
-                }
-            }
-#pragma clang diagnostic pop
-        }
-    }
-    NSString *path = get_zt_prefs_filepath();
-    NSMutableDictionary *dict = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
-    dict[@"timeZoneName"] = tzName;
-    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] withIntermediateDirectories:YES attributes:nil error:nil];
-    [dict writeToFile:path atomically:YES];
-    chmod([path UTF8String], 0666);
-    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                         CFSTR("com.sonhu.zalotweak/settingschanged"),
-                                         NULL, NULL, YES);
+    // Vô hiệu hóa: Chế độ kiểm tra chẩn đoán thụ động (Read-only), tuyệt đối không ghi đè timeZoneName của Profile!
+    return;
 }
 
 static void update_zt_carrier_pref(NSString *carrierName, NSString *mcc, NSString *mnc, NSString *countryCode, NSString *regionMode, NSString *localeId, NSString *tzName) {
@@ -1736,8 +1716,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
                             effectiveTZ = @"Asia/Ho_Chi_Minh";
                         }
                     }
-                    update_zt_synced_timezone_pref(effectiveTZ);
-                    strongSelf.info.timeZoneName = effectiveTZ;
+                    // Không tự ý ghi đè timeZoneName của Profile
                     NSTimeZone *tz = [NSTimeZone timeZoneWithName:strongSelf.info.timeZoneName];
                     NSInteger gmtSec = tz ? [tz secondsFromGMT] : 0;
                     int gmtH = (int)(gmtSec / 3600);
@@ -2201,7 +2180,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     if (self.info.darwinKernelRelease.length > 0) {
         [inner addArrangedSubview:[self createRowWithKey:@"Darwin Kernel (sysctl)"
                                                   value:[NSString stringWithFormat:@"Darwin %@", self.info.darwinKernelRelease]
-                                                  badge:@"21.6.0 Chuẩn ✅"
+                                                  badge:[NSString stringWithFormat:@"%@ Chuẩn ✅", self.info.darwinKernelRelease]
                                               isWarning:NO]];
     }
     [inner addArrangedSubview:[self createRowWithKey:@"Độ Phân Giải Màn Hình"
@@ -2476,7 +2455,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
 
     [confirmAlert addAction:[UIAlertAction actionWithTitle:@"Tiến Hành Wipe Ngay" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         if (self.info.ipTimezone.length > 0) {
-            update_zt_synced_timezone_pref(self.info.ipTimezone);
+            // update_zt_synced_timezone_pref(self.info.ipTimezone);
         }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             Class menuCls = NSClassFromString(@"ZTMenuManager");
@@ -2821,7 +2800,7 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         NSString *darwinStr = [NSString stringWithFormat:@"Darwin %@", self.info.darwinKernelRelease];
         [inner addArrangedSubview:[self createRowWithKey:@"Darwin Kernel (sysctl)"
                                                   value:darwinStr
-                                                  badge:@"21.6.0 Chuẩn ✅"
+                                                  badge:[NSString stringWithFormat:@"%@ Chuẩn ✅", self.info.darwinKernelRelease]
                                               isWarning:NO]];
     }
 

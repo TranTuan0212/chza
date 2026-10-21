@@ -311,6 +311,13 @@ UIViewController *ZTGetTopViewController(void) {
             return YES;
         }
     }
+    UIView *banner = [self viewWithTag:998877];
+    if (banner && !banner.hidden && banner.alpha > 0.01) {
+        CGPoint p = [banner convertPoint:point fromView:self];
+        if ([banner pointInside:p withEvent:event]) {
+            return YES;
+        }
+    }
     return NO;
 }
 
@@ -471,6 +478,112 @@ UIViewController *ZTGetTopViewController(void) {
 - (void)tryAttachFloatingButton {
     if (![ZTSettings sharedSettings].showFloatingMenu) return;
     [[ZTFloatingWindow sharedWindow] show];
+}
+
+- (void)showColdBootBanner {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        ZTFloatingWindow *win = [ZTFloatingWindow sharedWindow];
+        [win show];
+
+        UIView *oldBanner = [win viewWithTag:998877];
+        if (oldBanner) {
+            [oldBanner removeFromSuperview];
+        }
+
+        ZTSettings *s = [ZTSettings sharedSettings];
+        NSString *rDesc = [s.regionMode isEqualToString:@"US_STUDENT"] ? @"Du Học Sinh Mỹ (+1)" :
+                          ([s.regionMode isEqualToString:@"US"] ? @"Hoa Kỳ (+1)" :
+                          ([s.regionMode isEqualToString:@"PL"] ? @"Ba Lan (+48)" : @"Việt Nam (+84)"));
+
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
+        CGFloat bannerWidth = MIN(screenBounds.size.width - 24.0, 360.0);
+        CGFloat bannerHeight = 84.0;
+        CGFloat startX = (screenBounds.size.width - bannerWidth) / 2.0;
+
+        CGFloat safeTop = 20.0;
+        if (@available(iOS 11.0, *)) {
+            UIWindow *kw = get_active_key_window();
+            if (kw) safeTop = MAX(safeTop, kw.safeAreaInsets.top);
+        }
+        CGFloat targetY = safeTop + 8.0;
+
+        UIView *banner = [[UIView alloc] initWithFrame:CGRectMake(startX, -120.0, bannerWidth, bannerHeight)];
+        banner.tag = 998877;
+        banner.backgroundColor = [UIColor colorWithRed:0.09 green:0.11 blue:0.15 alpha:0.96];
+        banner.layer.cornerRadius = 16.0;
+        banner.layer.borderWidth = 1.0;
+        banner.layer.borderColor = [UIColor colorWithRed:0.18 green:0.80 blue:0.44 alpha:0.75].CGColor;
+        banner.layer.shadowColor = [UIColor blackColor].CGColor;
+        banner.layer.shadowOffset = CGSizeMake(0, 6);
+        banner.layer.shadowRadius = 12.0;
+        banner.layer.shadowOpacity = 0.45;
+        banner.clipsToBounds = NO;
+
+        UILabel *iconBadge = [[UILabel alloc] initWithFrame:CGRectMake(12, 16, 36, 36)];
+        iconBadge.backgroundColor = [UIColor colorWithRed:0.18 green:0.80 blue:0.44 alpha:0.18];
+        iconBadge.layer.cornerRadius = 18.0;
+        iconBadge.layer.borderWidth = 1.0;
+        iconBadge.layer.borderColor = [UIColor colorWithRed:0.18 green:0.80 blue:0.44 alpha:0.5].CGColor;
+        iconBadge.clipsToBounds = YES;
+        iconBadge.text = @"⚡";
+        iconBadge.font = [UIFont systemFontOfSize:18];
+        iconBadge.textAlignment = NSTextAlignmentCenter;
+        [banner addSubview:iconBadge];
+
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(56, 12, bannerWidth - 68, 18)];
+        titleLabel.text = @"THIẾT BỊ MỚI ĐÃ SẴN SÀNG";
+        titleLabel.font = [UIFont boldSystemFontOfSize:13.5];
+        titleLabel.textColor = [UIColor whiteColor];
+        [banner addSubview:titleLabel];
+
+        NSString *idfvShort = (s.spoofedIDFV.length > 8) ? [s.spoofedIDFV substringToIndex:8] : (s.spoofedIDFV ?: @"N/A");
+        UILabel *msgLabel = [[UILabel alloc] initWithFrame:CGRectMake(56, 31, bannerWidth - 68, 30)];
+        msgLabel.text = [NSString stringWithFormat:@"%@ • %@ • IDFV: %@...\nSIM: %@ (MCC %@)",
+                         s.deviceName ?: s.deviceMachine, rDesc, idfvShort, s.carrierName ?: @"Viettel", s.carrierMCC ?: @"452"];
+        msgLabel.font = [UIFont systemFontOfSize:10.5];
+        msgLabel.textColor = [UIColor colorWithWhite:0.85 alpha:1.0];
+        msgLabel.numberOfLines = 2;
+        [banner addSubview:msgLabel];
+
+        UILabel *hintLabel = [[UILabel alloc] initWithFrame:CGRectMake(56, 62, bannerWidth - 68, 14)];
+        hintLabel.text = @"🟢 Môi trường sạch sẽ • Tự ẩn sau 4s";
+        hintLabel.font = [UIFont systemFontOfSize:9.0];
+        hintLabel.textColor = [UIColor colorWithRed:0.25 green:0.85 blue:0.55 alpha:1.0];
+        [banner addSubview:hintLabel];
+
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleColdBootBannerTap:)];
+        [banner addGestureRecognizer:tap];
+        banner.userInteractionEnabled = YES;
+
+        [win addSubview:banner];
+
+        [UIView animateWithDuration:0.55 delay:0 usingSpringWithDamping:0.75 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            banner.frame = CGRectMake(startX, targetY, bannerWidth, bannerHeight);
+        } completion:^(BOOL finished) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (banner.superview) {
+                    [UIView animateWithDuration:0.4 animations:^{
+                        banner.frame = CGRectMake(startX, -130.0, bannerWidth, bannerHeight);
+                        banner.alpha = 0.0;
+                    } completion:^(BOOL fin) {
+                        [banner removeFromSuperview];
+                    }];
+                }
+            });
+        }];
+    });
+}
+
+- (void)handleColdBootBannerTap:(UITapGestureRecognizer *)gesture {
+    UIView *banner = gesture.view;
+    if (banner) {
+        [UIView animateWithDuration:0.25 animations:^{
+            banner.alpha = 0.0;
+            banner.transform = CGAffineTransformMakeScale(0.95, 0.95);
+        } completion:^(BOOL finished) {
+            [banner removeFromSuperview];
+        }];
+    }
 }
 
 - (void)handleWindowVisibilityChanged:(NSNotification *)note {
@@ -852,7 +965,7 @@ UIViewController *ZTGetTopViewController(void) {
                       @"• Profile Keychain: %@\n"
                       @"• CPU & RAM: %u Cores | %.1f GB\n"
                       @"• Màn Hình: %.0fx%.0f @%.0fx\n"
-                      @"• Ổ Cứng: %.1f GB / %.1f GB",
+                      @"• Ổ Cứng: %@",
                       regionName,
                       s.carrierName ?: @"Viettel", s.carrierMCC ?: @"452", s.carrierMNC ?: @"04",
                       s.deviceMachine, s.deviceModel,
@@ -871,10 +984,9 @@ UIViewController *ZTGetTopViewController(void) {
                       s.ncpu,
                       (double)s.memsize / (1024.0 * 1024.0 * 1024.0),
                       s.screenWidth, s.screenHeight, s.screenScale,
-                      (double)s.diskFreeSize / (1000.0 * 1000.0 * 1000.0),
-                      (double)s.diskTotalSize / (1000.0 * 1000.0 * 1000.0)];
+                      s.diskTotalSize > 0 ? [NSString stringWithFormat:@"%.1f GB / %.1f GB", (double)s.diskFreeSize / (1000.0 * 1000.0 * 1000.0), (double)s.diskTotalSize / (1000.0 * 1000.0 * 1000.0)] : @"Phần Cứng Thật (APFS Passthrough ✅)"];
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"📱 Thông Số Phần Cứng Giả Lập"
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"📱 Thông Số Cấu Hình Thiết Bị"
                                                                    message:info
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Đã Hiểu" style:UIAlertActionStyleDefault handler:nil]];
@@ -1561,17 +1673,10 @@ static void analyze_phone_for_auto_wipe(NSString *rawPhone,
                                                                     preferredStyle:UIAlertControllerStyleAlert];
             [p presentViewController:loading animated:YES completion:^{
                 fetch_geoip_for_auto_wipe(proxyText, ^(NSString *queryIP, NSString *timezone, NSString *countryCode) {
-                    NSString *effectiveTZ = timezone.length > 0 ? timezone : defaultTZ;
                     BOOL isVN = [targetRegion isEqualToString:@"VN"] || [countryCode isEqualToString:@"VN"];
                     BOOL isPL = [targetRegion isEqualToString:@"PL"] || [countryCode isEqualToString:@"PL"];
-                    if (isVN) {
-                        effectiveTZ = @"Asia/Ho_Chi_Minh";
-                    } else if (isPL) {
-                        effectiveTZ = @"Europe/Warsaw";
-                    }
 
                     ZTSettings *settings = [ZTSettings sharedSettings];
-                    settings.timeZoneName = effectiveTZ;
                     settings.localeIdentifier = isPL ? @"pl_PL" : (isVN ? @"vi_VN" : @"en_US");
                     settings.preferredLanguages = isPL ? @[@"pl-PL", @"en-PL"] : (isVN ? @[@"vi-VN", @"en-VN"] : @[@"en-US"]);
                     settings.preferredCarrier = carrierName;
@@ -2024,12 +2129,20 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         settings.lastWipedIP = currentIP;
     }
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
-    if (targetTimeZone.length > 0) {
-        settings.timeZoneName = targetTimeZone;
-    }
-    settings.enableFakeTimeZone = YES;
+    settings.enableFakeTimeZone = NO;
     settings.needsNewProfile = NO;
     settings.needsSandboxPurge = NO;
+
+    // Pre-seed firstTimeInstallApp và firstTimeOpenApp chuẩn APFS Timeline vào NSUserDefaults
+    uint64_t birthSec = settings.birthTimeSec;
+    uint32_t deltaSandbox = settings.deltaSandboxSec > 0 ? settings.deltaSandboxSec : 180U;
+    uint64_t tSandbox = birthSec + deltaSandbox;
+    uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
+    uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
+    NSUserDefaults *freshUD = [NSUserDefaults standardUserDefaults];
+    [freshUD setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
+    [freshUD setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
+    [freshUD synchronize];
     BOOL isJB = NO;
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
     isJB = YES;
@@ -2511,7 +2624,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     char liveKrelBuf[64] = {0};
     size_t krelSz = sizeof(liveKrelBuf);
     sysctlbyname("kern.osrelease", liveKrelBuf, &krelSz, NULL, 0);
-    info.darwinKernelRelease = (strlen(liveKrelBuf) > 0) ? [NSString stringWithUTF8String:liveKrelBuf] : (s.kernOsVersion ?: @"21.6.0");
+    info.darwinKernelRelease = (strlen(liveKrelBuf) > 0) ? [NSString stringWithUTF8String:liveKrelBuf] : (s.darwinKernelRelease ?: @"21.6.0");
 
     // Dynamic Battery Level
     [UIDevice currentDevice].batteryMonitoringEnabled = YES;

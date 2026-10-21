@@ -9,6 +9,7 @@
 @property (nonatomic, strong) NSString *deviceName;        // UIDevice.name: vd "iPhone"
 @property (nonatomic, strong) NSString *systemVersion;     // UIDevice.systemVersion: vd "16.5"
 @property (nonatomic, strong) NSString *kernOsVersion;     // kern.osversion: vd "20F66"
+@property (nonatomic, strong) NSString *darwinKernelRelease; // kern.osrelease: vd "22.5.0", "24.2.0"
 @property (nonatomic, assign) uint32_t ncpu;               // hw.ncpu: 6
 @property (nonatomic, assign) uint64_t memsize;            // hw.memsize: 6GB RAM
 @property (nonatomic, assign) uint64_t l2cacheSize;         // hw.l2cachesize: 3MB, 8MB, 12MB, 16MB
@@ -23,8 +24,8 @@
 @property (nonatomic, assign) uint32_t deltaVarSec;        // Độ lệch ngẫu nhiên của /var so với birthTime (s)
 @property (nonatomic, assign) uint32_t deltaMobileSec;     // Độ lệch ngẫu nhiên của /var/mobile so với birthTime (s)
 @property (nonatomic, assign) uint32_t deltaSandboxSec;    // Độ lệch ngẫu nhiên của Sandbox Zalo so với birthTime (s)
-@property (nonatomic, assign) BOOL autoSyncTimezoneWithIP; // Tự động đồng bộ timezone theo GeoIP của Proxy
-@property (nonatomic, assign) BOOL enableFakeTimeZone;     // Bật/Tắt ép múi giờ giả (Mặc định YES, nếu NO sẽ trả về múi giờ thật của máy)
+@property (nonatomic, assign) BOOL autoSyncTimezoneWithIP; // Vô hiệu hóa (Mặc định NO, không tự đổi múi giờ Profile theo IP)
+@property (nonatomic, assign) BOOL enableFakeTimeZone;     // Bật/Tắt ép múi giờ giả (Mặc định NO, để Zalo đọc múi giờ thật của iOS)
 @property (nonatomic, strong) NSString *bootSessionUUID;   // kern.bootsessionuuid
 @property (nonatomic, strong) NSString *spoofedIDFV;       // identifierForVendor UUID
 @property (nonatomic, strong) NSString *spoofedIDFA;       // advertisingIdentifier IDFA

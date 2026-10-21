@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) CGFloat screenScale;       // scale (2.0 hoặc 3.0)
 @property (nonatomic, copy) NSString *systemVersion;     // "17.6.1"
 @property (nonatomic, copy) NSString *kernOsVersion;     // "21G93"
+@property (nonatomic, copy) NSString *darwinKernelRelease; // "23.6.0" (chuẩn Apple Darwin)
 @property (nonatomic, assign) uint64_t diskTotalSize;    // Tổng dung lượng ổ cứng (bytes)
 @property (nonatomic, assign) uint64_t diskFreeSize;     // Dung lượng trống (bytes)
 @property (nonatomic, copy) NSString *deviceName;        // Tên máy: "iPhone của Linh"
