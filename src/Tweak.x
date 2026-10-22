@@ -879,6 +879,7 @@ static void purge_entire_sandbox_safely(void) {
         self.currentZCID = dict[@"currentZCID"] ?: @"";
         self.lastWipedZCID = dict[@"lastWipedZCID"] ?: @"";
         self.currentVoIPToken = dict[@"currentVoIPToken"] ?: @"";
+        self.spoofedVoIPToken = dict[@"spoofedVoIPToken"] ?: @"";
         self.lastWipedVoIPToken = dict[@"lastWipedVoIPToken"] ?: @"";
 
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
@@ -1093,6 +1094,7 @@ static void purge_entire_sandbox_safely(void) {
     if (self.currentZCID) dict[@"currentZCID"] = self.currentZCID;
     if (self.lastWipedZCID) dict[@"lastWipedZCID"] = self.lastWipedZCID;
     if (self.currentVoIPToken) dict[@"currentVoIPToken"] = self.currentVoIPToken;
+    if (self.spoofedVoIPToken) dict[@"spoofedVoIPToken"] = self.spoofedVoIPToken;
     if (self.lastWipedVoIPToken) dict[@"lastWipedVoIPToken"] = self.lastWipedVoIPToken;
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
@@ -3992,6 +3994,22 @@ static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
 - (NSData *)token {
     if (is_tweak_active() && !is_original_zalo_app()) {
         return nil;
+    }
+    if (is_tweak_active() && is_original_zalo_app()) {
+        NSString *spVoip = [ZTSettings sharedSettings].spoofedVoIPToken;
+        if (spVoip && spVoip.length >= 64) {
+            NSMutableData *tokData = [NSMutableData dataWithCapacity:32];
+            for (NSUInteger i = 0; i < 64; i += 2) {
+                NSString *byteStr = [spVoip substringWithRange:NSMakeRange(i, 2)];
+                unsigned int byteVal = 0;
+                [[NSScanner scannerWithString:byteStr] scanHexInt:&byteVal];
+                uint8_t b = (uint8_t)byteVal;
+                [tokData appendBytes:&b length:1];
+            }
+            if (tokData.length == 32) {
+                return tokData;
+            }
+        }
     }
     NSData *orig = %orig;
     if (orig) return orig;

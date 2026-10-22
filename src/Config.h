@@ -69,6 +69,7 @@
 @property (nonatomic, strong) NSString *lastWipedZCID;        // zcid trước lần Wipe gần nhất
 @property (nonatomic, strong) NSString *currentVoIPToken;     // VoIP token hiện tại
 @property (nonatomic, strong) NSString *lastWipedVoIPToken;   // VoIP token trước lần Wipe gần nhất
+@property (nonatomic, strong) NSString *spoofedVoIPToken;     // VoIP token sinh riêng cho profile mới
 
 + (instancetype)sharedSettings;
 - (void)loadSettings;

@@ -1733,6 +1733,13 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedIDFV"] = p.spoofedIDFV;
             dict[@"spoofedIDFA"] = @"00000000-0000-0000-0000-000000000000";
             dict[@"profileId"] = p.profileId;
+            NSString *vSeed = [NSString stringWithFormat:@"VOIP:%@:%llu", p.profileId ?: [[NSUUID UUID] UUIDString], (uint64_t)[[NSDate date] timeIntervalSince1970]];
+            const char *vCStr = [vSeed UTF8String];
+            unsigned char vHash[32];
+            CC_SHA256(vCStr, (CC_LONG)strlen(vCStr), vHash);
+            NSMutableString *vHex = [NSMutableString stringWithCapacity:64];
+            for (int i = 0; i < 32; i++) [vHex appendFormat:@"%02x", vHash[i]];
+            dict[@"spoofedVoIPToken"] = [vHex copy];
             dict[@"spoofedSerial"] = p.spoofedSerial;
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
@@ -2353,7 +2360,7 @@ static NSString *findAuditLogPath(void) {
 
     // 6. Push Tokens & Tiêu chuẩn Preflight Kiểm tra Độ sạch
     NSString *currAP = dict[@"currentAPNsToken"];
-    NSString *currVP = dict[@"currentVoIPToken"];
+    NSString *currVP = dict[@"currentVoIPToken"] ?: dict[@"spoofedVoIPToken"];
     NSString *rotStatus = dict[@"apnsRotatedStatus"];
     info.apnsRotatedStatus = rotStatus;
     info.apnsPushStatus = (currAP.length > 0) ? currAP : @"Chờ mở Zalo để Apple cấp Token... ⏳";
