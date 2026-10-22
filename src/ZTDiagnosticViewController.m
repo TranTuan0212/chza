@@ -3140,7 +3140,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
             @"group.zsettings",
             @"group.com.vng.zalo",
             @"group.com.zing.zalo",
-            @"vn.com.vng.zingalo"
+            @"vn.com.vng.zingalo",
+            @"vn.com.vng.zalo.user",
+            @"vn.com.vng.zingalo.zalosdk"
         ];
         for (id secClass in secClasses) {
             for (NSString *grp in secGroups) {

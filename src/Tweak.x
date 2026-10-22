@@ -2527,18 +2527,28 @@ static OSStatus my_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result)
     if (!is_tweak_active()) {
         return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : SecItemCopyMatching(query, result);
     }
-    if ([ZTSettings sharedSettings].enableAuditLog && query) {
+    NSString *s = nil;
+    NSString *a = nil;
+    NSString *g = nil;
+    if (query) {
         NSDictionary *qDict = (__bridge NSDictionary *)query;
-        id s = qDict[(__bridge id)kSecAttrService];
-        id a = qDict[(__bridge id)kSecAttrAccount];
-        id g = qDict[(__bridge id)kSecAttrAccessGroup];
-        if (s || a) {
+        s = qDict[(__bridge id)kSecAttrService];
+        a = qDict[(__bridge id)kSecAttrAccount];
+        g = qDict[(__bridge id)kSecAttrAccessGroup];
+        if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
             logAudit(@"KEYCHAIN-READ", [NSString stringWithFormat:@"🔍 Zalo truy vấn Keychain: Service='%@' | Account='%@' | Group='%@'", s ?: @"*", a ?: @"*", g ?: @"default"]);
         }
     }
     NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
     CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
-    return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(targetQuery, result) : SecItemCopyMatching(targetQuery, result);
+    OSStatus ret = orig_SecItemCopyMatching ? orig_SecItemCopyMatching(targetQuery, result) : SecItemCopyMatching(targetQuery, result);
+
+    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
+        NSString *statusStr = (ret == errSecSuccess) ? @"✅ TÌM THẤY DỮ LIỆU" : (ret == errSecItemNotFound ? @"⚪ errSecItemNotFound (Trống - Zalo sẽ tự sinh mới)" : [NSString stringWithFormat:@"code=%d", (int)ret]);
+        logAudit(@"KEYCHAIN-RESULT", [NSString stringWithFormat:@"   ↳ Kết quả đọc '%@'/'%@': %@", s ?: @"*", a ?: @"*", statusStr]);
+    }
+
+    return ret;
 }
 
 static OSStatus (*orig_SecItemAdd)(CFDictionaryRef attributes, CFTypeRef *result);
@@ -4111,8 +4121,43 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
             NSString *prefPath = getConfigPath();
             NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:prefPath];
             if (!dict) dict = [NSDictionary dictionaryWithContentsOfFile:GLOBAL_PREFS_PATH];
-            if ([dict[@"wipePending"] boolValue] || [dict[@"needsAPNsUnregister"] boolValue]) {
+            if ([dict[@"wipePending"] boolValue] || [dict[@"needsAPNsUnregister"] boolValue] || [dict[@"needsKeychainPurge"] boolValue]) {
                 s_unregisteredOnceAfterWipe = YES;
+
+                // 1. XÓA SẠCH 100% KEYCHAIN CŨ CỦA ZALO TRONG CHÍNH TIẾN TRÌNH ZALO
+                NSArray *secClasses = @[
+                    (__bridge id)kSecClassGenericPassword,
+                    (__bridge id)kSecClassInternetPassword,
+                    (__bridge id)kSecClassCertificate,
+                    (__bridge id)kSecClassKey,
+                    (__bridge id)kSecClassIdentity
+                ];
+                NSArray *secGroups = @[
+                    @"",
+                    @"group.vn.com.vng.zingalo",
+                    @"group.noti.vn.com.vng.zingalo",
+                    @"group.zsettings",
+                    @"group.com.vng.zalo",
+                    @"group.com.zing.zalo",
+                    @"vn.com.vng.zingalo",
+                    @"vn.com.vng.zalo.user",
+                    @"vn.com.vng.zingalo.zalosdk"
+                ];
+                NSUInteger deletedCount = 0;
+                for (id secClass in secClasses) {
+                    for (NSString *grp in secGroups) {
+                        NSMutableDictionary *query = [NSMutableDictionary dictionary];
+                        query[(__bridge id)kSecClass] = secClass;
+                        if (grp.length > 0) {
+                            query[(__bridge id)kSecAttrAccessGroup] = grp;
+                        }
+                        OSStatus st = SecItemDelete((__bridge CFDictionaryRef)query);
+                        if (st == errSecSuccess) deletedCount++;
+                    }
+                }
+                logAudit(@"KEYCHAIN-PURGE", [NSString stringWithFormat:@"🧹 [WIPE-ACTIVE] Đã xóa sạch 100%% Keychain cũ của Zalo ngay trong tiến trình Zalo (Số mục đã dọn: %lu)!", (unsigned long)deletedCount]);
+
+                // 2. HỦY ĐĂNG KÝ APNS CŨ VỚI APPLE GATEWAY
                 logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd và xả RunLoop...");
                 if ([self respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
                     [self unregisterForRemoteNotifications];
@@ -4121,6 +4166,7 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 NSMutableDictionary *m = [dict mutableCopy];
                 m[@"wipePending"] = @(NO);
                 m[@"needsAPNsUnregister"] = @(NO);
+                m[@"needsKeychainPurge"] = @(NO);
                 [m writeToFile:prefPath atomically:YES];
                 [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
 

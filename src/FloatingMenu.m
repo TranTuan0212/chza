@@ -1987,7 +1987,9 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         @"group.zsettings",
         @"group.com.vng.zalo",
         @"group.com.zing.zalo",
-        @"vn.com.vng.zingalo"
+        @"vn.com.vng.zingalo",
+        @"vn.com.vng.zalo.user",
+        @"vn.com.vng.zingalo.zalosdk"
     ];
     for (id secClass in secClasses) {
         for (NSString *grp in secGroups) {

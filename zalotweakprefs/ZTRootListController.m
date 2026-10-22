@@ -1637,6 +1637,37 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
             }
+
+            // Xóa sạch Keychain của Zalo
+            NSArray *secClasses = @[
+                (__bridge id)kSecClassGenericPassword,
+                (__bridge id)kSecClassInternetPassword,
+                (__bridge id)kSecClassCertificate,
+                (__bridge id)kSecClassKey,
+                (__bridge id)kSecClassIdentity
+            ];
+            NSArray *secGroups = @[
+                @"",
+                @"group.vn.com.vng.zingalo",
+                @"group.noti.vn.com.vng.zingalo",
+                @"group.zsettings",
+                @"group.com.vng.zalo",
+                @"group.com.zing.zalo",
+                @"vn.com.vng.zingalo",
+                @"vn.com.vng.zalo.user",
+                @"vn.com.vng.zingalo.zalosdk"
+            ];
+            for (id secClass in secClasses) {
+                for (NSString *grp in secGroups) {
+                    NSMutableDictionary *query = [NSMutableDictionary dictionary];
+                    query[(__bridge id)kSecClass] = secClass;
+                    if (grp.length > 0) {
+                        query[(__bridge id)kSecAttrAccessGroup] = grp;
+                    }
+                    SecItemDelete((__bridge CFDictionaryRef)query);
+                }
+            }
+
             updateProgress(@"[55%] 🧹 Đã làm sạch toàn bộ Sandbox Data Containers, Keychain & App Groups...", 0.55f, 0.2);
 
             // 4. Sinh và cấp Profile máy mới (TRONG KHI MẠNG VẪN ĐANG TẮT)
@@ -1686,6 +1717,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
             dict[@"wipePending"] = @(YES);
             dict[@"needsAPNsUnregister"] = @(YES);
+            dict[@"needsKeychainPurge"] = @(YES);
             dict[@"needsSandboxPurge"] = @(YES);
             dict[@"needsNewProfile"] = @(NO);
 
