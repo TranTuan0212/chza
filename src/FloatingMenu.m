@@ -1,39 +1,3 @@
-static void set_airplane_mode_enabled(BOOL enabled) {
-    dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_NOW);
-    Class rCls = NSClassFromString(@"RadiosPreferences");
-    if (rCls) {
-        id rObj = [[rCls alloc] init];
-        if (rObj && [rObj respondsToSelector:@selector(setAirplaneMode:)]) {
-            void (*setModeFn)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[rObj methodForSelector:@selector(setAirplaneMode:)];
-            if (setModeFn) {
-                setModeFn(rObj, @selector(setAirplaneMode:), enabled);
-            }
-            if ([rObj respondsToSelector:@selector(synchronize)]) {
-                void (*syncFn)(id, SEL) = (void (*)(id, SEL))[rObj methodForSelector:@selector(synchronize)];
-                if (syncFn) {
-                    syncFn(rObj, @selector(synchronize));
-                }
-            }
-        }
-    }
-}
-
-static void set_wifi_enabled(BOOL enabled) {
-    void *lib = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_NOW);
-    if (lib) {
-        typedef void *WiFiManagerClientRef;
-        WiFiManagerClientRef (*WiFiManagerClientCreate)(CFAllocatorRef, int) = (WiFiManagerClientRef (*)(CFAllocatorRef, int))dlsym(lib, "WiFiManagerClientCreate");
-        void (*WiFiManagerClientSetProperty)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef) = (void (*)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef))dlsym(lib, "WiFiManagerClientSetProperty");
-        if (WiFiManagerClientCreate && WiFiManagerClientSetProperty) {
-            WiFiManagerClientRef client = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
-            if (client) {
-                WiFiManagerClientSetProperty(client, CFSTR("WiFiEnabled"), enabled ? kCFBooleanTrue : kCFBooleanFalse);
-                CFRelease(client);
-            }
-        }
-    }
-}
-
 #import "FloatingMenu.h"
 #import "Config.h"
 #import "SecurityManager.h"
