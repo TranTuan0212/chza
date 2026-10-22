@@ -574,8 +574,8 @@ static void kill_all_zalo_processes(void) {
     [NSThread sleepForTimeInterval:0.3];
 }
 
-static void zt_kill_apsd(void) {
-    zt_log_to_audit(@"APSD-RESET", @"Bắt đầu kill daemon apsd...");
+static void zt_kill_push_daemons(void) {
+    zt_log_to_audit(@"PUSH-RESET", @"Bắt đầu kill daemon apsd & pushkitd (PushKit VoIP)...");
 
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     size_t size = 0;
@@ -586,11 +586,11 @@ static void zt_kill_apsd(void) {
                 int count = (int)(size / sizeof(struct kinfo_proc));
                 for (int i = 0; i < count; i++) {
                     const char *name = procs[i].kp_proc.p_comm;
-                    if (name && strcasecmp(name, "apsd") == 0) {
+                    if (name && (strcasecmp(name, "apsd") == 0 || strcasecmp(name, "pushkitd") == 0)) {
                         pid_t pid = procs[i].kp_proc.p_pid;
                         if (pid > 1) {
                             kill(pid, SIGKILL);
-                            zt_log_to_audit(@"APSD-RESET", [NSString stringWithFormat:@"Đã gửi SIGKILL tới apsd (PID: %d)", pid]);
+                            zt_log_to_audit(@"PUSH-RESET", [NSString stringWithFormat:@"Đã gửi SIGKILL tới %s (PID: %d)", name, pid]);
                         }
                     }
                 }
@@ -608,12 +608,18 @@ static void zt_kill_apsd(void) {
     };
     for (int i = 0; killallPaths[i] != NULL; i++) {
         if (access(killallPaths[i], X_OK) == 0) {
-            const char *argv[] = {killallPaths[i], "-9", "apsd", NULL};
-            zt_run_cmd(killallPaths[i], argv);
+            const char *argv_apsd[] = {killallPaths[i], "-9", "apsd", NULL};
+            zt_run_cmd(killallPaths[i], argv_apsd);
+            const char *argv_pk[] = {killallPaths[i], "-9", "pushkitd", NULL};
+            zt_run_cmd(killallPaths[i], argv_pk);
             break;
         }
     }
     [NSThread sleepForTimeInterval:0.2];
+}
+
+static void zt_kill_apsd(void) {
+    zt_kill_push_daemons();
 }
 
 static void ensure_root_privileges(void) {
@@ -671,7 +677,9 @@ static void safe_purge_apple_push_cache(NSMutableArray<NSString *> *errors) {
         @"/var/wireless/Library/Preferences/com.apple.apsd.plist",
         @"/private/var/wireless/Library/Preferences/com.apple.apsd.plist",
         @"/var/mobile/Library/Preferences/com.apple.apsd.plist",
-        @"/private/var/mobile/Library/Preferences/com.apple.apsd.plist"
+        @"/private/var/mobile/Library/Preferences/com.apple.apsd.plist",
+        @"/var/mobile/Library/Preferences/com.apple.pushkit.plist",
+        @"/private/var/mobile/Library/Preferences/com.apple.pushkit.plist"
     ];
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableOrderedSet<NSString *> *targetPaths = [NSMutableOrderedSet orderedSet];
@@ -1748,8 +1756,12 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
 
             updateProgress(@"[75%] 🎲 Đã cấp IDFV, Serial, MAC, SIM mới & Lưu cấu hình máy mới...", 0.75f, 0.2);
 
-            // Đợi tổng cộng thời gian ngắt mạng đạt 4-5s để socket Apple Gateway đóng hoàn toàn
-            [NSThread sleepForTimeInterval:2.0];
+            // Đếm ngược 10 giây cô lập mạng để Apple Gateway & pushkitd cắt đứt toàn bộ phiên kết nối cũ
+            for (int sec = 10; sec >= 1; sec--) {
+                float pVal = 0.75f + (float)(10 - sec) * (0.15f / 10.0f);
+                updateProgress([NSString stringWithFormat:@"[✈️ %ds] Đang cô lập mạng & cắt socket Apple Push/VoIP Gateway...", sec], pVal, 0.05);
+                [NSThread sleepForTimeInterval:1.0];
+            }
 
             // 5. KHÔI PHỤC KẾT NỐI MẠNG KHI THIẾT BỊ ĐÃ LÀ MÁY MỚI 100%
             updateProgress(@"[90%] 🌐 Đang khôi phục kết nối mạng (Nhận dải IP mới cho máy mới)...", 0.90f, 0.3);
