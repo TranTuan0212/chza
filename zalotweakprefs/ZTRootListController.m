@@ -260,6 +260,25 @@ static void zt_log_to_audit(NSString *tag, NSString *msg) {
     }
 }
 
+static void set_wifi_enabled(BOOL enabled) {
+    void *lib = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_NOW);
+    if (lib) {
+        typedef void *WiFiManagerClientRef;
+        WiFiManagerClientRef (*WiFiManagerClientCreate)(CFAllocatorRef, int) = (WiFiManagerClientRef (*)(CFAllocatorRef, int))dlsym(lib, "WiFiManagerClientCreate");
+        void (*WiFiManagerClientSetProperty)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef) = (void (*)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef))dlsym(lib, "WiFiManagerClientSetProperty");
+        if (WiFiManagerClientCreate && WiFiManagerClientSetProperty) {
+            WiFiManagerClientRef client = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
+            if (client) {
+                WiFiManagerClientSetProperty(client, CFSTR("WiFiEnabled"), enabled ? kCFBooleanTrue : kCFBooleanFalse);
+                CFRelease(client);
+                zt_log_to_audit(@"WIFI-CONTROL", [NSString stringWithFormat:@"Trạng thái Wi-Fi -> %@ (qua MobileWiFi)", enabled ? @"BẬT" : @"TẮT"]);
+                return;
+            }
+        }
+    }
+    zt_log_to_audit(@"WIFI-CONTROL", @"⚠️ Không thể tải MobileWiFi để chuyển trạng thái Wi-Fi");
+}
+
 static void set_airplane_mode_enabled(BOOL enabled) {
     dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_NOW);
     Class rCls = NSClassFromString(@"RadiosPreferences");
@@ -1580,6 +1599,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             // 2. BẬT CHẾ ĐỘ MÁY BAY: Cắt mạng hoàn toàn để cô lập môi trường và ngắt socket Apple Gateway
             updateProgress(@"[25%] ✈️ Đang bật Chế độ máy bay (Cô lập mạng & ngắt socket Apple Gateway)...", 0.25f, 0.2);
             set_airplane_mode_enabled(YES);
+            set_wifi_enabled(NO);
 
             // 3. Trong khi mạng đang ngắt: Xóa sạch dữ liệu cũ
             safe_purge_apple_push_cache(errors);
@@ -1734,6 +1754,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             // 5. KHÔI PHỤC KẾT NỐI MẠNG KHI THIẾT BỊ ĐÃ LÀ MÁY MỚI 100%
             updateProgress(@"[90%] 🌐 Đang khôi phục kết nối mạng (Nhận dải IP mới cho máy mới)...", 0.90f, 0.3);
             set_airplane_mode_enabled(NO);
+            set_wifi_enabled(YES);
             [NSThread sleepForTimeInterval:1.5];
 
             // Làm mới biểu tượng qua uicache
@@ -2321,9 +2342,12 @@ static NSString *findAuditLogPath(void) {
     // 6. Push Tokens & Tiêu chuẩn Preflight Kiểm tra Độ sạch
     NSString *currAP = dict[@"currentAPNsToken"];
     NSString *currVP = dict[@"currentVoIPToken"];
+    NSString *rotStatus = dict[@"apnsRotatedStatus"];
+    info.apnsRotatedStatus = rotStatus;
     info.apnsPushStatus = (currAP.length > 0) ? currAP : @"Chờ mở Zalo để Apple cấp Token... ⏳";
     info.voipPushStatus = (currVP.length > 0) ? currVP : @"Chờ Zalo đăng ký cuộc gọi PushKit... ⏳";
-    info.pushTokenPassed = YES;
+    BOOL isDup = [rotStatus isEqualToString:@"DUPLICATE"];
+    info.pushTokenPassed = (currAP.length >= 32 && !isDup);
 
     info.socketCellularPassed = YES;
     info.socketCellularText = @"Sẵn sàng (200 OK)";

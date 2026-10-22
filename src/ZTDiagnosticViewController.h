@@ -85,6 +85,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) NSString *dyldHideText;
 @property (nonatomic, assign) BOOL dyldHidePassed;
 @property (nonatomic, copy, nullable) NSString *voipPushStatus;
+@property (nonatomic, copy, nullable) NSString *apnsRotatedStatus;
 @property (nonatomic, assign) BOOL pushTokenPassed;
 @property (nonatomic, copy, nullable) NSString *zcidAuditText;
 @property (nonatomic, assign) BOOL zcidAuditPassed;

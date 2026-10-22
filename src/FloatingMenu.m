@@ -1,3 +1,39 @@
+static void set_airplane_mode_enabled(BOOL enabled) {
+    dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_NOW);
+    Class rCls = NSClassFromString(@"RadiosPreferences");
+    if (rCls) {
+        id rObj = [[rCls alloc] init];
+        if (rObj && [rObj respondsToSelector:@selector(setAirplaneMode:)]) {
+            void (*setModeFn)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[rObj methodForSelector:@selector(setAirplaneMode:)];
+            if (setModeFn) {
+                setModeFn(rObj, @selector(setAirplaneMode:), enabled);
+            }
+            if ([rObj respondsToSelector:@selector(synchronize)]) {
+                void (*syncFn)(id, SEL) = (void (*)(id, SEL))[rObj methodForSelector:@selector(synchronize)];
+                if (syncFn) {
+                    syncFn(rObj, @selector(synchronize));
+                }
+            }
+        }
+    }
+}
+
+static void set_wifi_enabled(BOOL enabled) {
+    void *lib = dlopen("/System/Library/PrivateFrameworks/MobileWiFi.framework/MobileWiFi", RTLD_NOW);
+    if (lib) {
+        typedef void *WiFiManagerClientRef;
+        WiFiManagerClientRef (*WiFiManagerClientCreate)(CFAllocatorRef, int) = (WiFiManagerClientRef (*)(CFAllocatorRef, int))dlsym(lib, "WiFiManagerClientCreate");
+        void (*WiFiManagerClientSetProperty)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef) = (void (*)(WiFiManagerClientRef, CFStringRef, CFPropertyListRef))dlsym(lib, "WiFiManagerClientSetProperty");
+        if (WiFiManagerClientCreate && WiFiManagerClientSetProperty) {
+            WiFiManagerClientRef client = WiFiManagerClientCreate(kCFAllocatorDefault, 0);
+            if (client) {
+                WiFiManagerClientSetProperty(client, CFSTR("WiFiEnabled"), enabled ? kCFBooleanTrue : kCFBooleanFalse);
+                CFRelease(client);
+            }
+        }
+    }
+}
+
 #import "FloatingMenu.h"
 #import "Config.h"
 #import "SecurityManager.h"
@@ -2314,9 +2350,16 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         }
     }
     if (isGenuineZalo) {
+        NSString *rotStatus = s.apnsRotatedStatus;
+        if (!rotStatus || rotStatus.length == 0) {
+            NSDictionary *prefsD = [NSDictionary dictionaryWithContentsOfFile:@"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"];
+            rotStatus = prefsD[@"apnsRotatedStatus"];
+        }
+        info.apnsRotatedStatus = rotStatus;
         info.apnsPushStatus = (curApns.length > 0) ? curApns : @"Đang chờ Zalo kết nối APNs...";
         info.voipPushStatus = (curVoip.length > 0) ? curVoip : @"Đang chờ Zalo đăng ký cuộc gọi...";
-        info.pushTokenPassed = YES;
+        BOOL isDup = [rotStatus isEqualToString:@"DUPLICATE"];
+        info.pushTokenPassed = (curApns.length >= 32 && !isDup);
     } else {
         info.apnsPushStatus = @"Đã vô hiệu hoá trên Clone (Chống ban 3h) ✅";
         info.voipPushStatus = @"Đã vô hiệu hoá trên Clone (Chống ban 3h) ✅";

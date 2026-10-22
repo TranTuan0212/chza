@@ -1875,7 +1875,9 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
         if (!self.info.deviceIdPassed) [reasons appendString:@"• Mã device_id chưa chuẩn 3 mốc đường dẫn (Cần Deep Wipe)!\n"];
         if (!self.info.uptimeSyncPassed) [reasons appendString:@"• Lệch 3 đồng hồ Uptime (BootTime / ContCPU / AwakeCPU)!\n"];
         if (!self.info.dyldHidePassed) [reasons appendString:@"• Chưa ẩn Zalotweak.dylib khỏi trình quét dyld/dladdr!\n"];
-        if (!self.info.pushTokenPassed) [reasons appendString:@"• Chưa cấp Token APNs / VoIP 32-byte mới!\n"];
+        if ([self.info.apnsRotatedStatus isEqualToString:@"DUPLICATE"]) {
+            [reasons appendString:@"• Token APNs BỊ TRÙNG 100% với Token trước Wipe! Cần tắt Wi-Fi và Wipe lại để Apple cấp Token mới!\n"];
+        } else if (!self.info.pushTokenPassed) [reasons appendString:@"• Chưa cấp Token APNs / VoIP 32-byte mới!\n"];
         if (!self.info.armCpuPassed) [reasons appendString:@"• Lệch tập lệnh ARM CPU phần cứng Apple!\n"];
         if (self.info.ipCheckCompleted && !self.info.ipCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• IP KHÔNG SẠCH: %@\n", self.info.ipTypeDesc ?: @""]];
         if (!self.info.keychainCleanPassed) [reasons appendString:[NSString stringWithFormat:@"• Còn %ld Token Zalo trong Keychain! Cần Deep Wipe để làm sạch.\n", (long)self.info.keychainRemainingCount]];
@@ -2958,11 +2960,13 @@ static void query_live_public_ip(void (^completion)(NSString *ip)) {
     if (pushVal.length > 18 && ![pushVal containsString:@" "]) {
         pushVal = [NSString stringWithFormat:@"%@...", [pushVal substringToIndex:16]];
     }
-    NSString *pushBadge = isOrig ? @"Bảo Toàn Gốc ✅" : (self.info.pushTokenPassed ? @"Đã Thay Mới ✅" : @"Chưa cấp ⚠️");
+    BOOL isDup = [self.info.apnsRotatedStatus isEqualToString:@"DUPLICATE"];
+    BOOL isNew = [self.info.apnsRotatedStatus isEqualToString:@"ROTATED_NEW"];
+    NSString *pushBadge = isDup ? @"Bị Trùng Cũ 🔴" : (isNew ? @"Đã Thay Mới ✅" : (self.info.pushTokenPassed ? @"Bảo Toàn Gốc ✅" : @"Chưa cấp ⚠️"));
     [inner addArrangedSubview:[self createRowWithKey:@"Token Đẩy APNs (32-Byte)"
                                               value:pushVal
                                               badge:pushBadge
-                                          isWarning:!self.info.pushTokenPassed]];
+                                          isWarning:(!self.info.pushTokenPassed || isDup)]];
 
     NSString *voipVal = self.info.voipPushStatus ?: @"32-Byte SHA256 Token";
     if (voipVal.length > 18 && ![voipVal containsString:@" "]) {
