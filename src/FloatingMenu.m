@@ -326,8 +326,9 @@ UIViewController *ZTGetTopViewController(void) {
         self.frame = [UIScreen mainScreen].bounds;
         self.hidden = NO;
         ZTFloatingButton *btn = [ZTFloatingButton sharedButton];
-        btn.hidden = NO;
-        btn.alpha = 1.0;
+        BOOL shouldShowBtn = [ZTSettings sharedSettings].showFloatingMenu;
+        btn.hidden = !shouldShowBtn;
+        btn.alpha = shouldShowBtn ? 1.0 : 0.0;
 
         // Đảm bảo nút không bị văng ra ngoài mép màn hình
         CGRect screenBounds = [UIScreen mainScreen].bounds;
@@ -611,6 +612,9 @@ UIViewController *ZTGetTopViewController(void) {
                         banner.alpha = 0.0;
                     } completion:^(BOOL fin) {
                         [banner removeFromSuperview];
+                        if (![ZTSettings sharedSettings].showFloatingMenu) {
+                            win.hidden = YES;
+                        }
                     }];
                 }
             });
@@ -626,6 +630,9 @@ UIViewController *ZTGetTopViewController(void) {
             banner.transform = CGAffineTransformMakeScale(0.95, 0.95);
         } completion:^(BOOL finished) {
             [banner removeFromSuperview];
+            if (![ZTSettings sharedSettings].showFloatingMenu) {
+                [ZTFloatingWindow sharedWindow].hidden = YES;
+            }
         }];
     }
 }
