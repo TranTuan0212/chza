@@ -4733,8 +4733,6 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 
 %end
 
-%end
-
 // ==========================================
 // BỘ ĐỊNH TUYẾN MẠNG: ZERO NETWORK INTERVENTION
 // ==========================================
