@@ -2043,12 +2043,24 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         @"vn.com.vng.zingalo.zalosdk"
     ];
     for (id secClass in secClasses) {
+        NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
+        broadQ[(__bridge id)kSecClass] = secClass;
+        broadQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+        SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
+        [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+        SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
         for (NSString *grp in secGroups) {
             NSMutableDictionary *query = [NSMutableDictionary dictionary];
             query[(__bridge id)kSecClass] = secClass;
             if (grp.length > 0) {
                 query[(__bridge id)kSecAttrAccessGroup] = grp;
             }
+            query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+            SecItemDelete((__bridge CFDictionaryRef)query);
+
+            [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
             SecItemDelete((__bridge CFDictionaryRef)query);
         }
     }

@@ -640,12 +640,24 @@ static void purge_all_zalo_keychain_safely(void) {
     ];
 
     for (id secClass in secClasses) {
+        NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
+        broadQ[(__bridge id)kSecClass] = secClass;
+        broadQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+        SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
+        [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+        SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
         for (NSString *grp in groups) {
             NSMutableDictionary *query = [NSMutableDictionary dictionary];
             query[(__bridge id)kSecClass] = secClass;
             if (grp.length > 0) {
                 query[(__bridge id)kSecAttrAccessGroup] = grp;
             }
+            query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+            SecItemDelete((__bridge CFDictionaryRef)query);
+
+            [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
             SecItemDelete((__bridge CFDictionaryRef)query);
         }
     }
@@ -965,10 +977,19 @@ static void purge_entire_sandbox_safely(void) {
             [self saveSettings];
         }
 
-        if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
+        // Nạp mốc thời gian InstallApp sinh từ lúc bấm Wipe (hoặc APFS birth time)
+        NSString *wipedInstallStr = dict[@"firstTimeInstallApp"];
+        if (wipedInstallStr && wipedInstallStr.length > 0) {
+            [[NSUserDefaults standardUserDefaults] setObject:wipedInstallStr forKey:@"firstTimeInstallApp"];
+            // Khi mở app thật: tự sinh mốc OpenApp theo thời gian thực hiện tại (hoặc lệch tự nhiên)
+            uint64_t openNowMs = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000ULL + (uint64_t)arc4random_uniform(500);
+            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", openNowMs] forKey:@"firstTimeOpenApp"];
+            [[NSUserDefaults standardUserDefaults] synchronize];
+        } else if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
             uint64_t tSandbox = self.birthTimeSec + (self.deltaSandboxSec > 0 ? (uint64_t)self.deltaSandboxSec : 180ULL);
             uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-            uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
+            uint64_t tOpenMs = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000ULL;
+            if (tOpenMs <= tInstallMs) tOpenMs = tInstallMs + 35000ULL;
             [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
             [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
             [[NSUserDefaults standardUserDefaults] synchronize];
@@ -4170,14 +4191,25 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 ];
                 NSUInteger deletedCount = 0;
                 for (id secClass in secClasses) {
+                    NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
+                    broadQ[(__bridge id)kSecClass] = secClass;
+                    broadQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                    if (SecItemDelete((__bridge CFDictionaryRef)broadQ) == errSecSuccess) deletedCount++;
+
+                    [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                    if (SecItemDelete((__bridge CFDictionaryRef)broadQ) == errSecSuccess) deletedCount++;
+
                     for (NSString *grp in secGroups) {
                         NSMutableDictionary *query = [NSMutableDictionary dictionary];
                         query[(__bridge id)kSecClass] = secClass;
                         if (grp.length > 0) {
                             query[(__bridge id)kSecAttrAccessGroup] = grp;
                         }
-                        OSStatus st = SecItemDelete((__bridge CFDictionaryRef)query);
-                        if (st == errSecSuccess) deletedCount++;
+                        query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                        if (SecItemDelete((__bridge CFDictionaryRef)query) == errSecSuccess) deletedCount++;
+
+                        [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                        if (SecItemDelete((__bridge CFDictionaryRef)query) == errSecSuccess) deletedCount++;
                     }
                 }
                 logAudit(@"KEYCHAIN-PURGE", [NSString stringWithFormat:@"🧹 [WIPE-ACTIVE] Đã xóa sạch 100%% Keychain cũ của Zalo ngay trong tiến trình Zalo (Số mục đã dọn: %lu)!", (unsigned long)deletedCount]);

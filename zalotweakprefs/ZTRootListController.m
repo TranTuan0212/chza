@@ -1695,7 +1695,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 [fm createDirectoryAtPath:[grpLib stringByAppendingPathComponent:@"Application Support"] withIntermediateDirectories:YES attributes:nil error:nil];
             }
 
-            // Xóa sạch Keychain của Zalo
+            // Xóa sạch tận gốc 100% Keychain của Zalo (Bao gồm cả Synchronizable và Không Access Group)
             NSArray *secClasses = @[
                 (__bridge id)kSecClassGenericPassword,
                 (__bridge id)kSecClassInternetPassword,
@@ -1715,12 +1715,26 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 @"vn.com.vng.zingalo.zalosdk"
             ];
             for (id secClass in secClasses) {
+                // Xóa tổng quát theo class
+                NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
+                broadQ[(__bridge id)kSecClass] = secClass;
+                broadQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
+                [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                SecItemDelete((__bridge CFDictionaryRef)broadQ);
+
+                // Xóa chi tiết theo từng Access Group
                 for (NSString *grp in secGroups) {
                     NSMutableDictionary *query = [NSMutableDictionary dictionary];
                     query[(__bridge id)kSecClass] = secClass;
                     if (grp.length > 0) {
                         query[(__bridge id)kSecAttrAccessGroup] = grp;
                     }
+                    query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                    SecItemDelete((__bridge CFDictionaryRef)query);
+
+                    [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
                     SecItemDelete((__bridge CFDictionaryRef)query);
                 }
             }
@@ -1784,6 +1798,11 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"needsKeychainPurge"] = @(YES);
             dict[@"needsSandboxPurge"] = @(YES);
             dict[@"needsNewProfile"] = @(NO);
+
+            // Mốc cài đặt app chuẩn tự nhiên: Wipe chính là lúc cài đặt app!
+            uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
+            uint64_t tInstallMs = nowSec * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
+            dict[@"firstTimeInstallApp"] = [NSString stringWithFormat:@"%llu", tInstallMs];
 
             // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
             save_dict_to_all_locations(dict);
