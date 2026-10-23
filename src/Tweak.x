@@ -2536,6 +2536,42 @@ static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
     return dict;
 }
 
+static NSString *format_sec_value_data(id valData) {
+    if (!valData) return @"(nil)";
+    if ([valData isKindOfClass:[NSString class]]) return (NSString *)valData;
+    if ([valData isKindOfClass:[NSNumber class]]) return [(NSNumber *)valData stringValue];
+    if ([valData isKindOfClass:[NSData class]]) {
+        NSData *d = (NSData *)valData;
+        if (d.length == 0) return @"(empty data)";
+        NSString *str = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        if (str && str.length > 0) {
+            if (str.length > 150) {
+                return [NSString stringWithFormat:@"%@... (%lu chars)", [str substringToIndex:150], (unsigned long)str.length];
+            }
+            return str;
+        }
+        id obj = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:nil];
+        if (obj) {
+            if ([obj isKindOfClass:[NSDictionary class]] || [obj isKindOfClass:[NSArray class]]) {
+                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+                if (jsonData) {
+                    NSString *jsonStr = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+                    if (jsonStr.length > 150) {
+                        return [NSString stringWithFormat:@"%@... (%lu chars)", [jsonStr substringToIndex:150], (unsigned long)jsonStr.length];
+                    }
+                    return jsonStr;
+                }
+            }
+            return [NSString stringWithFormat:@"[Plist] %@", obj];
+        }
+        if (d.length <= 48) {
+            return [NSString stringWithFormat:@"[Base64] %@", [d base64EncodedStringWithOptions:0]];
+        }
+        return [NSString stringWithFormat:@"[Binary: %luB]", (unsigned long)d.length];
+    }
+    return [NSString stringWithFormat:@"%@", valData];
+}
+
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef query, CFTypeRef *result);
 static OSStatus my_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
     if (!is_tweak_active()) {
@@ -2558,7 +2594,27 @@ static OSStatus my_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result)
     OSStatus ret = orig_SecItemCopyMatching ? orig_SecItemCopyMatching(targetQuery, result) : SecItemCopyMatching(targetQuery, result);
 
     if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
-        NSString *statusStr = (ret == errSecSuccess) ? @"✅ TÌM THẤY DỮ LIỆU" : (ret == errSecItemNotFound ? @"⚪ errSecItemNotFound (Trống - Zalo sẽ tự sinh mới)" : [NSString stringWithFormat:@"code=%d", (int)ret]);
+        NSString *statusStr = nil;
+        if (ret == errSecSuccess) {
+            id readVal = nil;
+            if (result && *result) {
+                CFTypeRef resObj = *result;
+                if (CFGetTypeID(resObj) == CFDictionaryGetTypeID()) {
+                    readVal = [(__bridge NSDictionary *)resObj objectForKey:(__bridge id)kSecValueData];
+                } else if (CFGetTypeID(resObj) == CFDataGetTypeID()) {
+                    readVal = (__bridge NSData *)resObj;
+                }
+            }
+            if (readVal) {
+                statusStr = [NSString stringWithFormat:@"✅ TÌM THẤY | Value='%@'", format_sec_value_data(readVal)];
+            } else {
+                statusStr = @"✅ TÌM THẤY DỮ LIỆU";
+            }
+        } else if (ret == errSecItemNotFound) {
+            statusStr = @"⚪ errSecItemNotFound (Trống - Zalo sẽ tự sinh mới)";
+        } else {
+            statusStr = [NSString stringWithFormat:@"code=%d", (int)ret];
+        }
         logAudit(@"KEYCHAIN-RESULT", [NSString stringWithFormat:@"   ↳ Kết quả đọc '%@'/'%@': %@", s ?: @"*", a ?: @"*", statusStr]);
     }
 
@@ -2573,18 +2629,21 @@ static OSStatus my_SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result) {
     NSString *s = nil;
     NSString *a = nil;
     NSString *g = nil;
+    id val = nil;
     if (attributes) {
         NSDictionary *aDict = (__bridge NSDictionary *)attributes;
         s = aDict[(__bridge id)kSecAttrService];
         a = aDict[(__bridge id)kSecAttrAccount];
         g = aDict[(__bridge id)kSecAttrAccessGroup];
+        val = aDict[(__bridge id)kSecValueData];
     }
     NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributes);
     CFDictionaryRef targetAttrs = isolatedAttrs ? (__bridge CFDictionaryRef)isolatedAttrs : attributes;
     OSStatus ret = orig_SecItemAdd ? orig_SecItemAdd(targetAttrs, result) : SecItemAdd(targetAttrs, result);
     if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
         NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
-        logAudit(@"KEYCHAIN-ADD", [NSString stringWithFormat:@"💾 Zalo ghi mới Keychain: Service='%@' | Account='%@' | Group='%@' -> %@", s ?: @"*", a ?: @"*", g ?: @"default", statusStr]);
+        NSString *valStr = format_sec_value_data(val);
+        logAudit(@"KEYCHAIN-ADD", [NSString stringWithFormat:@"💾 Zalo ghi mới Keychain: Service='%@' | Account='%@' | Group='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", g ?: @"default", valStr, statusStr]);
     }
     return ret;
 }
@@ -2618,10 +2677,15 @@ static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
     }
     NSString *s = nil;
     NSString *a = nil;
+    id val = nil;
     if (query) {
         NSDictionary *qDict = (__bridge NSDictionary *)query;
         s = qDict[(__bridge id)kSecAttrService];
         a = qDict[(__bridge id)kSecAttrAccount];
+    }
+    if (attributesToUpdate) {
+        NSDictionary *uDict = (__bridge NSDictionary *)attributesToUpdate;
+        val = uDict[(__bridge id)kSecValueData];
     }
     NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
     NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributesToUpdate);
@@ -2630,7 +2694,8 @@ static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
     OSStatus ret = orig_SecItemUpdate ? orig_SecItemUpdate(targetQuery, targetAttrs) : SecItemUpdate(targetQuery, targetAttrs);
     if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
         NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
-        logAudit(@"KEYCHAIN-UPDATE", [NSString stringWithFormat:@"📝 Zalo cập nhật Keychain: Service='%@' | Account='%@' -> %@", s ?: @"*", a ?: @"*", statusStr]);
+        NSString *valStr = format_sec_value_data(val);
+        logAudit(@"KEYCHAIN-UPDATE", [NSString stringWithFormat:@"📝 Zalo cập nhật Keychain: Service='%@' | Account='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", valStr, statusStr]);
     }
     return ret;
 }

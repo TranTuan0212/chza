@@ -1704,7 +1704,6 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 (__bridge id)kSecClassIdentity
             ];
             NSArray *secGroups = @[
-                @"",
                 @"group.vn.com.vng.zingalo",
                 @"group.noti.vn.com.vng.zingalo",
                 @"group.zsettings",
@@ -1714,23 +1713,32 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
                 @"vn.com.vng.zalo.user",
                 @"vn.com.vng.zingalo.zalosdk"
             ];
+            NSArray *secServices = @[
+                @"vn.com.vng.zingalo",
+                @"vn.com.vng.zalo.user",
+                @"vn.com.vng.zingalo.zalosdk",
+                @"com.firebase.FIRInstallations.installations",
+                @"kZADriveCacheAccount_466572674",
+                @"466572674"
+            ];
             for (id secClass in secClasses) {
-                // Xóa tổng quát theo class
-                NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
-                broadQ[(__bridge id)kSecClass] = secClass;
-                broadQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
-                SecItemDelete((__bridge CFDictionaryRef)broadQ);
-
-                [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
-                SecItemDelete((__bridge CFDictionaryRef)broadQ);
-
-                // Xóa chi tiết theo từng Access Group
+                // Xóa chi tiết theo từng Access Group của Zalo (Bảo vệ tuyệt đối Wi-Fi/System Keychain)
                 for (NSString *grp in secGroups) {
                     NSMutableDictionary *query = [NSMutableDictionary dictionary];
                     query[(__bridge id)kSecClass] = secClass;
-                    if (grp.length > 0) {
-                        query[(__bridge id)kSecAttrAccessGroup] = grp;
-                    }
+                    query[(__bridge id)kSecAttrAccessGroup] = grp;
+                    query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                    SecItemDelete((__bridge CFDictionaryRef)query);
+
+                    [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                    SecItemDelete((__bridge CFDictionaryRef)query);
+                }
+
+                // Xóa chi tiết theo từng Service của Zalo
+                for (NSString *svc in secServices) {
+                    NSMutableDictionary *query = [NSMutableDictionary dictionary];
+                    query[(__bridge id)kSecClass] = secClass;
+                    query[(__bridge id)kSecAttrService] = svc;
                     query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
                     SecItemDelete((__bridge CFDictionaryRef)query);
 
