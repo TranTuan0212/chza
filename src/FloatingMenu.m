@@ -2195,18 +2195,6 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.needsNewProfile = NO;
     settings.needsSandboxPurge = NO;
 
-    // Pre-seed firstTimeInstallApp và firstTimeOpenApp chuẩn APFS Timeline vào NSUserDefaults & Keychain
-    // Đảm bảo OpenApp luôn có độ trễ tự nhiên (15 - 45 giây) so với InstallApp, không bao giờ bị trùng miligiây!
-    uint64_t birthSec = settings.birthTimeSec;
-    uint32_t deltaSandbox = settings.deltaSandboxSec > 0 ? settings.deltaSandboxSec : 180U;
-    uint64_t tSandbox = birthSec + deltaSandbox;
-    uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-    uint64_t naturalDelayMs = (uint64_t)(15000ULL + arc4random_uniform(30000)); // Trễ tự nhiên 15s - 45s
-    uint64_t tOpenMs = tInstallMs + naturalDelayMs;
-    NSUserDefaults *freshUD = [NSUserDefaults standardUserDefaults];
-    [freshUD setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
-    [freshUD setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
-    [freshUD synchronize];
     BOOL isJB = NO;
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
     isJB = YES;

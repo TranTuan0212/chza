@@ -977,19 +977,10 @@ static void purge_entire_sandbox_safely(void) {
             [self saveSettings];
         }
 
-        // Nạp mốc thời gian InstallApp sinh từ lúc bấm Wipe (hoặc APFS birth time)
-        NSString *wipedInstallStr = dict[@"firstTimeInstallApp"];
-        if (wipedInstallStr && wipedInstallStr.length > 0) {
-            [[NSUserDefaults standardUserDefaults] setObject:wipedInstallStr forKey:@"firstTimeInstallApp"];
-            // Khi mở app thật: tự sinh mốc OpenApp theo thời gian thực hiện tại (hoặc lệch tự nhiên)
-            uint64_t openNowMs = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000ULL + (uint64_t)arc4random_uniform(500);
-            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", openNowMs] forKey:@"firstTimeOpenApp"];
-            [[NSUserDefaults standardUserDefaults] synchronize];
-        } else if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
+        if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
             uint64_t tSandbox = self.birthTimeSec + (self.deltaSandboxSec > 0 ? (uint64_t)self.deltaSandboxSec : 180ULL);
             uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-            uint64_t tOpenMs = (uint64_t)[[NSDate date] timeIntervalSince1970] * 1000ULL;
-            if (tOpenMs <= tInstallMs) tOpenMs = tInstallMs + 35000ULL;
+            uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
             [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
             [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
             [[NSUserDefaults standardUserDefaults] synchronize];

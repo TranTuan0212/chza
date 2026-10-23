@@ -1799,11 +1799,6 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"needsSandboxPurge"] = @(YES);
             dict[@"needsNewProfile"] = @(NO);
 
-            // Mốc cài đặt app chuẩn tự nhiên: Wipe chính là lúc cài đặt app!
-            uint64_t nowSec = (uint64_t)[[NSDate date] timeIntervalSince1970];
-            uint64_t tInstallMs = nowSec * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-            dict[@"firstTimeInstallApp"] = [NSString stringWithFormat:@"%llu", tInstallMs];
-
             // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
             save_dict_to_all_locations(dict);
             sync_license_to_all_locations();
