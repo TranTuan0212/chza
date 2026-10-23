@@ -3192,7 +3192,7 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
 }
 
 // ==========================================
-// HOOK DYLD & DLADDR: Ẩn hoàn toàn Zalotweak.dylib, Substrate, ElleKit, RootHide khỏi bộ quét của Zalo
+// HOOK DYLD & DLADDR: Ẩn hoàn toàn Zalotweak.dylib, Substrate, ElleKit, RootHide, Sileo, Zebra khỏi bộ quét của Zalo
 // ==========================================
 static BOOL is_sensitive_image_path_cstr(const char *name) {
     if (!name) return NO;
@@ -3201,9 +3201,16 @@ static BOOL is_sensitive_image_path_cstr(const char *name) {
             strstr(name, "Substrate") != NULL ||
             strstr(name, "substitute") != NULL ||
             strstr(name, "ellekit") != NULL ||
+            strstr(name, "ElleKit") != NULL ||
             strstr(name, "roothide") != NULL ||
+            strstr(name, "RootHide") != NULL ||
             strstr(name, "jbroot") != NULL ||
+            strstr(name, "/var/jb/") != NULL ||
+            strstr(name, "/jb/") != NULL ||
             strstr(name, "TweakInject") != NULL ||
+            strstr(name, "libhooker") != NULL ||
+            strstr(name, "Choicy") != NULL ||
+            strstr(name, "Shadow") != NULL ||
             strstr(name, "MobileSafety") != NULL);
 }
 
@@ -4239,7 +4246,22 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                         if (lastWiped && lastWiped.length > 0) {
                             if ([tokenHex isEqualToString:lastWiped]) {
                                 statusStr = @"DUPLICATE";
-                                logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"🔴 [CẢNH BÁO TRÙNG] Token APNs nhận từ Apple TRÙNG 100%% với Token trước Wipe: %@ -> TUYỆT ĐỐI CHƯA ĐĂNG KÝ ACC MỚI! Vui lòng bật/tắt Airplane Mode 5s hoặc Wipe lại!", tokenHex]);
+                                logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"🔴 [CẢNH BÁO TRÙNG] Token APNs nhận từ Apple TRÙNG 100%% với Token trước Wipe: %@ -> TUYỆT ĐỐI CHƯA ĐĂNG KÝ ACC MỚI! Vui lòng bật/tắt Airplane Mode 10s hoặc Wipe lại!", tokenHex]);
+                                
+                                // SAFETY INTERLOCK: Hiển thị cảnh báo trực tiếp trên màn hình Zalo
+                                dispatch_async(dispatch_get_main_queue(), ^{
+                                    UIViewController *topVC = get_top_view_controller();
+                                    if (topVC) {
+                                        UIAlertController *dupAlert = [UIAlertController alertControllerWithTitle:@"⚠️ CẢNH BÁO NGUY HIỂM"
+                                                                                                          message:@"Token APNs từ Apple bị TRÙNG 100% với tài khoản trước vừa Wipe!\n\n"
+                                                                                                                  @"• Nguyên nhân: Apple Gateway chưa kịp cấp Token mới.\n"
+                                                                                                                  @"• Hậu quả: Nếu đăng ký bây giờ, Zalo sẽ khóa tài khoản ngay lập tức!\n\n"
+                                                                                                                  @"👉 HÃY BẬT CHẾ ĐỘ MÁY BAY 10 GIÂY rồi tắt lại, hoặc Wipe lại từ Floating Menu."
+                                                                                                   preferredStyle:UIAlertControllerStyleAlert];
+                                        [dupAlert addAction:[UIAlertAction actionWithTitle:@"Đã hiểu (Chờ đổi Token)" style:UIAlertActionStyleDestructive handler:nil]];
+                                        [topVC presentViewController:dupAlert animated:YES completion:nil];
+                                    }
+                                });
                             } else {
                                 statusStr = @"ROTATED_NEW";
                                 logAudit(@"APNS-STATUS", [NSString stringWithFormat:@"🟢 [THÀNH CÔNG] Token APNs ĐÃ ĐỔI MỚI HOÀN TOÀN!\n- Token Mới: %@\n- Token Cũ trước Wipe: %@\n-> AN TOÀN TUYỆT ĐỐI ĐỂ ĐĂNG KÝ ACC MỚI!", tokenHex, lastWiped]);
@@ -4314,24 +4336,19 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
 - (BOOL)canOpenURL:(NSURL *)url {
     if (url) {
         NSString *scheme = [[url scheme] lowercaseString];
-        // 1. Chặn phát hiện Jailbreak qua schemes
+        // Chỉ chặn duy nhất phát hiện Jailbreak package managers & file explorers qua schemes
         if ([scheme isEqualToString:@"cydia"] ||
             [scheme isEqualToString:@"sileo"] ||
             [scheme isEqualToString:@"zbra"] ||
             [scheme isEqualToString:@"filza"] ||
+            [scheme isEqualToString:@"santander"] ||
+            [scheme isEqualToString:@"apt"] ||
             [scheme isEqualToString:@"undecimus"]) {
             logAudit(@"SCHEME-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CHẶN JAILBREAK - TRẢ VỀ NO]", [url absoluteString]]);
             return NO;
         }
-        // 2. Cách ly tuyệt đối: Chặn phát hiện các app Zalo khác trên máy
-        if ([scheme hasPrefix:@"zalo"] ||
-            [scheme isEqualToString:@"zingalo"] ||
-            [scheme isEqualToString:@"vng"] ||
-            [scheme hasPrefix:@"vng-"] ||
-            [scheme isEqualToString:@"vngconnect"]) {
-            logAudit(@"INTER-APP-CHECK", [NSString stringWithFormat:@"canOpenURL('%@') -> [ĐÃ CÁCH LY CHẶN DÒ TÌM APP ZALO KHÁC - TRẢ VỀ NO]", [url absoluteString]]);
-            return NO;
-        }
+        // Cho phép quét thực tế app trên màn hình (YouTube, Facebook, Momo, Vietcombank, ZaloPay...)
+        // Để Zalo gửi danh sách apps thực tế tự nhiên lên máy chủ, không bị rỗng apps: []
     }
     return %orig;
 }
@@ -4708,43 +4725,13 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 %hook NSJSONSerialization
 
 + (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error {
-    if (is_tweak_active() && [obj isKindOfClass:[NSDictionary class]]) {
-        NSDictionary *dict = (NSDictionary *)obj;
-        if (dict[@"device_id"]) {
-            NSString *devId = [NSString stringWithFormat:@"%@", dict[@"device_id"]];
-            ZTSettings *s = [ZTSettings sharedSettings];
-            uint64_t fakeBirth = s.birthTimeSec > 0 ? s.birthTimeSec : (s.bootTimeSec > 86400 ? (s.bootTimeSec - (86400 * 15 + 3600 * 4 + 720)) : 1568160000ULL);
-            NSArray<NSString *> *parts = [devId componentsSeparatedByString:@"-"];
-            BOOL alreadyClean = NO;
-            if (parts.count == 3) {
-                NSString *p0 = parts[0], *p1 = parts[1], *p2 = parts[2];
-                uint64_t sec0 = (uint64_t)strtoull([p0 UTF8String], NULL, 10) / 1000ULL;
-                if (![p0 isEqualToString:p1] && ![p1 isEqualToString:p2] && ![p0 isEqualToString:p2] &&
-                    ![p0 hasSuffix:@"000"] && ![p1 hasSuffix:@"000"] && ![p2 hasSuffix:@"000"] &&
-                    sec0 >= fakeBirth && sec0 <= fakeBirth + 86400ULL) {
-                    alreadyClean = YES;
-                }
-            }
-            if (alreadyClean) {
-                logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"✨ [ZAID-RADAR] [ZAM3914 CHÍNH HÃNG] Zalo đã tự đọc stat hệ thống & tự sinh device_id chuẩn 100%% tự nhiên: %@ ✅", devId]);
-                return %orig;
-            }
-            time_t fake_mtime = 0, fake_ctime = 0;
-            long nsec_b = 0, nsec_m = 0, nsec_c = 0;
-            get_consistent_stat_times(fakeBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
-            uint64_t ms1 = fakeBirth * 1000ULL + (uint64_t)(nsec_b / 1000000L);
-            uint64_t ms2 = (uint64_t)fake_mtime * 1000ULL + (uint64_t)(nsec_m / 1000000L);
-            uint64_t ms3 = (uint64_t)fake_ctime * 1000ULL + (uint64_t)(nsec_c / 1000000L);
-            NSString *cleanDeviceId = [NSString stringWithFormat:@"%llu-%llu-%llu", ms1, ms2, ms3];
-            
-            NSMutableDictionary *m = [dict mutableCopy];
-            m[@"device_id"] = cleanDeviceId;
-            logAudit(@"ZAID-RADAR", [NSString stringWithFormat:@"[NSJSONSerialization] Đã chuẩn hoá device_id tự nhiên: %@ (gốc: %@)", cleanDeviceId, devId]);
-            return %orig(m, opt, error);
-        }
-    }
+    // KHÔNG CAN THIỆP GHI ĐÈ device_id:
+    // Toàn bộ định danh thiết bị đã được chuẩn hóa tự nhiên từ các API gốc của OS (POSIX stat, getattrlist, UIDevice, sysctl).
+    // Giữ nguyên 100% để chữ ký HMAC/Checksum của Zalo khớp tuyệt đối với payload gửi lên máy chủ!
     return %orig;
 }
+
+%end
 
 %end
 

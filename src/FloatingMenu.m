@@ -34,6 +34,50 @@ static __attribute__((unused)) NSString *zt_preview_sha256_token_hex(NSString *p
             digest[0], digest[1], digest[2], digest[3], digest[4], digest[5]];
 }
 
+// Hàm hỗ trợ triệt tiêu daemon apsd & pushkitd trực tiếp khi In-App Wipe
+static void zt_inapp_kill_push_daemons(void) {
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t size = 0;
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
+        struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+        if (procs) {
+            if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
+                int count = (int)(size / sizeof(struct kinfo_proc));
+                for (int i = 0; i < count; i++) {
+                    const char *name = procs[i].kp_proc.p_comm;
+                    if (name && (strcasecmp(name, "apsd") == 0 || strcasecmp(name, "pushkitd") == 0)) {
+                        pid_t pid = procs[i].kp_proc.p_pid;
+                        if (pid > 1) {
+                            kill(pid, SIGKILL);
+                        }
+                    }
+                }
+            }
+            free(procs);
+        }
+    }
+}
+
+static void zt_inapp_set_airplane_mode(BOOL enabled) {
+    dlopen("/System/Library/PrivateFrameworks/AppSupport.framework/AppSupport", RTLD_NOW);
+    Class rCls = NSClassFromString(@"RadiosPreferences");
+    if (rCls) {
+        id rObj = [[rCls alloc] init];
+        if (rObj && [rObj respondsToSelector:@selector(setAirplaneMode:)]) {
+            void (*setModeFn)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[rObj methodForSelector:@selector(setAirplaneMode:)];
+            if (setModeFn) {
+                setModeFn(rObj, @selector(setAirplaneMode:), enabled);
+            }
+            if ([rObj respondsToSelector:@selector(synchronize)]) {
+                void (*syncFn)(id, SEL) = (void (*)(id, SEL))[rObj methodForSelector:@selector(synchronize)];
+                if (syncFn) {
+                    syncFn(rObj, @selector(synchronize));
+                }
+            }
+        }
+    }
+}
+
 // Hàm triệt tiêu toàn bộ socket và kết nối TCP đang mở một cách an toàn
 static void sever_all_network_sockets_immediately(void) {
     [[NSURLCache sharedURLCache] removeAllCachedResponses];
@@ -2132,12 +2176,14 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.needsNewProfile = NO;
     settings.needsSandboxPurge = NO;
 
-    // Pre-seed firstTimeInstallApp và firstTimeOpenApp chuẩn APFS Timeline vào NSUserDefaults
+    // Pre-seed firstTimeInstallApp và firstTimeOpenApp chuẩn APFS Timeline vào NSUserDefaults & Keychain
+    // Đảm bảo OpenApp luôn có độ trễ tự nhiên (15 - 45 giây) so với InstallApp, không bao giờ bị trùng miligiây!
     uint64_t birthSec = settings.birthTimeSec;
     uint32_t deltaSandbox = settings.deltaSandboxSec > 0 ? settings.deltaSandboxSec : 180U;
     uint64_t tSandbox = birthSec + deltaSandbox;
     uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-    uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
+    uint64_t naturalDelayMs = (uint64_t)(15000ULL + arc4random_uniform(30000)); // Trễ tự nhiên 15s - 45s
+    uint64_t tOpenMs = tInstallMs + naturalDelayMs;
     NSUserDefaults *freshUD = [NSUserDefaults standardUserDefaults];
     [freshUD setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
     [freshUD setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
@@ -2169,9 +2215,21 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         [[NSHTTPCookieStorage sharedHTTPCookieStorage] deleteCookie:cookie];
     }
 
-    // 6. Ngắt kết nối mạng và toàn bộ session TCP ngay lập tức
+    // 6. Ngắt kết nối mạng, cô lập socket và đếm ngược 10 giây để Apple Gateway cấp Token APNs mới
     sever_all_network_sockets_immediately();
-    updateProgressAlert(@"[95%] 🎲 Đã sinh Profile mới & Ngắt kết nối socket TCP...", 0.95f);
+    zt_inapp_set_airplane_mode(YES);
+    zt_inapp_kill_push_daemons();
+    
+    for (int sec = 10; sec >= 1; sec--) {
+        float pVal = 0.85f + (float)(10 - sec) * (0.12f / 10.0f);
+        updateProgressAlert([NSString stringWithFormat:@"[✈️ %ds] Đang cô lập mạng & cắt socket Apple Push/VoIP Gateway...", sec], pVal);
+        [NSThread sleepForTimeInterval:1.0];
+    }
+    
+    // Khôi phục mạng sau 10s cách ly
+    zt_inapp_set_airplane_mode(NO);
+    [NSThread sleepForTimeInterval:0.5];
+    updateProgressAlert(@"[98%] 🎲 Đã sinh Profile mới & Cắt đứt kết nối Apple Gateway cũ...", 0.98f);
     if (progressAlert) [NSThread sleepForTimeInterval:0.15];
 
     // 7. Đóng app êm ái: Suspend trước để SpringBoard thu nhỏ scene về nền, sau đó exit(0) tránh lỗi "Scene client is invalid"
