@@ -537,6 +537,28 @@ static BOOL is_valid_zalo_sandbox_path(NSString *path) {
     return NO;
 }
 
+static BOOL is_any_zalo_process_running(void) {
+    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
+    size_t size = 0;
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) == 0 && size > 0) {
+        struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+        if (procs) {
+            if (sysctl(mib, 4, procs, &size, NULL, 0) == 0) {
+                int count = (int)(size / sizeof(struct kinfo_proc));
+                for (int i = 0; i < count; i++) {
+                    const char *name = procs[i].kp_proc.p_comm;
+                    if (name && strcasecmp(name, "Zalo") == 0) {
+                        free(procs);
+                        return YES;
+                    }
+                }
+            }
+            free(procs);
+        }
+    }
+    return NO;
+}
+
 static void kill_all_zalo_processes(void) {
     // 1. Tắt chuẩn qua FBSSystemService của SpringBoard
     Class fbsClass = objc_getClass("FBSSystemService");
@@ -1594,24 +1616,31 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"apnsRotatedStatus"] = @"WAITING";
             dict[@"lastWipedTimestamp"] = @((uint64_t)[[NSDate date] timeIntervalSince1970]);
 
-            // 0.1 Gửi tín hiệu yêu cầu Zalo unregister APNs và xả RunLoop Mach IPC (nếu Zalo đang chạy)
-            CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/perform_push_unregister"), NULL, NULL, YES);
-            [NSThread sleepForTimeInterval:0.25];
-
-            // 1. Tắt sạch tiến trình Zalo & Kill daemon apsd
-            ensure_root_privileges();
-            kill_all_zalo_processes();
-            zt_kill_apsd();
-            updateProgress(@"[15%] 🛑 Đã tắt toàn bộ tiến trình Zalo & Kill daemon apsd...", 0.15f, 0.2);
-
-            // 2. BẬT CHẾ ĐỘ MÁY BAY: Cắt mạng hoàn toàn để cô lập môi trường và ngắt socket Apple Gateway
-            updateProgress(@"[25%] ✈️ Đang bật Chế độ máy bay (Cô lập mạng & ngắt socket Apple Gateway)...", 0.25f, 0.2);
+            // 1. NGẮT MẠNG LẬP TỨC: Bật Chế độ máy bay để Zalo tuyệt đối KHÔNG THỂ gửi bất kỳ dữ liệu nào về server
+            updateProgress(@"[10%] ✈️ Đang bật Chế độ máy bay (Ngắt kết nối Zalo, bảo vệ tuyệt đối)...", 0.10f, 0.2);
             set_airplane_mode_enabled(YES);
             set_wifi_enabled(NO);
+            [NSThread sleepForTimeInterval:0.3];
 
-            // 3. Trong khi mạng đang ngắt: Xóa sạch dữ liệu cũ
-            safe_purge_apple_push_cache(errors);
+            // 2. Xử lý Unregister APNs nếu Zalo đang chạy, sau đó mới tắt Zalo
+            ensure_root_privileges();
+            if (is_any_zalo_process_running()) {
+                updateProgress(@"[18%] 📡 Đang yêu cầu Zalo unregister APNs với daemon apsd...", 0.18f, 0.2);
+                CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/perform_push_unregister"), NULL, NULL, YES);
+                // Cho Zalo đủ 0.8s để gọi unregisterForRemoteNotifications và exit(0) sạch sẽ
+                [NSThread sleepForTimeInterval:0.8];
+            }
+            kill_all_zalo_processes();
+
+            // 3. Xử lý dọn dẹp cache APNs & Daemons trong khi mạng đang ngắt hoàn toàn
+            // Kill cfprefsd TRƯỚC để tránh flush cache ngược lại disk
             zt_kill_cfprefsd();
+            zt_kill_apsd();
+            safe_purge_apple_push_cache(errors);
+            // Kill cfprefsd & apsd LẦN NỮA sau khi ghi file để hệ thống nạp cache sạch
+            zt_kill_cfprefsd();
+            zt_kill_apsd();
+            updateProgress(@"[28%] 🛑 Đã dọn sạch apsd.plist & cô lập socket Apple Gateway...", 0.28f, 0.2);
 
             NSArray *suitesToPurge = @[
                 @"group.vn.com.vng.zingalo",

@@ -5434,7 +5434,7 @@ static void pushUnregisterCallback(CFNotificationCenterRef center, void *observe
                 }
             } @catch (NSException *ex) {}
         }
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.18]];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
         exit(0);
     });
 }
