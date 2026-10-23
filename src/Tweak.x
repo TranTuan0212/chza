@@ -2570,9 +2570,23 @@ static OSStatus my_SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result) {
     if (!is_tweak_active()) {
         return orig_SecItemAdd ? orig_SecItemAdd(attributes, result) : SecItemAdd(attributes, result);
     }
+    NSString *s = nil;
+    NSString *a = nil;
+    NSString *g = nil;
+    if (attributes) {
+        NSDictionary *aDict = (__bridge NSDictionary *)attributes;
+        s = aDict[(__bridge id)kSecAttrService];
+        a = aDict[(__bridge id)kSecAttrAccount];
+        g = aDict[(__bridge id)kSecAttrAccessGroup];
+    }
     NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributes);
     CFDictionaryRef targetAttrs = isolatedAttrs ? (__bridge CFDictionaryRef)isolatedAttrs : attributes;
-    return orig_SecItemAdd ? orig_SecItemAdd(targetAttrs, result) : SecItemAdd(targetAttrs, result);
+    OSStatus ret = orig_SecItemAdd ? orig_SecItemAdd(targetAttrs, result) : SecItemAdd(targetAttrs, result);
+    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
+        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+        logAudit(@"KEYCHAIN-ADD", [NSString stringWithFormat:@"💾 Zalo ghi mới Keychain: Service='%@' | Account='%@' | Group='%@' -> %@", s ?: @"*", a ?: @"*", g ?: @"default", statusStr]);
+    }
+    return ret;
 }
 
 static OSStatus (*orig_SecItemDelete)(CFDictionaryRef query);
@@ -2580,9 +2594,21 @@ static OSStatus my_SecItemDelete(CFDictionaryRef query) {
     if (!is_tweak_active()) {
         return orig_SecItemDelete ? orig_SecItemDelete(query) : SecItemDelete(query);
     }
+    NSString *s = nil;
+    NSString *a = nil;
+    if (query) {
+        NSDictionary *qDict = (__bridge NSDictionary *)query;
+        s = qDict[(__bridge id)kSecAttrService];
+        a = qDict[(__bridge id)kSecAttrAccount];
+    }
     NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
     CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
-    return orig_SecItemDelete ? orig_SecItemDelete(targetQuery) : SecItemDelete(targetQuery);
+    OSStatus ret = orig_SecItemDelete ? orig_SecItemDelete(targetQuery) : SecItemDelete(targetQuery);
+    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
+        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+        logAudit(@"KEYCHAIN-DELETE", [NSString stringWithFormat:@"🗑️ Zalo xóa Keychain: Service='%@' | Account='%@' -> %@", s ?: @"*", a ?: @"*", statusStr]);
+    }
+    return ret;
 }
 
 static OSStatus (*orig_SecItemUpdate)(CFDictionaryRef query, CFDictionaryRef attributesToUpdate);
@@ -2590,11 +2616,23 @@ static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
     if (!is_tweak_active()) {
         return orig_SecItemUpdate ? orig_SecItemUpdate(query, attributesToUpdate) : SecItemUpdate(query, attributesToUpdate);
     }
+    NSString *s = nil;
+    NSString *a = nil;
+    if (query) {
+        NSDictionary *qDict = (__bridge NSDictionary *)query;
+        s = qDict[(__bridge id)kSecAttrService];
+        a = qDict[(__bridge id)kSecAttrAccount];
+    }
     NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
     NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributesToUpdate);
     CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
     CFDictionaryRef targetAttrs = isolatedAttrs ? (__bridge CFDictionaryRef)isolatedAttrs : attributesToUpdate;
-    return orig_SecItemUpdate ? orig_SecItemUpdate(targetQuery, targetAttrs) : SecItemUpdate(targetQuery, targetAttrs);
+    OSStatus ret = orig_SecItemUpdate ? orig_SecItemUpdate(targetQuery, targetAttrs) : SecItemUpdate(targetQuery, targetAttrs);
+    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
+        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+        logAudit(@"KEYCHAIN-UPDATE", [NSString stringWithFormat:@"📝 Zalo cập nhật Keychain: Service='%@' | Account='%@' -> %@", s ?: @"*", a ?: @"*", statusStr]);
+    }
+    return ret;
 }
 
 // ==========================================
