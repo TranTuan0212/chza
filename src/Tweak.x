@@ -2538,38 +2538,54 @@ static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
 
 static NSString *format_sec_value_data(id valData) {
     if (!valData) return @"(nil)";
-    if ([valData isKindOfClass:[NSString class]]) return (NSString *)valData;
-    if ([valData isKindOfClass:[NSNumber class]]) return [(NSNumber *)valData stringValue];
-    if ([valData isKindOfClass:[NSData class]]) {
-        NSData *d = (NSData *)valData;
-        if (d.length == 0) return @"(empty data)";
-        NSString *str = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-        if (str && str.length > 0) {
-            if (str.length > 150) {
-                return [NSString stringWithFormat:@"%@... (%lu chars)", [str substringToIndex:150], (unsigned long)str.length];
-            }
-            return str;
-        }
-        id obj = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:nil];
-        if (obj) {
-            if ([obj isKindOfClass:[NSDictionary class]] || [obj isKindOfClass:[NSArray class]]) {
-                NSData *jsonData = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-                if (jsonData) {
-                    NSString *jsonStr = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
-                    if (jsonStr.length > 150) {
-                        return [NSString stringWithFormat:@"%@... (%lu chars)", [jsonStr substringToIndex:150], (unsigned long)jsonStr.length];
+    @try {
+        if ([valData isKindOfClass:[NSString class]]) return (NSString *)valData;
+        if ([valData isKindOfClass:[NSNumber class]]) return [(NSNumber *)valData stringValue];
+        if ([valData isKindOfClass:[NSData class]]) {
+            NSData *d = (NSData *)valData;
+            if (d.length == 0) return @"(empty data)";
+
+            // 1. Thử giải mã chuỗi UTF-8 thông thường
+            NSString *str = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+            if (str && str.length > 0) {
+                // Kiểm tra ký tự in được cơ bản
+                NSCharacterSet *controlChars = [NSCharacterSet controlCharacterSet];
+                NSRange r = [str rangeOfCharacterFromSet:controlChars];
+                if (r.location == NSNotFound || r.location > 0) {
+                    if (str.length > 150) {
+                        return [NSString stringWithFormat:@"%@... (%lu chars)", [str substringToIndex:150], (unsigned long)str.length];
                     }
-                    return jsonStr;
+                    return str;
                 }
             }
-            return [NSString stringWithFormat:@"[Plist] %@", obj];
+
+            // 2. Thử giải mã Property List (Dictionary / Array) an toàn 100% không dùng NSJSONSerialization
+            id obj = nil;
+            @try {
+                obj = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:nil];
+            } @catch (id ex) {}
+
+            if (obj) {
+                NSString *desc = [[obj description] stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+                if (desc.length > 150) {
+                    return [NSString stringWithFormat:@"[Plist] %@... (%lu chars)", [desc substringToIndex:150], (unsigned long)desc.length];
+                }
+                return [NSString stringWithFormat:@"[Plist] %@", desc];
+            }
+
+            // 3. Chuỗi nhị phân ngắn (Token / Key): in Base64
+            if (d.length <= 48) {
+                return [NSString stringWithFormat:@"[Base64] %@", [d base64EncodedStringWithOptions:0]];
+            }
+            return [NSString stringWithFormat:@"[Binary: %luB]", (unsigned long)d.length];
         }
-        if (d.length <= 48) {
-            return [NSString stringWithFormat:@"[Base64] %@", [d base64EncodedStringWithOptions:0]];
+        return [NSString stringWithFormat:@"%@", valData];
+    } @catch (id ex) {
+        if ([valData isKindOfClass:[NSData class]]) {
+            return [NSString stringWithFormat:@"[RawData: %luB]", (unsigned long)[(NSData *)valData length]];
         }
-        return [NSString stringWithFormat:@"[Binary: %luB]", (unsigned long)d.length];
+        return @"(raw)";
     }
-    return [NSString stringWithFormat:@"%@", valData];
 }
 
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef query, CFTypeRef *result);
