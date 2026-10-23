@@ -4250,7 +4250,14 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                                 
                                 // SAFETY INTERLOCK: Hiển thị cảnh báo trực tiếp trên màn hình Zalo
                                 dispatch_async(dispatch_get_main_queue(), ^{
-                                    UIViewController *topVC = get_top_view_controller();
+                                    UIWindow *keyWin = nil;
+                                    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+                                        if (w.isKeyWindow || w.rootViewController) { keyWin = w; break; }
+                                    }
+                                    UIViewController *topVC = keyWin.rootViewController;
+                                    while (topVC.presentedViewController) {
+                                        topVC = topVC.presentedViewController;
+                                    }
                                     if (topVC) {
                                         UIAlertController *dupAlert = [UIAlertController alertControllerWithTitle:@"⚠️ CẢNH BÁO NGUY HIỂM"
                                                                                                           message:@"Token APNs từ Apple bị TRÙNG 100% với tài khoản trước vừa Wipe!\n\n"
