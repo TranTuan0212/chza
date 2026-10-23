@@ -4182,23 +4182,15 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 }
                 logAudit(@"KEYCHAIN-PURGE", [NSString stringWithFormat:@"🧹 [WIPE-ACTIVE] Đã xóa sạch 100%% Keychain cũ của Zalo ngay trong tiến trình Zalo (Số mục đã dọn: %lu)!", (unsigned long)deletedCount]);
 
-                // 2. HỦY ĐĂNG KÝ APNS CŨ VỚI APPLE GATEWAY
-                logAudit(@"APNS-ROTATE", @"🔄 [WIPE-ACTIVE] Phát hiện phiên mở app đầu tiên sau Wipe -> Hủy đăng ký topic cũ với apsd và xả RunLoop...");
-                if ([self respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
-                    [self unregisterForRemoteNotifications];
-                    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
-                }
+                // 2. HOÀN TẤT WIPE -> ĐĂNG KÝ TRỰC TIẾP VỚI APPLE GATEWAY
                 NSMutableDictionary *m = [dict mutableCopy];
                 m[@"wipePending"] = @(NO);
                 m[@"needsAPNsUnregister"] = @(NO);
                 m[@"needsKeychainPurge"] = @(NO);
                 [m writeToFile:prefPath atomically:YES];
                 [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
-
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                    logAudit(@"APNS-ROTATE", @"🚀 [WIPE-ACTIVE] Kích hoạt đăng ký mới với Apple Gateway để nhận Token mới...");
-                    %orig;
-                });
+                logAudit(@"APNS-ROTATE", @"🚀 [WIPE-ACTIVE] Đăng ký trực tiếp với Apple Gateway nhận Token APNs mới tinh...");
+                %orig;
                 return;
             }
         }
