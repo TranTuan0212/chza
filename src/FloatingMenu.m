@@ -2251,7 +2251,8 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     NSArray<NSString *> *wipePlistPaths = @[
         [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"],
         [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.plist"],
-        GLOBAL_PREFS_PATH
+        @"/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist",
+        @"/var/jb/var/mobile/Library/Preferences/com.sonhu.zalotweak.plist"
     ];
     for (NSString *wp in wipePlistPaths) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:wp]) {

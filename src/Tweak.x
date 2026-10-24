@@ -225,7 +225,7 @@ static inline BOOL __attribute__((unused)) is_zalo_or_tweak_caller(const void *a
     return NO;
 }
 
-static inline BOOL is_network_system_caller(const void *addr) {
+static inline BOOL __attribute__((unused)) is_network_system_caller(const void *addr) {
     if (!addr) return NO;
     Dl_info info;
     if (raw_dladdr(addr, &info) && info.dli_fname) {
@@ -491,7 +491,7 @@ static NSString *get_real_product_version(void) {
     return @"15.8.3";
 }
 
-static uint64_t get_real_disk_total_size(void) {
+static __attribute__((unused)) uint64_t get_real_disk_total_size(void) {
     NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfFileSystemForPath:NSHomeDirectory() error:nil];
     NSNumber *total = attrs[NSFileSystemSize];
     if (total && [total unsignedLongLongValue] > 0) {
