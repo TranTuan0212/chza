@@ -3275,6 +3275,8 @@ static BOOL is_sensitive_image_path_cstr(const char *name) {
             strstr(name, "substitute") != NULL ||
             strstr(name, "ellekit") != NULL ||
             strstr(name, "ElleKit") != NULL ||
+            strstr(name, "libinjector") != NULL ||
+            strstr(name, "systemhook") != NULL ||
             strstr(name, "roothide") != NULL ||
             strstr(name, "RootHide") != NULL ||
             strstr(name, "jbroot") != NULL ||
@@ -3319,6 +3321,59 @@ static int my_dladdr(const void *addr, Dl_info *info) {
         }
     }
     return ret;
+}
+
+static const char *(*orig_class_getImageName)(Class cls) = NULL;
+static const char *my_class_getImageName(Class cls) {
+    const char *img = orig_class_getImageName ? orig_class_getImageName(cls) : class_getImageName(cls);
+    if (img && is_tweak_active() && is_sensitive_image_path_cstr(img)) {
+        if (is_zalo_caller(__builtin_return_address(0))) {
+            return "/System/Library/Frameworks/UIKit.framework/UIKit";
+        }
+    }
+    return img;
+}
+
+static const char **(*orig_objc_copyImageNames)(unsigned int *outCount) = NULL;
+static const char **my_objc_copyImageNames(unsigned int *outCount) {
+    unsigned int realCount = 0;
+    const char **list = orig_objc_copyImageNames ? orig_objc_copyImageNames(&realCount) : objc_copyImageNames(&realCount);
+    if (!list || !is_tweak_active() || !is_zalo_caller(__builtin_return_address(0))) {
+        if (outCount) *outCount = realCount;
+        return list;
+    }
+    unsigned int writeIdx = 0;
+    for (unsigned int i = 0; i < realCount; i++) {
+        if (list[i] && is_sensitive_image_path_cstr(list[i])) {
+            continue;
+        }
+        list[writeIdx++] = list[i];
+    }
+    list[writeIdx] = NULL;
+    if (outCount) *outCount = writeIdx;
+    return list;
+}
+
+static Class *(*orig_objc_copyClassList)(unsigned int *outCount) = NULL;
+static Class *my_objc_copyClassList(unsigned int *outCount) {
+    unsigned int realCount = 0;
+    Class *list = orig_objc_copyClassList ? orig_objc_copyClassList(&realCount) : objc_copyClassList(&realCount);
+    if (!list || !is_tweak_active() || !is_zalo_caller(__builtin_return_address(0))) {
+        if (outCount) *outCount = realCount;
+        return list;
+    }
+    unsigned int writeIdx = 0;
+    for (unsigned int i = 0; i < realCount; i++) {
+        Class cls = list[i];
+        const char *img = orig_class_getImageName ? orig_class_getImageName(cls) : class_getImageName(cls);
+        if (img && is_sensitive_image_path_cstr(img)) {
+            continue;
+        }
+        list[writeIdx++] = cls;
+    }
+    list[writeIdx] = Nil;
+    if (outCount) *outCount = writeIdx;
+    return list;
 }
 
 // ==========================================
@@ -4879,8 +4934,8 @@ static NSArray<NSString *> *perform_zalo_security_modules_scan_now(void) {
         const char *clsName = class_getName(cls);
         if (!clsName) continue;
 
-        const char *imgName = class_getImageName(cls);
-        if (!imgName) continue;
+        const char *imgName = orig_class_getImageName ? orig_class_getImageName(cls) : class_getImageName(cls);
+        if (!imgName || is_sensitive_image_path_cstr(imgName)) continue;
         // Chỉ quét các class thuộc Zalo hoặc Frameworks nhúng của Zalo
         if (!strcasestr(imgName, "Zalo") && !strcasestr(imgName, "ZDK") && !strcasestr(imgName, "zingalo")) {
             continue;
@@ -5117,9 +5172,12 @@ static void zt_early_keychain_purge_if_needed(void) {
         universal_hook_c_function("getppid", (void *)getppid, (void *)my_getppid, (void **)&orig_getppid);
         universal_hook_c_function("gethostname", (void *)gethostname, (void *)my_gethostname, (void **)&orig_gethostname);
 
-        // Hook Dyld & dladdr (Ẩn tuyệt đối Zalotweak.dylib, Substrate, ElleKit, RootHide khỏi bộ quét anti-tamper của Zalo)
+        // Hook Dyld, dladdr & Objective-C Runtime (Ẩn tuyệt đối Zalotweak.dylib, Substrate, ElleKit, RootHide, systemhook và các class nội bộ khỏi bộ quét của Zalo)
         universal_hook_c_function("_dyld_get_image_name", (void *)_dyld_get_image_name, (void *)my_dyld_get_image_name, (void **)&orig_dyld_get_image_name);
         universal_hook_c_function("dladdr", (void *)dladdr, (void *)my_dladdr, (void **)&orig_dladdr);
+        universal_hook_c_function("class_getImageName", (void *)class_getImageName, (void *)my_class_getImageName, (void **)&orig_class_getImageName);
+        universal_hook_c_function("objc_copyImageNames", (void *)objc_copyImageNames, (void *)my_objc_copyImageNames, (void **)&orig_objc_copyImageNames);
+        universal_hook_c_function("objc_copyClassList", (void *)objc_copyClassList, (void *)my_objc_copyClassList, (void **)&orig_objc_copyClassList);
 
         if (![[ZTSecurityManager sharedManager] isLicenseValid]) {
             NSLog(@"[ZaloTweak] ❌ BẢN QUYỀN CHƯA KÍCH HOẠT HOẶC ĐÃ HẾT HẠN! Vui lòng vào Cài đặt để kích hoạt.");
