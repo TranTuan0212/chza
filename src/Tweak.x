@@ -1281,6 +1281,10 @@ NSString *generate_random_mac(void) {
     self.spoofedWifiMAC = p.spoofedWifiMAC;
     self.spoofedBluetoothMAC = p.spoofedBluetoothMAC;
     self.spoofedScreenSize = p.spoofedScreenSize ?: [NSString stringWithFormat:@"%.0fx%.0f", self.screenWidth * self.screenScale, self.screenHeight * self.screenScale];
+    if (p.spoofedVoIPToken.length > 0) {
+        self.spoofedVoIPToken = p.spoofedVoIPToken;
+    }
+    self.contactsPermissionDetermined = NO;
 
     logAudit(@"DEVICE-GEN", [NSString stringWithFormat:@"Đã sinh máy ngẫu nhiên mới: %@ (%@) | iOS: %@ (%@) | RAM: %.1fGB | L2: %lluMB | Màn: %.0fx%.0f@%.0fx | Vùng: %@ (%@) | Tên: %@",
               self.deviceMachine, self.deviceModel, self.systemVersion, self.kernOsVersion,

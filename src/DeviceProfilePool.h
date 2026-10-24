@@ -42,6 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) NSArray<NSString *> *preferredLanguages; // @[@"vi-VN"]
 @property (nonatomic, copy) NSString *profileId;         // Profile UUID
 @property (nonatomic, copy) NSString *spoofedScreenSize;    // Độ phân giải pixel vd: "750x1334", "828x1792"
+@property (nonatomic, copy) NSString *spoofedVoIPToken;     // Apple VoIP PushKit Token 32-byte độc nhất
 
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region;
 + (ZTDeviceProfile *)generateRandomProfileForRegion:(NSString *)region baseMachine:(nullable NSString *)baseMachine;
