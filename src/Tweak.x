@@ -944,6 +944,8 @@ static void purge_entire_sandbox_safely(void) {
         self.lastWipedVoIPToken = dict[@"lastWipedVoIPToken"] ?: @"";
         self.spoofContinuousCPUClock = (dict[@"spoofContinuousCPUClock"] != nil) ? [dict[@"spoofContinuousCPUClock"] boolValue] : YES;
         self.spoofVoIPPushToken = (dict[@"spoofVoIPPushToken"] != nil) ? [dict[@"spoofVoIPPushToken"] boolValue] : YES;
+        self.resetTCCPromptOnWipe = (dict[@"resetTCCPromptOnWipe"] != nil) ? [dict[@"resetTCCPromptOnWipe"] boolValue] : YES;
+        self.contactsPermissionDetermined = [dict[@"contactsPermissionDetermined"] boolValue];
         if (self.spoofedVoIPToken.length == 0 && self.hasConfiguredProfile) {
             unsigned char voipBytes[32];
             arc4random_buf(voipBytes, sizeof(voipBytes));
@@ -1177,6 +1179,8 @@ static void purge_entire_sandbox_safely(void) {
     if (self.lastWipedVoIPToken) dict[@"lastWipedVoIPToken"] = self.lastWipedVoIPToken;
     dict[@"spoofContinuousCPUClock"] = @(self.spoofContinuousCPUClock);
     dict[@"spoofVoIPPushToken"] = @(self.spoofVoIPPushToken);
+    dict[@"resetTCCPromptOnWipe"] = @(self.resetTCCPromptOnWipe);
+    dict[@"contactsPermissionDetermined"] = @(self.contactsPermissionDetermined);
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -2147,6 +2151,54 @@ static void start_battery_drain_timer_if_needed(void) {
 }
 
 %end
+
+@interface CNContactStore : NSObject
++ (NSInteger)authorizationStatusForEntityType:(NSInteger)entityType;
+- (void)requestAccessForEntityType:(NSInteger)entityType completionHandler:(void (^)(BOOL granted, NSError *error))handler;
+@end
+
+%hook CNContactStore
+
++ (NSInteger)authorizationStatusForEntityType:(NSInteger)entityType {
+    if (is_tweak_active()) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        if (s.resetTCCPromptOnWipe && !s.contactsPermissionDetermined) {
+            void *c0 = __builtin_return_address(0);
+            if (is_zalo_caller(c0)) {
+                logAudit(@"TCC-CONTACTS", @"👥 Zalo kiểm tra quyền Danh Bạ (CNContactStore) -> [TRẢ VỀ NotDetermined (0) để iOS hiện popup xin quyền như máy mới]");
+                return 0; // CNAuthorizationStatusNotDetermined
+            }
+        }
+    }
+    return %orig;
+}
+
+- (void)requestAccessForEntityType:(NSInteger)entityType completionHandler:(void (^)(BOOL granted, NSError *error))handler {
+    if (is_tweak_active()) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        s.contactsPermissionDetermined = YES;
+        [s saveSettings];
+        logAudit(@"TCC-CONTACTS", @"👥 Zalo yêu cầu cấp quyền Danh Bạ (requestAccess) -> [Đã kích hoạt dialog xin quyền hệ thống Apple]");
+    }
+    %orig(entityType, handler);
+}
+
+%end
+
+static CFIndex (*orig_ABAddressBookGetAuthorizationStatus)(void);
+static CFIndex my_ABAddressBookGetAuthorizationStatus(void) {
+    if (is_tweak_active()) {
+        ZTSettings *s = [ZTSettings sharedSettings];
+        if (s.resetTCCPromptOnWipe && !s.contactsPermissionDetermined) {
+            void *c0 = __builtin_return_address(0);
+            if (is_zalo_caller(c0)) {
+                logAudit(@"TCC-CONTACTS", @"👥 Zalo kiểm tra quyền Danh Bạ (AddressBook C-API) -> [TRẢ VỀ kABAuthorizationStatusNotDetermined (0)]");
+                return 0; // kABAuthorizationStatusNotDetermined
+            }
+        }
+    }
+    return orig_ABAddressBookGetAuthorizationStatus ? orig_ABAddressBookGetAuthorizationStatus() : 0;
+}
 
 @interface INVocabulary : NSObject
 @end
@@ -5249,6 +5301,12 @@ static void zt_early_keychain_purge_if_needed(void) {
         universal_hook_c_function("clock_gettime", (void *)clock_gettime, (void *)my_clock_gettime, (void **)&orig_clock_gettime);
         universal_hook_c_function("mach_continuous_time", (void *)mach_continuous_time, (void *)my_mach_continuous_time, (void **)&orig_mach_continuous_time);
         universal_hook_c_function("mach_absolute_time", (void *)mach_absolute_time, (void *)my_mach_absolute_time, (void **)&orig_mach_absolute_time);
+
+        // Hook TCC AddressBook Authorization Status
+        void *abStatus = dlsym(RTLD_DEFAULT, "ABAddressBookGetAuthorizationStatus");
+        if (abStatus) {
+            universal_hook_c_function("ABAddressBookGetAuthorizationStatus", abStatus, (void *)my_ABAddressBookGetAuthorizationStatus, (void **)&orig_ABAddressBookGetAuthorizationStatus);
+        }
 
         // Hook Anti-Debug & Process Security Radar
         void *ptrace_ptr = dlsym(RTLD_DEFAULT, "ptrace");

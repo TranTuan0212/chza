@@ -731,6 +731,8 @@ static NSString *detect_real_system_machine(void) {
     profile.spoofedVoIPToken = [vHex copy];
     profile.spoofContinuousCPUClock = YES;
     profile.spoofVoIPPushToken = YES;
+    profile.resetTCCPromptOnWipe = YES;
+    profile.contactsPermissionDetermined = NO;
 
     return profile;
 }

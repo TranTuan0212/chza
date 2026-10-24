@@ -849,6 +849,7 @@ UIViewController *ZTGetTopViewController(void) {
 
     NSString *cpuStatus = s.spoofContinuousCPUClock ? @"🟢 ĐANG BẬT" : @"⚪ ĐANG TẮT";
     NSString *voipStatus = s.spoofVoIPPushToken ? @"🟢 ĐANG BẬT" : @"⚪ ĐANG TẮT";
+    NSString *tccStatus = s.resetTCCPromptOnWipe ? @"🟢 ĐANG BẬT" : @"⚪ ĐANG TẮT";
 
     NSString *msg = [NSString stringWithFormat:
                      @"1. Bộ đếm CPU (mach_time): %@\n"
@@ -857,8 +858,11 @@ UIViewController *ZTGetTopViewController(void) {
                      @"2. Token VoIP PushKit: %@\n"
                      @"• Khi BẬT: Tự sinh mã 32-byte VoIP độc nhất chuẩn Apple theo từng Profile (Chống bị Zalo khóa tài khoản dây chuyền).\n"
                      @"• Khi TẮT: Trả về Token VoIP gốc máy thật.\n\n"
-                     @"💡 Toàn bộ các cơ chế trên đều thực hiện ở C-Level nhân Darwin Kernel & PushKit Framework để Zalo tự quét tự lấy 100%%.",
-                     cpuStatus, voipStatus];
+                     @"3. Quyền Danh Bạ (TCC Reset): %@\n"
+                     @"• Khi BẬT: Trả về trạng thái Chưa Xác Định (NotDetermined) như máy mới để kích hoạt dialog xin quyền của iOS và chống đồng bộ ngầm gây phình dung lượng.\n"
+                     @"• Khi TẮT: Giữ nguyên quyền danh bạ hiện có của hệ thống.\n\n"
+                     @"💡 Toàn bộ các cơ chế trên đều thực hiện ở C-Level nhân Darwin Kernel & Apple Frameworks để Zalo tự quét tự lấy 100%%.",
+                     cpuStatus, voipStatus, tccStatus];
 
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🛡️ ẨN TẦNG HỆ THỐNG (CPU & VOIP)"
                                                                    message:msg
@@ -875,6 +879,14 @@ UIViewController *ZTGetTopViewController(void) {
     NSString *toggleVoIPTitle = s.spoofVoIPPushToken ? @"📞 TẮT Tự Sinh Token VoIP (Dùng Token Gốc)" : @"📞 BẬT Tự Sinh Token VoIP (Khuyên Dùng)";
     [alert addAction:[UIAlertAction actionWithTitle:toggleVoIPTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
         s.spoofVoIPPushToken = !s.spoofVoIPPushToken;
+        [s saveSettings];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+        [self showHardwareSpoofSettingsFrom:presenter];
+    }]];
+
+    NSString *toggleTCCTitle = s.resetTCCPromptOnWipe ? @"👥 TẮT Reset Quyền Danh Bạ" : @"👥 BẬT Reset Quyền Danh Bạ (Khuyên Dùng)";
+    [alert addAction:[UIAlertAction actionWithTitle:toggleTCCTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.resetTCCPromptOnWipe = !s.resetTCCPromptOnWipe;
         [s saveSettings];
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
         [self showHardwareSpoofSettingsFrom:presenter];
@@ -2277,6 +2289,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.enableFakeTimeZone = NO;
     settings.needsNewProfile = NO;
     settings.needsSandboxPurge = YES;
+    settings.contactsPermissionDetermined = NO;
 
     BOOL isJB = NO;
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
