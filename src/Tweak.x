@@ -356,26 +356,32 @@ static NSString *getConfigPath(void) {
         NSDictionary *localDict = nil;
         uint64_t localWipeTS = 0;
         BOOL localNeedsWipe = NO;
+        BOOL justRestored = NO;
         if ([fm fileExistsAtPath:containerPref]) {
             NSDictionary *localAttrs = [fm attributesOfItemAtPath:containerPref error:nil];
             localDate = localAttrs[NSFileModificationDate];
             localDict = [NSDictionary dictionaryWithContentsOfFile:containerPref];
             localWipeTS = [localDict[@"lastWipedTimestamp"] unsignedLongLongValue];
-            localNeedsWipe = [localDict[@"needsNewProfile"] boolValue] || [localDict[@"needsSandboxPurge"] boolValue];
+            localNeedsWipe = [localDict[@"needsNewProfile"] boolValue] || [localDict[@"needsSandboxPurge"] boolValue] || [localDict[@"needsKeychainPurge"] boolValue];
+            justRestored = [localDict[@"justRestoredBackup"] boolValue];
         }
 
         // BẢO VỆ TUYỆT ĐỐI CHO TÀI KHOẢN KHI RESTORE:
-        // Nếu phát hiện trong Sandbox ĐÃ CÓ tài khoản Zalo hợp lệ (vừa restore từ Apps Manager / Backup),
-        // tuyệt đối KHÔNG cho file global ngoài hệ thống có cờ wipe đè vào!
+        // Chỉ hủy cờ wipe nếu vừa thực sự Restore từ Backup (justRestoredBackup = YES)
+        // hoặc khi containerPref KHÔNG yêu cầu wipe nhưng đã có phiên đăng nhập hợp lệ.
         BOOL hasSession = has_active_session_in_sandbox();
-        if (hasSession && [fm fileExistsAtPath:containerPref]) {
+        if (justRestored && [fm fileExistsAtPath:containerPref]) {
             NSMutableDictionary *m = [NSMutableDictionary dictionaryWithContentsOfFile:containerPref];
-            if (m && ([m[@"needsNewProfile"] boolValue] || [m[@"needsSandboxPurge"] boolValue])) {
+            if (m) {
                 m[@"needsNewProfile"] = @(NO);
                 m[@"needsSandboxPurge"] = @(NO);
+                m[@"needsKeychainPurge"] = @(NO);
                 [m writeToFile:containerPref atomically:YES];
                 [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
             }
+            return containerPref;
+        }
+        if (hasSession && !localNeedsWipe && [fm fileExistsAtPath:containerPref]) {
             return containerPref;
         }
 
@@ -629,16 +635,62 @@ static void purge_all_zalo_keychain_safely(void) {
         (__bridge id)kSecClassKey,
         (__bridge id)kSecClassIdentity
     ];
-    NSArray *groups = @[
-        @"",
-        @"group.vn.com.vng.zingalo",
-        @"group.noti.vn.com.vng.zingalo",
-        @"group.zsettings",
-        @"group.com.vng.zalo",
-        @"group.com.zing.zalo",
-        @"vn.com.vng.zingalo"
-    ];
 
+    // 1. Quét liệt kê toàn bộ item thực tế qua SecItemCopyMatching để lấy đúng kSecAttrAccessGroup có tiền tố <TeamID>. thật của Apple và xóa đích danh từng mục
+    for (id secClass in secClasses) {
+        NSDictionary *enumQuery = @{
+            (__bridge id)kSecClass: secClass,
+            (__bridge id)kSecAttrSynchronizable: (__bridge id)kSecAttrSynchronizableAny,
+            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll,
+            (__bridge id)kSecReturnAttributes: @YES
+        };
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)enumQuery, &result);
+        if (status == errSecSuccess && result) {
+            NSArray *items = (CFGetTypeID(result) == CFArrayGetTypeID()) ? (__bridge NSArray *)result : @[(__bridge id)result];
+            for (NSDictionary *item in items) {
+                if (![item isKindOfClass:[NSDictionary class]]) continue;
+                NSMutableDictionary *delQ = [NSMutableDictionary dictionary];
+                delQ[(__bridge id)kSecClass] = secClass;
+                if (item[(__bridge id)kSecAttrAccessGroup]) delQ[(__bridge id)kSecAttrAccessGroup] = item[(__bridge id)kSecAttrAccessGroup];
+                if (item[(__bridge id)kSecAttrService]) delQ[(__bridge id)kSecAttrService] = item[(__bridge id)kSecAttrService];
+                if (item[(__bridge id)kSecAttrAccount]) delQ[(__bridge id)kSecAttrAccount] = item[(__bridge id)kSecAttrAccount];
+                delQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                SecItemDelete((__bridge CFDictionaryRef)delQ);
+
+                [delQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                SecItemDelete((__bridge CFDictionaryRef)delQ);
+            }
+        }
+        if (result) CFRelease(result);
+    }
+
+    // 2. Xóa đích danh các key định danh thiết bị & lịch sử tài khoản cốt lõi của Zalo (kZAIDForDevice, kZAIDS4UserDevices...) trên mọi Access Group hợp lệ
+    NSArray *targetAccounts = @[
+        @"kZAIDForDevice",
+        @"kZAIDS4UserDevices",
+        @"kZADeviceId",
+        @"zalo_device_id",
+        @"zcid",
+        @"kSessionKey",
+        @"kSessionUid"
+    ];
+    for (NSString *acc in targetAccounts) {
+        NSDictionary *accQ1 = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrAccount: acc,
+            (__bridge id)kSecAttrSynchronizable: (__bridge id)kSecAttrSynchronizableAny
+        };
+        SecItemDelete((__bridge CFDictionaryRef)accQ1);
+
+        NSDictionary *accQ2 = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrAccount: acc
+        };
+        SecItemDelete((__bridge CFDictionaryRef)accQ2);
+    }
+
+    // 3. Quét xóa diện rộng theo từng SecClass
     for (id secClass in secClasses) {
         NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
         broadQ[(__bridge id)kSecClass] = secClass;
@@ -647,21 +699,8 @@ static void purge_all_zalo_keychain_safely(void) {
 
         [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
         SecItemDelete((__bridge CFDictionaryRef)broadQ);
-
-        for (NSString *grp in groups) {
-            NSMutableDictionary *query = [NSMutableDictionary dictionary];
-            query[(__bridge id)kSecClass] = secClass;
-            if (grp.length > 0) {
-                query[(__bridge id)kSecAttrAccessGroup] = grp;
-            }
-            query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
-            SecItemDelete((__bridge CFDictionaryRef)query);
-
-            [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
-            SecItemDelete((__bridge CFDictionaryRef)query);
-        }
     }
-    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain của Zalo!");
+    NSLog(@"[ZaloAudit] [COLD-BOOT] 🔑 Đã dọn dẹp sạch toàn bộ Keychain (bao gồm kZAIDForDevice & kZAIDS4UserDevices) của Zalo!");
 }
 
 static void __attribute__((unused)) purge_webkit_data_safely(void) {
@@ -699,7 +738,7 @@ static void purge_entire_sandbox_safely(void) {
     // Process Pool lúc này là nguyên nhân hàng đầu gây crash SIGABRT/SIGSEGV!
     // Việc xóa Clipboard và WebKit DataStore đã được thực hiện an toàn ngay lúc bấm Deep Wipe trong app.
 
-    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites
+    // 3. Xóa sạch dữ liệu in-memory của NSUserDefaults các App Suites & standardUserDefaults
     NSArray *suitesToPurge = @[
         @"group.vn.com.vng.zingalo",
         @"group.noti.vn.com.vng.zingalo",
@@ -716,12 +755,25 @@ static void purge_entire_sandbox_safely(void) {
         if (ud && ud != [NSUserDefaults standardUserDefaults]) {
             NSDictionary *d = [ud dictionaryRepresentation];
             for (NSString *k in d.allKeys) {
-                if ([k.lowercaseString containsString:@"zalotweak"]) continue;
+                if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
                 [ud removeObjectForKey:k];
             }
             [ud synchronize];
         }
     }
+    NSUserDefaults *stdUD = [NSUserDefaults standardUserDefaults];
+    NSDictionary *stdDict = [stdUD dictionaryRepresentation];
+    for (NSString *k in stdDict.allKeys) {
+        if ([k.lowercaseString containsString:@"zalotweak"] || [k hasPrefix:@"ZT_"]) continue;
+        [stdUD removeObjectForKey:k];
+    }
+    NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
+    if (bundleId && bundleId.length > 0 && ![bundleId.lowercaseString containsString:@"zalotweak"]) {
+        [stdUD removePersistentDomainForName:bundleId];
+    }
+    [stdUD removePersistentDomainForName:@"vn.com.vng.zingalo"];
+    [stdUD synchronize];
+    CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
 
     // 5. Xả sạch cache mạng bộ nhớ RAM
     clear_all_network_caches();
@@ -905,15 +957,23 @@ static void purge_entire_sandbox_safely(void) {
 
         self.needsNewProfile = [dict[@"needsNewProfile"] boolValue];
         self.needsSandboxPurge = [dict[@"needsSandboxPurge"] boolValue];
-        if (self.needsNewProfile || self.needsSandboxPurge) {
+        BOOL justRestoredBackup = [dict[@"justRestoredBackup"] boolValue];
+        if (justRestoredBackup) {
+            logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🛡️ Phát hiện cờ vừa Restore từ Backup (justRestoredBackup=YES) -> Bảo vệ nguyên vẹn phiên đăng nhập & hồ sơ máy!");
+            self.needsNewProfile = NO;
+            self.needsSandboxPurge = NO;
+            NSMutableDictionary *m = [dict mutableCopy];
+            m[@"justRestoredBackup"] = @(NO);
+            m[@"needsNewProfile"] = @(NO);
+            m[@"needsSandboxPurge"] = @(NO);
+            m[@"needsKeychainPurge"] = @(NO);
+            [m writeToFile:path atomically:YES];
+            [m writeToFile:GLOBAL_PREFS_PATH atomically:YES];
+            [self saveSettings];
+        } else if (self.needsNewProfile || self.needsSandboxPurge) {
             if (s_is_cold_boot_phase) {
-                if (has_active_session_in_sandbox()) {
-                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🛡️ Phát hiện tài khoản Zalo hợp lệ đang tồn tại trong Sandbox (vừa Restore từ Backup) -> HỦY BỎ LỆNH XÓA ĐỂ BẢO VỆ NICK!");
-                    self.needsNewProfile = NO;
-                    self.needsSandboxPurge = NO;
-                    [self saveSettings];
-                } else if (ZTSecurityCheckLicenseFast()) {
-                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🧹 Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch Sandbox...");
+                if (ZTSecurityCheckLicenseFast()) {
+                    logAudit(@"SYSTEM-INIT", @"[COLD-BOOT] 🧹 Phát hiện cờ yêu cầu máy mới / dọn sạch sau Deep Wipe -> Khởi động dọn sạch 100% Sandbox & Keychain...");
                     purge_entire_sandbox_safely();
                     BOOL willGenProfile = self.needsNewProfile;
                     self.needsNewProfile = NO;
@@ -934,11 +994,19 @@ static void purge_entire_sandbox_safely(void) {
                     }
                     self.currentZCID = @"";
                     self.currentVoIPToken = @"";
+                    self.spoofedVoIPToken = @"";
                     self.centralizedDid = @"";
                     if (willGenProfile) {
                         // Cấp ngay Profile mới tinh đồng bộ theo vòng đời máy và vùng địa lý (chỉ khi được yêu cầu)
                         [self generateNewProfile];
                     }
+                    NSMutableDictionary *cleanFlags = [NSMutableDictionary dictionaryWithContentsOfFile:path] ?: [NSMutableDictionary dictionary];
+                    cleanFlags[@"needsKeychainPurge"] = @(NO);
+                    cleanFlags[@"needsSandboxPurge"] = @(NO);
+                    cleanFlags[@"needsNewProfile"] = @(NO);
+                    cleanFlags[@"justRestoredBackup"] = @(NO);
+                    [cleanFlags writeToFile:path atomically:YES];
+                    [cleanFlags writeToFile:GLOBAL_PREFS_PATH atomically:YES];
                     [self saveSettings];
                     reset_audit_log_on_wipe(self.deviceMachine, self.spoofedIDFV);
                     return;
@@ -975,15 +1043,6 @@ static void purge_entire_sandbox_safely(void) {
                 }
             }
             [self saveSettings];
-        }
-
-        if (![[NSUserDefaults standardUserDefaults] objectForKey:@"firstTimeInstallApp"] && self.birthTimeSec > 0) {
-            uint64_t tSandbox = self.birthTimeSec + (self.deltaSandboxSec > 0 ? (uint64_t)self.deltaSandboxSec : 180ULL);
-            uint64_t tInstallMs = tSandbox * 1000ULL + (uint64_t)(arc4random_uniform(850) + 100);
-            uint64_t tOpenMs = tInstallMs + (uint64_t)(45000ULL + arc4random_uniform(75000));
-            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tInstallMs] forKey:@"firstTimeInstallApp"];
-            [[NSUserDefaults standardUserDefaults] setObject:[NSString stringWithFormat:@"%llu", tOpenMs] forKey:@"firstTimeOpenApp"];
-            [[NSUserDefaults standardUserDefaults] synchronize];
         }
     } else {
         self.enabled = YES;
@@ -2480,61 +2539,9 @@ static int my_gethostname(char *name, size_t len) {
 %end
 
 // ==========================================
-// 3. TẦNG KEYCHAIN: ISOLATION & REDIRECTION
+// 3. TẦNG KEYCHAIN: PASS-THROUGH 100% NATIVE (CHỈ GHI LOG AUDIT KHI BẬT)
+// Không sửa đổi query hay attributes để Zalo chính chủ đọc/ghi Keychain gốc tự nhiên 100%
 // ==========================================
-
-static NSMutableDictionary *modify_keychain_query(CFDictionaryRef query) {
-    if (!query) return nil;
-    NSMutableDictionary *dict = [(__bridge NSDictionary *)query mutableCopy];
-
-    // BẢO VỆ TUYỆT ĐỐI CHO APPS MANAGER KHI BACKUP ZALO GỐC:
-    // Nếu là Zalo gốc, giữ nguyên 100% kSecAttrAccessGroup (group.vn.com.vng.zingalo)
-    // và Service/Account để Apps Manager dump Keychain chính xác vào file .adbk!
-    if (is_original_zalo_app()) {
-        return dict;
-    }
-
-    NSString *profile = [ZTSettings sharedSettings].profileId;
-    if (!profile || profile.length == 0) return dict;
-
-    // Chỉ áp dụng cho mật khẩu Generic & Internet trên Zalo Clone để không xung đột Zalo gốc
-    id secClass = dict[(__bridge id)kSecClass];
-    if (secClass) {
-        if (![secClass isEqual:(__bridge id)kSecClassGenericPassword] &&
-            ![secClass isEqual:(__bridge id)kSecClassInternetPassword]) {
-            return dict;
-        }
-    }
-
-    NSString *prefix = [NSString stringWithFormat:@"%@_", profile];
-
-    // Cách ly kSecAttrAccessGroup của Zalo Clone
-    if (dict[(__bridge id)kSecAttrAccessGroup]) {
-        [dict removeObjectForKey:(__bridge id)kSecAttrAccessGroup];
-    }
-
-    // Chỉ prefix khi service thực sự có trong truy vấn
-    id service = dict[(__bridge id)kSecAttrService];
-    if (service && [service isKindOfClass:[NSString class]]) {
-        if (![service hasPrefix:prefix]) {
-            dict[(__bridge id)kSecAttrService] = [NSString stringWithFormat:@"%@%@", prefix, service];
-        }
-    }
-
-    // Tương tự cho account
-    id account = dict[(__bridge id)kSecAttrAccount];
-    if (account && [account isKindOfClass:[NSString class]]) {
-        if (![account hasPrefix:prefix]) {
-            dict[(__bridge id)kSecAttrAccount] = [NSString stringWithFormat:@"%@%@", prefix, account];
-        }
-    }
-
-    if (service || account) {
-        logAudit(@"KEYCHAIN", [NSString stringWithFormat:@"Query Service: '%@', Account: '%@' -> [ĐÃ CÔ LẬP THEO PROFILE]", service ?: @"(null)", account ?: @"(null)"]);
-    }
-
-    return dict;
-}
 
 static NSString *format_sec_value_data(id valData) {
     if (!valData) return @"(nil)";
@@ -2548,7 +2555,6 @@ static NSString *format_sec_value_data(id valData) {
             // 1. Thử giải mã chuỗi UTF-8 thông thường
             NSString *str = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
             if (str && str.length > 0) {
-                // Kiểm tra ký tự in được cơ bản
                 NSCharacterSet *controlChars = [NSCharacterSet controlCharacterSet];
                 NSRange r = [str rangeOfCharacterFromSet:controlChars];
                 if (r.location == NSNotFound || r.location > 0) {
@@ -2559,7 +2565,7 @@ static NSString *format_sec_value_data(id valData) {
                 }
             }
 
-            // 2. Thử giải mã Property List (Dictionary / Array) an toàn 100% không dùng NSJSONSerialization
+            // 2. Thử giải mã Property List (Dictionary / Array)
             id obj = nil;
             @try {
                 obj = [NSPropertyListSerialization propertyListWithData:d options:0 format:NULL error:nil];
@@ -2590,128 +2596,87 @@ static NSString *format_sec_value_data(id valData) {
 
 static OSStatus (*orig_SecItemCopyMatching)(CFDictionaryRef query, CFTypeRef *result);
 static OSStatus my_SecItemCopyMatching(CFDictionaryRef query, CFTypeRef *result) {
-    if (!is_tweak_active()) {
-        return orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : SecItemCopyMatching(query, result);
-    }
-    NSString *s = nil;
-    NSString *a = nil;
-    NSString *g = nil;
-    if (query) {
+    OSStatus ret = orig_SecItemCopyMatching ? orig_SecItemCopyMatching(query, result) : SecItemCopyMatching(query, result);
+    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog && query) {
         NSDictionary *qDict = (__bridge NSDictionary *)query;
-        s = qDict[(__bridge id)kSecAttrService];
-        a = qDict[(__bridge id)kSecAttrAccount];
-        g = qDict[(__bridge id)kSecAttrAccessGroup];
-        if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
+        NSString *s = qDict[(__bridge id)kSecAttrService];
+        NSString *a = qDict[(__bridge id)kSecAttrAccount];
+        NSString *g = qDict[(__bridge id)kSecAttrAccessGroup];
+        if (s || a) {
             logAudit(@"KEYCHAIN-READ", [NSString stringWithFormat:@"🔍 Zalo truy vấn Keychain: Service='%@' | Account='%@' | Group='%@'", s ?: @"*", a ?: @"*", g ?: @"default"]);
-        }
-    }
-    NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
-    CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
-    OSStatus ret = orig_SecItemCopyMatching ? orig_SecItemCopyMatching(targetQuery, result) : SecItemCopyMatching(targetQuery, result);
-
-    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
-        NSString *statusStr = nil;
-        if (ret == errSecSuccess) {
-            id readVal = nil;
-            if (result && *result) {
-                CFTypeRef resObj = *result;
-                if (CFGetTypeID(resObj) == CFDictionaryGetTypeID()) {
-                    readVal = [(__bridge NSDictionary *)resObj objectForKey:(__bridge id)kSecValueData];
-                } else if (CFGetTypeID(resObj) == CFDataGetTypeID()) {
-                    readVal = (__bridge NSData *)resObj;
+            NSString *statusStr = nil;
+            if (ret == errSecSuccess) {
+                id readVal = nil;
+                if (result && *result) {
+                    CFTypeRef resObj = *result;
+                    if (CFGetTypeID(resObj) == CFDictionaryGetTypeID()) {
+                        readVal = [(__bridge NSDictionary *)resObj objectForKey:(__bridge id)kSecValueData];
+                    } else if (CFGetTypeID(resObj) == CFDataGetTypeID()) {
+                        readVal = (__bridge NSData *)resObj;
+                    }
                 }
-            }
-            if (readVal) {
-                statusStr = [NSString stringWithFormat:@"✅ TÌM THẤY | Value='%@'", format_sec_value_data(readVal)];
+                if (readVal) {
+                    statusStr = [NSString stringWithFormat:@"✅ TÌM THẤY | Value='%@'", format_sec_value_data(readVal)];
+                } else {
+                    statusStr = @"✅ TÌM THẤY DỮ LIỆU";
+                }
+            } else if (ret == errSecItemNotFound) {
+                statusStr = @"⚪ errSecItemNotFound (Trống - Zalo sẽ tự sinh mới)";
             } else {
-                statusStr = @"✅ TÌM THẤY DỮ LIỆU";
+                statusStr = [NSString stringWithFormat:@"code=%d", (int)ret];
             }
-        } else if (ret == errSecItemNotFound) {
-            statusStr = @"⚪ errSecItemNotFound (Trống - Zalo sẽ tự sinh mới)";
-        } else {
-            statusStr = [NSString stringWithFormat:@"code=%d", (int)ret];
+            logAudit(@"KEYCHAIN-RESULT", [NSString stringWithFormat:@"   ↳ Kết quả đọc '%@'/'%@': %@", s ?: @"*", a ?: @"*", statusStr]);
         }
-        logAudit(@"KEYCHAIN-RESULT", [NSString stringWithFormat:@"   ↳ Kết quả đọc '%@'/'%@': %@", s ?: @"*", a ?: @"*", statusStr]);
     }
-
     return ret;
 }
 
 static OSStatus (*orig_SecItemAdd)(CFDictionaryRef attributes, CFTypeRef *result);
 static OSStatus my_SecItemAdd(CFDictionaryRef attributes, CFTypeRef *result) {
-    if (!is_tweak_active()) {
-        return orig_SecItemAdd ? orig_SecItemAdd(attributes, result) : SecItemAdd(attributes, result);
-    }
-    NSString *s = nil;
-    NSString *a = nil;
-    NSString *g = nil;
-    id val = nil;
-    if (attributes) {
+    OSStatus ret = orig_SecItemAdd ? orig_SecItemAdd(attributes, result) : SecItemAdd(attributes, result);
+    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog && attributes) {
         NSDictionary *aDict = (__bridge NSDictionary *)attributes;
-        s = aDict[(__bridge id)kSecAttrService];
-        a = aDict[(__bridge id)kSecAttrAccount];
-        g = aDict[(__bridge id)kSecAttrAccessGroup];
-        val = aDict[(__bridge id)kSecValueData];
-    }
-    NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributes);
-    CFDictionaryRef targetAttrs = isolatedAttrs ? (__bridge CFDictionaryRef)isolatedAttrs : attributes;
-    OSStatus ret = orig_SecItemAdd ? orig_SecItemAdd(targetAttrs, result) : SecItemAdd(targetAttrs, result);
-    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
-        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
-        NSString *valStr = format_sec_value_data(val);
-        logAudit(@"KEYCHAIN-ADD", [NSString stringWithFormat:@"💾 Zalo ghi mới Keychain: Service='%@' | Account='%@' | Group='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", g ?: @"default", valStr, statusStr]);
+        NSString *s = aDict[(__bridge id)kSecAttrService];
+        NSString *a = aDict[(__bridge id)kSecAttrAccount];
+        NSString *g = aDict[(__bridge id)kSecAttrAccessGroup];
+        id val = aDict[(__bridge id)kSecValueData];
+        if (s || a) {
+            NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+            NSString *valStr = format_sec_value_data(val);
+            logAudit(@"KEYCHAIN-ADD", [NSString stringWithFormat:@"💾 Zalo ghi mới Keychain: Service='%@' | Account='%@' | Group='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", g ?: @"default", valStr, statusStr]);
+        }
     }
     return ret;
 }
 
 static OSStatus (*orig_SecItemDelete)(CFDictionaryRef query);
 static OSStatus my_SecItemDelete(CFDictionaryRef query) {
-    if (!is_tweak_active()) {
-        return orig_SecItemDelete ? orig_SecItemDelete(query) : SecItemDelete(query);
-    }
-    NSString *s = nil;
-    NSString *a = nil;
-    if (query) {
+    OSStatus ret = orig_SecItemDelete ? orig_SecItemDelete(query) : SecItemDelete(query);
+    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog && query) {
         NSDictionary *qDict = (__bridge NSDictionary *)query;
-        s = qDict[(__bridge id)kSecAttrService];
-        a = qDict[(__bridge id)kSecAttrAccount];
-    }
-    NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
-    CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
-    OSStatus ret = orig_SecItemDelete ? orig_SecItemDelete(targetQuery) : SecItemDelete(targetQuery);
-    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
-        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
-        logAudit(@"KEYCHAIN-DELETE", [NSString stringWithFormat:@"🗑️ Zalo xóa Keychain: Service='%@' | Account='%@' -> %@", s ?: @"*", a ?: @"*", statusStr]);
+        NSString *s = qDict[(__bridge id)kSecAttrService];
+        NSString *a = qDict[(__bridge id)kSecAttrAccount];
+        if (s || a) {
+            NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+            logAudit(@"KEYCHAIN-DELETE", [NSString stringWithFormat:@"🗑️ Zalo xóa Keychain: Service='%@' | Account='%@' -> %@", s ?: @"*", a ?: @"*", statusStr]);
+        }
     }
     return ret;
 }
 
 static OSStatus (*orig_SecItemUpdate)(CFDictionaryRef query, CFDictionaryRef attributesToUpdate);
 static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attributesToUpdate) {
-    if (!is_tweak_active()) {
-        return orig_SecItemUpdate ? orig_SecItemUpdate(query, attributesToUpdate) : SecItemUpdate(query, attributesToUpdate);
-    }
-    NSString *s = nil;
-    NSString *a = nil;
-    id val = nil;
-    if (query) {
+    OSStatus ret = orig_SecItemUpdate ? orig_SecItemUpdate(query, attributesToUpdate) : SecItemUpdate(query, attributesToUpdate);
+    if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog && query) {
         NSDictionary *qDict = (__bridge NSDictionary *)query;
-        s = qDict[(__bridge id)kSecAttrService];
-        a = qDict[(__bridge id)kSecAttrAccount];
-    }
-    if (attributesToUpdate) {
-        NSDictionary *uDict = (__bridge NSDictionary *)attributesToUpdate;
-        val = uDict[(__bridge id)kSecValueData];
-    }
-    NSMutableDictionary *isolatedQuery = modify_keychain_query(query);
-    NSMutableDictionary *isolatedAttrs = modify_keychain_query(attributesToUpdate);
-    CFDictionaryRef targetQuery = isolatedQuery ? (__bridge CFDictionaryRef)isolatedQuery : query;
-    CFDictionaryRef targetAttrs = isolatedAttrs ? (__bridge CFDictionaryRef)isolatedAttrs : attributesToUpdate;
-    OSStatus ret = orig_SecItemUpdate ? orig_SecItemUpdate(targetQuery, targetAttrs) : SecItemUpdate(targetQuery, targetAttrs);
-    if ([ZTSettings sharedSettings].enableAuditLog && (s || a)) {
-        NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
-        NSString *valStr = format_sec_value_data(val);
-        logAudit(@"KEYCHAIN-UPDATE", [NSString stringWithFormat:@"📝 Zalo cập nhật Keychain: Service='%@' | Account='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", valStr, statusStr]);
+        NSString *s = qDict[(__bridge id)kSecAttrService];
+        NSString *a = qDict[(__bridge id)kSecAttrAccount];
+        id val = attributesToUpdate ? ((__bridge NSDictionary *)attributesToUpdate)[(__bridge id)kSecValueData] : nil;
+        if (s || a) {
+            NSString *statusStr = (ret == errSecSuccess) ? @"✅ THÀNH CÔNG" : [NSString stringWithFormat:@"code=%d", (int)ret];
+            NSString *valStr = format_sec_value_data(val);
+            logAudit(@"KEYCHAIN-UPDATE", [NSString stringWithFormat:@"📝 Zalo cập nhật Keychain: Service='%@' | Account='%@' | Value='%@' -> %@", s ?: @"*", a ?: @"*", valStr, statusStr]);
+        }
     }
     return ret;
 }
@@ -2806,126 +2771,6 @@ static pid_t my_fork(void) {
     errno = ENOSYS;
     return -1;
 }
-
-
-
-// Chuyển hướng CFPreferences App Groups sang container an toàn của clone (Zalo gốc giữ nguyên chuẩn hệ thống)
-static inline BOOL is_zalo_group_or_bundle_cfprefs_id(NSString *appID) {
-    if (!appID) return NO;
-    return ([appID containsString:@"group.vn.com.vng.zingalo"] ||
-            [appID containsString:@"group.noti.vn.com.vng.zingalo"] ||
-            [appID containsString:@"group.zsettings"] ||
-            [appID containsString:@"group.com.vng.zalo"] ||
-            [appID containsString:@"group.com.zing.zalo"] ||
-            [appID isEqualToString:@"vn.com.vng.zingalo"]);
-}
-
-static CFPropertyListRef (*orig_CFPreferencesCopyAppValue)(CFStringRef key, CFStringRef applicationID);
-static CFPropertyListRef my_CFPreferencesCopyAppValue(CFStringRef key, CFStringRef applicationID) {
-    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
-        NSString *appID = (__bridge NSString *)applicationID;
-        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
-            return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, kCFPreferencesCurrentApplication) : NULL;
-        }
-    }
-    return orig_CFPreferencesCopyAppValue ? orig_CFPreferencesCopyAppValue(key, applicationID) : NULL;
-}
-
-static void (*orig_CFPreferencesSetAppValue)(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID);
-static void my_CFPreferencesSetAppValue(CFStringRef key, CFPropertyListRef value, CFStringRef applicationID) {
-    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
-        NSString *appID = (__bridge NSString *)applicationID;
-        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
-            if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, kCFPreferencesCurrentApplication);
-            return;
-        }
-    }
-    if (orig_CFPreferencesSetAppValue) orig_CFPreferencesSetAppValue(key, value, applicationID);
-}
-
-static Boolean (*orig_CFPreferencesAppSynchronize)(CFStringRef applicationID);
-static Boolean my_CFPreferencesAppSynchronize(CFStringRef applicationID) {
-    if (!is_original_zalo_app() && applicationID && CFGetTypeID(applicationID) == CFStringGetTypeID()) {
-        NSString *appID = (__bridge NSString *)applicationID;
-        if (is_zalo_group_or_bundle_cfprefs_id(appID)) {
-            return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication) : true;
-        }
-    }
-    return orig_CFPreferencesAppSynchronize ? orig_CFPreferencesAppSynchronize(applicationID) : true;
-}
-
-// Bẻ hướng hàm C CoreFoundation CFBundleGetIdentifier & CFBundleGetValueForInfoDictionaryKey cho Zalo Clone
-static CFStringRef (*orig_CFBundleGetIdentifier)(CFBundleRef bundle) = NULL;
-static __thread BOOL s_in_c_bundle_hook = NO;
-static CFStringRef my_CFBundleGetIdentifier(CFBundleRef bundle) {
-    if (s_in_c_bundle_hook) {
-        return orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
-    }
-    s_in_c_bundle_hook = YES;
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        CFBundleRef mb = CFBundleGetMainBundle();
-        if (bundle == mb || !bundle) {
-            void *caller0 = __builtin_return_address(0);
-            if (!is_network_system_caller(caller0)) {
-                void *caller1 = __builtin_return_address(1);
-                if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                    if (!s_logged_c_bid) {
-                        s_logged_c_bid = YES;
-                        logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetIdentifier() -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
-                    }
-                    s_in_c_bundle_hook = NO;
-                    return CFSTR("vn.com.vng.zingalo");
-                }
-            }
-        }
-    }
-    CFStringRef res = orig_CFBundleGetIdentifier ? orig_CFBundleGetIdentifier(bundle) : (bundle ? CFBundleGetIdentifier(bundle) : NULL);
-    s_in_c_bundle_hook = NO;
-    return res;
-}
-
-static CFTypeRef (*orig_CFBundleGetValueForInfoDictionaryKey)(CFBundleRef bundle, CFStringRef key) = NULL;
-static CFTypeRef my_CFBundleGetValueForInfoDictionaryKey(CFBundleRef bundle, CFStringRef key) {
-    if (s_in_c_bundle_hook) {
-        return orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
-    }
-    s_in_c_bundle_hook = YES;
-    if (is_tweak_active() && !is_original_zalo_app() && key) {
-        if (CFEqual(key, kCFBundleIdentifierKey) || CFStringCompare(key, CFSTR("CFBundleIdentifier"), 0) == kCFCompareEqualTo) {
-            CFBundleRef mb = CFBundleGetMainBundle();
-            if (bundle == mb || !bundle) {
-                void *caller0 = __builtin_return_address(0);
-                if (!is_network_system_caller(caller0)) {
-                    void *caller1 = __builtin_return_address(1);
-                    if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                        if (!s_logged_c_info_bid) {
-                            s_logged_c_info_bid = YES;
-                            logAudit(@"BUNDLE-ID", @"Zalo gọi C-Layer CFBundleGetValueForInfoDictionaryKey(CFBundleIdentifier) -> [BẺ HƯỚNG TẦNG C VỀ vn.com.vng.zingalo]");
-                        }
-                        s_in_c_bundle_hook = NO;
-                        return CFSTR("vn.com.vng.zingalo");
-                    }
-                }
-            }
-        } else if (CFStringCompare(key, CFSTR("NSLocalNetworkUsageDescription"), 0) == kCFCompareEqualTo) {
-            CFBundleRef mb = CFBundleGetMainBundle();
-            if (bundle == mb || !bundle) {
-                CFTypeRef res = orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL;
-                if (res) {
-                    s_in_c_bundle_hook = NO;
-                    return res;
-                }
-                s_in_c_bundle_hook = NO;
-                return CFSTR("Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu");
-            }
-        }
-    }
-    CFTypeRef res = orig_CFBundleGetValueForInfoDictionaryKey ? orig_CFBundleGetValueForInfoDictionaryKey(bundle, key) : (bundle ? CFBundleGetValueForInfoDictionaryKey(bundle, key) : NULL);
-    s_in_c_bundle_hook = NO;
-    return res;
-}
-
-
 
 // Ẩn BSSID của trạm phát WiFi (tránh phát hiện chung router)
 static CFDictionaryRef (*orig_CNCopyCurrentNetworkInfo)(CFStringRef interfaceName);
@@ -3462,17 +3307,8 @@ static int my_dladdr(const void *addr, Dl_info *info) {
 }
 
 // ==========================================
-// HOOK POSIX open & openat: Chuyển hướng LevelDB KVCore/Device về Sandbox an toàn
+// HOOK POSIX open & openat: Chặn quét đường dẫn phát hiện Jailbreak
 // ==========================================
-static NSString *get_kvcore_sandbox_base_path(void) {
-    NSString *home = NSHomeDirectory();
-    if (!home) return nil;
-    NSString *appSupport = [home stringByAppendingPathComponent:@"Library/Application Support"];
-    [[NSFileManager defaultManager] createDirectoryAtPath:[appSupport stringByAppendingPathComponent:@"KVCore/Device"]
-                              withIntermediateDirectories:YES attributes:nil error:nil];
-    return appSupport;
-}
-
 static int (*orig_open)(const char *path, int oflag, ...);
 static int my_open(const char *path, int oflag, ...) {
     mode_t mode = 0;
@@ -3483,31 +3319,12 @@ static int my_open(const char *path, int oflag, ...) {
         va_end(args);
     }
 
-    static __thread BOOL s_in_open = NO;
-    if (s_in_open) return orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
-    s_in_open = YES;
-
     if (is_tweak_active() && path && is_jailbreak_path(path)) {
-        s_in_open = NO;
         errno = ENOENT;
         return -1;
     }
 
-    if (path && strncmp(path, "KVCore/", 7) == 0) {
-        NSString *base = get_kvcore_sandbox_base_path();
-        if (base) {
-            NSString *rel = [NSString stringWithUTF8String:path];
-            NSString *absPath = [base stringByAppendingPathComponent:rel];
-            logAudit(@"LEVELDB-C", [NSString stringWithFormat:@"open('%s') -> [BẺ HƯỚNG SANDBOX] %@", path, absPath]);
-            int r = orig_open ? orig_open([absPath UTF8String], oflag, mode) : open([absPath UTF8String], oflag, mode);
-            s_in_open = NO;
-            return r;
-        }
-    }
-
-    int ret = orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
-    s_in_open = NO;
-    return ret;
+    return orig_open ? orig_open(path, oflag, mode) : open(path, oflag, mode);
 }
 
 static int (*orig_openat)(int fd, const char *path, int oflag, ...);
@@ -3520,31 +3337,12 @@ static int my_openat(int fd, const char *path, int oflag, ...) {
         va_end(args);
     }
 
-    static __thread BOOL s_in_openat = NO;
-    if (s_in_openat) return orig_openat ? orig_openat(fd, path, oflag, mode) : openat(fd, path, oflag, mode);
-    s_in_openat = YES;
-
     if (is_tweak_active() && path && is_jailbreak_path(path)) {
-        s_in_openat = NO;
         errno = ENOENT;
         return -1;
     }
 
-    if (path && (fd == AT_FDCWD || fd >= 0) && strncmp(path, "KVCore/", 7) == 0) {
-        NSString *base = get_kvcore_sandbox_base_path();
-        if (base) {
-            NSString *rel = [NSString stringWithUTF8String:path];
-            NSString *absPath = [base stringByAppendingPathComponent:rel];
-            logAudit(@"LEVELDB-C", [NSString stringWithFormat:@"openat('%s') -> [BẺ HƯỚNG SANDBOX] %@", path, absPath]);
-            int r = orig_openat ? orig_openat(AT_FDCWD, [absPath UTF8String], oflag, mode) : openat(AT_FDCWD, [absPath UTF8String], oflag, mode);
-            s_in_openat = NO;
-            return r;
-        }
-    }
-
-    int ret = orig_openat ? orig_openat(fd, path, oflag, mode) : openat(fd, path, oflag, mode);
-    s_in_openat = NO;
-    return ret;
+    return orig_openat ? orig_openat(fd, path, oflag, mode) : openat(fd, path, oflag, mode);
 }
 
 // ==========================================
@@ -3623,57 +3421,10 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
            [lower containsString:@"embedded.provisionprofile"];
 }
 
-static inline NSString *redirect_kvcore_nsstring(NSString *path) {
-    if (!path || path.length == 0) return path;
-    NSString *trimmed = [path hasPrefix:@"/"] ? [path substringFromIndex:1] : path;
-    if ([trimmed isEqualToString:@"KVCore"] || [trimmed hasPrefix:@"KVCore/"]) {
-        NSString *home = NSHomeDirectory();
-        if (home) {
-            NSString *sub = [trimmed substringFromIndex:6];
-            return [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/KVCore%@", sub]];
-        }
-    }
-    // Chống lỗi lưu đường dẫn tương đối (relative path) làm hỏng quyền Sandbox
-    if (![path hasPrefix:@"/"] && ![path containsString:@":"]) {
-        NSString *home = NSHomeDirectory();
-        if (home) {
-            return [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/%@", path]];
-        }
-    }
-    return path;
-}
-
 %hook NSFileManager
-
-- (BOOL)createDirectoryAtPath:(NSString *)path withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error {
-    if (path) {
-        NSString *safePath = redirect_kvcore_nsstring(path);
-        if (![safePath isEqualToString:path]) {
-            logAudit(@"KVCORE-FIX", [NSString stringWithFormat:@"Điều hướng tạo thư mục an toàn: '%@' -> '%@'", path, safePath]);
-            return %orig(safePath, createIntermediates, attributes, error);
-        }
-    }
-    return %orig;
-}
-
-- (BOOL)createDirectoryAtURL:(NSURL *)url withIntermediateDirectories:(BOOL)createIntermediates attributes:(NSDictionary *)attributes error:(NSError **)error {
-    if (url && [url isFileURL]) {
-        NSString *path = [url path];
-        NSString *safePath = redirect_kvcore_nsstring(path);
-        if (![safePath isEqualToString:path]) {
-            logAudit(@"KVCORE-FIX", [NSString stringWithFormat:@"Điều hướng tạo thư mục URL an toàn: '%@' -> '%@'", path, safePath]);
-            return %orig([NSURL fileURLWithPath:safePath isDirectory:YES], createIntermediates, attributes, error);
-        }
-    }
-    return %orig;
-}
 
 - (BOOL)fileExistsAtPath:(NSString *)path {
     if (path) {
-        NSString *safePath = redirect_kvcore_nsstring(path);
-        if (![safePath isEqualToString:path]) {
-            return %orig(safePath);
-        }
         if (is_sideload_provision_path(path)) {
             logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
             return NO;
@@ -3688,10 +3439,6 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 - (BOOL)fileExistsAtPath:(NSString *)path isDirectory:(BOOL *)isDirectory {
     if (path) {
-        NSString *safePath = redirect_kvcore_nsstring(path);
-        if (![safePath isEqualToString:path]) {
-            return %orig(safePath, isDirectory);
-        }
         if (is_sideload_provision_path(path)) {
             if (isDirectory) *isDirectory = NO;
             logAudit(@"SIDELOAD-CHECK", [NSString stringWithFormat:@"Zalo quét chứng chỉ '%@' -> [ĐÃ ẨN - TRẢ VỀ NO]", path]);
@@ -3763,27 +3510,6 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
         }
     }
     return attrs;
-}
-
-// Cách ly Shared App Groups cho bản Clone khi thiếu quyền (Zalo gốc dùng App Group thật để Apps Manager backup)
-- (NSURL *)containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
-    NSURL *origURL = %orig;
-    if (origURL) {
-        // Zalo gốc có App Group chuẩn từ iOS -> Dùng URL gốc này để Apps Manager sao lưu chuẩn 100%!
-        return origURL;
-    }
-    if (groupIdentifier && ([groupIdentifier containsString:@"zalo"] || [groupIdentifier containsString:@"zingalo"] || [groupIdentifier containsString:@"vng"])) {
-        logAudit(@"APP-GROUP", [NSString stringWithFormat:@"Zalo truy vấn App Group '%@' (nil) -> [ĐÃ CÁCH LY VỀ THƯ MỤC RIÊNG]", groupIdentifier]);
-        NSString *home = NSHomeDirectory();
-        if (home) {
-            NSString *isolatedGroup = [home stringByAppendingPathComponent:[NSString stringWithFormat:@"Library/Application Support/IsolatedAppGroups/%@", groupIdentifier]];
-            [[NSFileManager defaultManager] createDirectoryAtPath:isolatedGroup withIntermediateDirectories:YES attributes:nil error:nil];
-            [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Preferences"] withIntermediateDirectories:YES attributes:nil error:nil];
-            [[NSFileManager defaultManager] createDirectoryAtPath:[isolatedGroup stringByAppendingPathComponent:@"Library/Caches"] withIntermediateDirectories:YES attributes:nil error:nil];
-            return [NSURL fileURLWithPath:isolatedGroup isDirectory:YES];
-        }
-    }
-    return origURL;
 }
 
 // Chặn không cho quét danh sách các container ứng dụng khác và lọc sạch app Jailbreak trong /Applications
@@ -3956,326 +3682,12 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
 
 %end
 
-// ==========================================
-// HOOK NSBundle: ĐẢM BẢO ZALO CLONE ĐƯỢC NHẬN DIỆN LÀ BẢN GỐC APP STORE
-// ==========================================
-
-static BOOL s_in_bundle_hook = NO;
-
-%hook NSBundle
-
-- (NSString *)bundleIdentifier {
-    if (self == [NSBundle mainBundle]) {
-        if (!is_tweak_active()) return %orig;
-        if (s_in_bundle_hook) return %orig;
-        s_in_bundle_hook = YES;
-        BOOL isOrig = is_original_zalo_app();
-        s_in_bundle_hook = NO;
-        if (isOrig) {
-            return %orig;
-        }
-
-        // BẢO VỆ TẦNG MẠNG & KERNEL IOS:
-        // CHỈ BẺ HƯỚNG KHI VÀ CHỈ KHI CALLER THỰC SỰ LÀ CODE CỦA ZALO APP
-        void *caller0 = __builtin_return_address(0);
-        if (!is_network_system_caller(caller0)) {
-            void *caller1 = __builtin_return_address(1);
-            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                logAudit(@"BUNDLE-ID", @"Zalo truy vấn bundleIdentifier -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-                return @"vn.com.vng.zingalo";
-            }
-        }
-
-        return %orig;
-    }
-    return %orig;
-}
-
-- (id)objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle] && key) {
-        if (!is_tweak_active()) return %orig;
-        if (s_in_bundle_hook) return %orig;
-        s_in_bundle_hook = YES;
-        BOOL isOrig = is_original_zalo_app();
-        s_in_bundle_hook = NO;
-        if (!isOrig) {
-            if ([key isEqualToString:@"CFBundleIdentifier"]) {
-                void *caller0 = __builtin_return_address(0);
-                if (!is_network_system_caller(caller0)) {
-                    void *caller1 = __builtin_return_address(1);
-                    if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                        logAudit(@"BUNDLE-ID", @"Zalo đọc InfoDictionary(CFBundleIdentifier) -> [ĐÃ BẺ HƯỚNG TRẢ VỀ vn.com.vng.zingalo]");
-                        return @"vn.com.vng.zingalo";
-                    }
-                }
-            } else if ([key isEqualToString:@"NSLocalNetworkUsageDescription"]) {
-                id origVal = %orig;
-                return origVal ?: @"Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu";
-            }
-        }
-    }
-    return %orig;
-}
-
-- (NSDictionary *)infoDictionary {
-    NSDictionary *dict = %orig;
-    if (self == [NSBundle mainBundle] && dict) {
-        if (!is_tweak_active()) return dict;
-        if (s_in_bundle_hook) return dict;
-        s_in_bundle_hook = YES;
-        BOOL isOrig = is_original_zalo_app();
-        s_in_bundle_hook = NO;
-        if (isOrig) {
-            return dict;
-        }
-        void *caller0 = __builtin_return_address(0);
-        if (!is_network_system_caller(caller0)) {
-            void *caller1 = __builtin_return_address(1);
-            if (is_zalo_caller(caller0) || is_zalo_caller(caller1)) {
-                NSMutableDictionary *mDict = [dict mutableCopy];
-                mDict[@"CFBundleIdentifier"] = @"vn.com.vng.zingalo";
-                if (!mDict[@"NSLocalNetworkUsageDescription"]) {
-                    mDict[@"NSLocalNetworkUsageDescription"] = @"Zalo cần truy cập mạng cục bộ để kết nối và truyền dữ liệu";
-                }
-                return mDict;
-            }
-        }
-        return dict;
-    }
-    return dict;
-}
-
-%end
-
-static inline __attribute__((unused)) NSData *get_clone_fake_apns_token_data(void) {
-    NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
-    NSString *apnsSeed = [NSString stringWithFormat:@"APNS:%@", seed];
-    const char *cStr = [apnsSeed UTF8String];
-    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
-    return [NSData dataWithBytes:hash length:32];
-}
-
-static inline __attribute__((unused)) NSData *get_clone_fake_voip_token_data(void) {
-    NSString *seed = [ZTSettings sharedSettings].spoofedIDFV ?: @"E7EECB78CDF44E5E8C98BD140A2FEED6";
-    NSString *voipSeed = [NSString stringWithFormat:@"VOIP:%@", seed];
-    const char *cStr = [voipSeed UTF8String];
-    unsigned char hash[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(cStr, (CC_LONG)strlen(cStr), hash);
-    return [NSData dataWithBytes:hash length:32];
-}
-
-static inline __attribute__((unused)) NSString *hex_string_from_data(NSData *data) {
-    if (!data || data.length == 0) return @"";
-    const unsigned char *bytes = (const unsigned char *)data.bytes;
-    NSMutableString *hex = [NSMutableString stringWithCapacity:data.length * 2];
-    for (NSUInteger i = 0; i < data.length; i++) {
-        [hex appendFormat:@"%02x", bytes[i]];
-    }
-    return hex;
-}
-
 @interface NSObject (ZTPKPushRegistrySupport)
 - (void)pushRegistry:(id)registry didUpdatePushCredentials:(id)credentials forType:(NSString *)type;
 - (NSData *)token;
 @end
 
-%hook NSUserDefaults
-
-- (instancetype)initWithSuiteName:(NSString *)suitename {
-    id orig = %orig;
-    if (orig) {
-        if (suitename && ([suitename containsString:@"zalo"] || [suitename containsString:@"zingalo"] || [suitename containsString:@"vng"])) {
-            @try {
-                [orig setObject:@"__zt_probe__" forKey:@"__zt_probe_key__"];
-                if (![orig stringForKey:@"__zt_probe_key__"]) {
-                    logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"SuiteName '%@' không có quyền ghi cfprefsd -> Điều hướng an toàn về standardUserDefaults", suitename]);
-                    return [NSUserDefaults standardUserDefaults];
-                }
-                [orig removeObjectForKey:@"__zt_probe_key__"];
-            } @catch (NSException *e) {
-                return [NSUserDefaults standardUserDefaults];
-            }
-        }
-        return orig;
-    }
-    // Nếu ứng dụng (như bản Clone com.sonhu.zaloclone hoặc Sideload) không có App Group entitlement,
-    // iOS sẽ trả về nil gây lỗi đọc ghi Groups hoặc LevelDB. Điều hướng an toàn về standardUserDefaults!
-    logAudit(@"PREFS-FIX", [NSString stringWithFormat:@"SuiteName '%@' trả về nil (thiếu App Group) -> Điều hướng an toàn về standardUserDefaults", suitename ?: @"(null)"]);
-    return [NSUserDefaults standardUserDefaults];
-}
-
-- (void)setObject:(id)value forKey:(NSString *)defaultName {
-    if (defaultName && [defaultName isKindOfClass:[NSString class]]) {
-        if ([defaultName isEqualToString:@"kTimeDeviceChangedKey"] ||
-            [defaultName isEqualToString:@"kOldSessionKey"] ||
-            [defaultName isEqualToString:@"kOldLoginIndentifierKey"]) {
-            if (is_tweak_active()) {
-                return;
-            }
-        }
-        if (is_tweak_active() && [ZTSettings sharedSettings].enableAuditLog) {
-            void *c0 = __builtin_return_address(0);
-            if ([defaultName containsString:@"Authen"] || [defaultName containsString:@"UpTick"] || [defaultName containsString:@"BootTime"]) {
-                logAudit(@"RADAR-AUTH", [NSString stringWithFormat:@"💾 Zalo ghi UserDefaults: '%@' = %@ từ %@", defaultName, value, format_caller_info(c0)]);
-            }
-        }
-    }
-    %orig;
-}
-
-- (id)objectForKey:(NSString *)defaultName {
-    if (defaultName && [defaultName isKindOfClass:[NSString class]]) {
-        if ([defaultName isEqualToString:@"kTimeDeviceChangedKey"] ||
-            [defaultName isEqualToString:@"kOldSessionKey"] ||
-            [defaultName isEqualToString:@"kOldLoginIndentifierKey"]) {
-            if (is_tweak_active()) {
-                if ([ZTSettings sharedSettings].enableAuditLog) {
-                    logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> (nil) [ĐÃ CHẶN DẤU VẾT ĐỔI MÁY CŨ]", defaultName]);
-                }
-                return nil;
-            }
-        }
-    }
-    id val = %orig;
-    if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
-        if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
-            val = nil;
-            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-PROTECT] Zalo Clone: Không cấp APNs Token fake cho '%@' (Tránh BadDeviceToken Apple) ✅", defaultName]);
-        } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
-            val = nil;
-            logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"[PUSH-PROTECT] Zalo Clone: Không cấp VoIP PushKit Token fake cho '%@' ✅", defaultName]);
-        }
-    }
-
-    if ([ZTSettings sharedSettings].enableAuditLog && defaultName && [defaultName isKindOfClass:[NSString class]]) {
-        NSString *lower = [defaultName lowercaseString];
-        if ([lower containsString:@"device"] ||
-            [lower containsString:@"token"] ||
-            [lower containsString:@"session"] ||
-            [lower containsString:@"auth"] ||
-            [lower containsString:@"uuid"] ||
-            [lower containsString:@"did"] ||
-            [lower containsString:@"zaid"] ||
-            [lower containsString:@"login"] ||
-            [lower containsString:@"risk"] ||
-            [lower containsString:@"banned"]) {
-            logAudit(@"DEFAULTS-READ", [NSString stringWithFormat:@"⚙️ Zalo đọc UserDefaults: '%@' -> %@", defaultName, val ? [NSString stringWithFormat:@"[Độ dài %lu]", (unsigned long)[val description].length] : @"(nil)"]);
-        }
-    }
-    return val;
-}
-
-- (NSString *)stringForKey:(NSString *)defaultName {
-    if (is_tweak_active() && !is_original_zalo_app() && defaultName && [defaultName isKindOfClass:[NSString class]]) {
-        if ([defaultName hasPrefix:@"kApnsTokenKey"] || [defaultName isEqualToString:@"apns_token_cache_key"]) {
-            return nil;
-        } else if ([defaultName hasPrefix:@"kVoIPTokenKey"]) {
-            return nil;
-        }
-    }
-    return %orig;
-}
-
-%end
-
-static void deliver_clone_apns_token_to_delegate(UIApplication *app, id<UIApplicationDelegate> delegate) {
-    if (!app || !delegate || !is_tweak_active() || is_original_zalo_app()) return;
-    SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
-    if ([delegate respondsToSelector:failSel]) {
-        NSError *err = [NSError errorWithDomain:@"NSCocoaErrorDomain" code:3010 userInfo:@{NSLocalizedDescriptionKey: @"User denied notification permissions"}];
-        #pragma clang diagnostic push
-        #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        [delegate application:app didFailToRegisterForRemoteNotificationsWithError:err];
-        #pragma clang diagnostic pop
-        logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Zalo Clone: Báo lỗi từ chối thông báo didFailToRegister (Triệt tiêu 100% BadDeviceToken Apple) ✅");
-    }
-}
-
-%hook UNUserNotificationCenter
-
-- (void)requestAuthorizationWithOptions:(NSUInteger)options completionHandler:(void (^)(BOOL granted, NSError * _Nullable error))completionHandler {
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        if (completionHandler) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completionHandler(NO, nil);
-                logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Zalo Clone: Giả lập người dùng bấm 'Từ chối thông báo' (granted=NO)");
-            });
-        }
-        return;
-    }
-    %orig;
-}
-
-%end
-
-static const void *kZTVoIPTokenAssocKey = &kZTVoIPTokenAssocKey;
-static const void *kZTVoIPTypeAssocKey  = &kZTVoIPTypeAssocKey;
-
-%hook PKPushCredentials
-
-- (NSData *)token {
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        return nil;
-    }
-    if (is_tweak_active() && is_original_zalo_app()) {
-        NSString *spVoip = [ZTSettings sharedSettings].spoofedVoIPToken;
-        if (spVoip && spVoip.length >= 64) {
-            NSMutableData *tokData = [NSMutableData dataWithCapacity:32];
-            for (NSUInteger i = 0; i < 64; i += 2) {
-                NSString *byteStr = [spVoip substringWithRange:NSMakeRange(i, 2)];
-                unsigned int byteVal = 0;
-                [[NSScanner scannerWithString:byteStr] scanHexInt:&byteVal];
-                uint8_t b = (uint8_t)byteVal;
-                [tokData appendBytes:&b length:1];
-            }
-            if (tokData.length == 32) {
-                return tokData;
-            }
-        }
-    }
-    NSData *orig = %orig;
-    if (orig) return orig;
-    NSData *assoc = objc_getAssociatedObject(self, kZTVoIPTokenAssocKey);
-    if (assoc) return assoc;
-    return orig;
-}
-
-- (NSString *)type {
-    NSString *orig = %orig;
-    if (orig) return orig;
-    NSString *assoc = objc_getAssociatedObject(self, kZTVoIPTypeAssocKey);
-    if (assoc) return assoc;
-    return orig;
-}
-
-%end
-
-static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id registry, id delegate) {
-    // Không nạp token fake cho Zalo Clone
-    return;
-}
-
 %hook PKPushRegistry
-
-- (NSData *)pushTokenForType:(NSString *)type {
-    if (is_tweak_active() && !is_original_zalo_app()) {
-        return nil;
-    }
-    return %orig;
-}
-
-- (void)setDesiredPushTypes:(NSSet *)types {
-    if (is_tweak_active() && is_original_zalo_app() && [ZTSettings sharedSettings].justGeneratedColdBoot) {
-        logAudit(@"PUSH-REGISTRY", @"[VOIP-RESET] Đã hủy đăng ký phiên VoIP cũ với apsd để bắt Apple cấp lại Token mới cho Profile mới 🔄");
-        %orig([NSSet set]);
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            %orig(types);
-        });
-        return;
-    }
-    %orig;
-}
 
 - (void)setDelegate:(id)delegate {
     if (delegate && is_tweak_active()) {
@@ -4338,25 +3750,8 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
 
 %hook UIApplication
 
-- (BOOL)isRegisteredForRemoteNotifications {
-    if (is_tweak_active()) {
-        if (!is_original_zalo_app()) {
-            return NO;
-        }
-        return %orig;
-    }
-    return %orig;
-}
-
 - (void)registerForRemoteNotifications {
     if (is_tweak_active()) {
-        if (!is_original_zalo_app()) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                deliver_clone_apns_token_to_delegate(self, self.delegate);
-            });
-            return;
-        }
-
         static BOOL s_unregisteredOnceAfterWipe = NO;
         if (!s_unregisteredOnceAfterWipe) {
             NSString *prefPath = getConfigPath();
@@ -4365,10 +3760,6 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
             if ([dict[@"wipePending"] boolValue] || [dict[@"needsAPNsUnregister"] boolValue]) {
                 s_unregisteredOnceAfterWipe = YES;
 
-                // KHÔNG xóa Keychain tại đây: Zalo đã sinh & gửi định danh lên server trước khi gọi hàm này.
-                // Keychain đã được dọn ở Settings (lúc Zalo tắt) và ở %ctor (trước main()).
-
-                // 2. HOÀN TẤT WIPE -> ĐĂNG KÝ TRỰC TIẾP VỚI APPLE GATEWAY
                 NSMutableDictionary *m = [dict mutableCopy];
                 m[@"wipePending"] = @(NO);
                 m[@"needsAPNsUnregister"] = @(NO);
@@ -4395,14 +3786,6 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 typedef void (*OrigDidRegIMP)(id, SEL, UIApplication *, NSData *);
                 OrigDidRegIMP origImp = (OrigDidRegIMP)method_getImplementation(regMethod);
                 IMP customRegImp = imp_implementationWithBlock(^(id self_del, UIApplication *app, NSData *realToken) {
-                    if (!is_original_zalo_app()) {
-                        SEL failSel = @selector(application:didFailToRegisterForRemoteNotificationsWithError:);
-                        if ([self_del respondsToSelector:failSel]) {
-                            NSError *err = [NSError errorWithDomain:@"NSCocoaErrorDomain" code:3010 userInfo:@{NSLocalizedDescriptionKey: @"User denied notification permissions"}];
-                            [self_del application:app didFailToRegisterForRemoteNotificationsWithError:err];
-                        }
-                        return;
-                    }
                     if (realToken && [realToken length] > 0) {
                         const unsigned char *tokenBytes = (const unsigned char *)[realToken bytes];
                         NSUInteger tokenLen = [realToken length];
@@ -4494,18 +3877,6 @@ static __attribute__((unused)) void deliver_clone_voip_token_to_registry(id regi
                 });
                 method_setImplementation(termMethod, customTerm);
             }
-        }
-        if (!is_original_zalo_app()) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                deliver_clone_apns_token_to_delegate(self, delegate);
-            });
-        } else {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                if ([self respondsToSelector:@selector(registerForRemoteNotifications)]) {
-                    logAudit(@"APNS-INIT", @"🚀 [PRE-CHECK] Chủ động kích hoạt registerForRemoteNotifications để kiểm tra Token Push trước khi đăng ký...");
-                    [self registerForRemoteNotifications];
-                }
-            });
         }
     }
     %orig;
@@ -4667,7 +4038,7 @@ __attribute__((visibility("default"))) void zt_log_audit(NSString *category, NSS
     logAudit(category, detail);
 }
 
-static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {
+static __attribute__((unused)) void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResponse *response, NSData *respData, NSError *error, NSDate *startDate, NSDate *finishDate) {
     if (!request || !request.URL) return;
     if ([request valueForHTTPHeaderField:@"X-ZT-Diagnostic"]) return;
 
@@ -4904,386 +4275,10 @@ static void record_har_traffic(NSURLRequest *request, NSData *reqBody, NSURLResp
 }
 
 // ==========================================
-// HOOK NSJSONSerialization: Khử rò rỉ device_id phần cứng trong Payload JSON gửi lên ZAID
+// TẦNG MẠNG & JSON: ZERO NETWORK HOOKS (100% NATIVE)
+// Toàn bộ thông số thiết bị đã được fake ở tầng hệ thống (sysctl, uname, stat, UIDevice, NSLocale, CTCarrier...).
+// Không hook NSJSONSerialization, NSURLSession hay NSURLConnection để Zalo tự sinh và gửi gói tin tự nhiên 100%.
 // ==========================================
-%hook NSJSONSerialization
-
-+ (NSData *)dataWithJSONObject:(id)obj options:(NSJSONWritingOptions)opt error:(NSError **)error {
-    // KHÔNG CAN THIỆP GHI ĐÈ device_id:
-    // Toàn bộ định danh thiết bị đã được chuẩn hóa tự nhiên từ các API gốc của OS (POSIX stat, getattrlist, UIDevice, sysctl).
-    // Giữ nguyên 100% để chữ ký HMAC/Checksum của Zalo khớp tuyệt đối với payload gửi lên máy chủ!
-    return %orig;
-}
-
-%end
-
-// ==========================================
-// BỘ ĐỊNH TUYẾN MẠNG: ZERO NETWORK INTERVENTION
-// ==========================================
-
-static NSURLRequest *sanitize_outbound_zalo_request(NSURLRequest *origReq, NSData **ioBodyData) {
-    if (!origReq || !is_tweak_active()) return origReq;
-    // ZERO NETWORK INTERVENTION:
-    // Toàn bộ thông số thiết bị đã được chuẩn hóa tự nhiên từ các API gốc của OS (UIDevice, uname, sysctl, NSLocale, CTCarrier...).
-    // Tuyệt đối không can thiệp, bóc tách hay sửa đổi header, body hoặc mốc thời gian của gói tin mạng!
-    return origReq;
-}
-
-static NSData *rewrite_getDefaultCountry_response_if_needed(NSURLRequest *req, NSData *origRespData) {
-    // Không can thiệp phản hồi mạng từ server
-    return origRespData;
-}
-
-typedef void (*zt_didReceiveData_imp)(id, SEL, NSURLSession *, NSURLSessionDataTask *, NSData *);
-typedef void (*zt_didCompleteWithError_imp)(id, SEL, NSURLSession *, NSURLSessionTask *, NSError *);
-
-static NSMutableDictionary<NSString *, NSValue *> *s_orig_didReceiveData_map = nil;
-static NSMutableDictionary<NSString *, NSValue *> *s_orig_didCompleteWithError_map = nil;
-static __thread BOOL s_in_did_receive_data = NO;
-static __thread BOOL s_in_did_complete = NO;
-
-static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *dataTask, NSData *data) {
-    if (s_in_did_receive_data) return;
-    s_in_did_receive_data = YES;
-
-    if (dataTask && data) {
-        NSURLRequest *origReq = objc_getAssociatedObject(dataTask, "zt_orig_req") ?: (dataTask.currentRequest ?: dataTask.originalRequest);
-        data = rewrite_getDefaultCountry_response_if_needed(origReq, data);
-        NSMutableData *accum = objc_getAssociatedObject(dataTask, "zt_resp_data");
-        if (accum) {
-            @synchronized(accum) {
-                [accum appendData:data];
-            }
-        }
-    }
-    Class cur = [self class];
-    NSValue *val = nil;
-    while (cur && !val) {
-        val = s_orig_didReceiveData_map[NSStringFromClass(cur)];
-        if (!val) cur = class_getSuperclass(cur);
-    }
-    if (val) {
-        zt_didReceiveData_imp origFunc = (zt_didReceiveData_imp)[val pointerValue];
-        if (origFunc && (IMP)origFunc != (IMP)zt_didReceiveData_handler) {
-            origFunc(self, _cmd, session, dataTask, data);
-        }
-    }
-    s_in_did_receive_data = NO;
-}
-
-static void zt_didCompleteWithError_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
-    if (s_in_did_complete) return;
-    s_in_did_complete = YES;
-
-    if (task) {
-        NSNumber *alreadyRecorded = objc_getAssociatedObject(task, "zt_har_recorded");
-        if (![alreadyRecorded boolValue]) {
-            objc_setAssociatedObject(task, "zt_har_recorded", @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            NSURLRequest *origReq = objc_getAssociatedObject(task, "zt_orig_req") ?: (task.currentRequest ?: task.originalRequest);
-            NSDate *startDate = objc_getAssociatedObject(task, "zt_start_date") ?: [NSDate date];
-            NSData *respData = objc_getAssociatedObject(task, "zt_resp_data");
-            NSURLResponse *response = task.response;
-            NSData *reqBody = origReq.HTTPBody ?: objc_getAssociatedObject(task, "zt_body_data");
-
-            if (origReq && [ZTSettings sharedSettings].enableAuditLog) {
-                record_har_traffic(origReq, reqBody, response, respData, error, startDate, [NSDate date]);
-            }
-        }
-    }
-    Class cur = [self class];
-    NSValue *val = nil;
-    while (cur && !val) {
-        val = s_orig_didCompleteWithError_map[NSStringFromClass(cur)];
-        if (!val) cur = class_getSuperclass(cur);
-    }
-    if (val) {
-        zt_didCompleteWithError_imp origFunc = (zt_didCompleteWithError_imp)[val pointerValue];
-        if (origFunc && (IMP)origFunc != (IMP)zt_didCompleteWithError_handler) {
-            origFunc(self, _cmd, session, task, error);
-        }
-    }
-    s_in_did_complete = NO;
-}
-
-static void swizzle_session_delegate_class(Class cls) {
-    if (!cls) return;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        s_orig_didReceiveData_map = [[NSMutableDictionary alloc] init];
-        s_orig_didCompleteWithError_map = [[NSMutableDictionary alloc] init];
-    });
-
-    NSString *clsName = NSStringFromClass(cls);
-    @synchronized(s_orig_didReceiveData_map) {
-        if (s_orig_didReceiveData_map[clsName] || s_orig_didCompleteWithError_map[clsName]) return;
-    }
-
-    SEL selData = @selector(URLSession:dataTask:didReceiveData:);
-    Method mData = class_getInstanceMethod(cls, selData);
-    if (mData) {
-        IMP currentImp = method_getImplementation(mData);
-        if (currentImp != (IMP)zt_didReceiveData_handler) {
-            const char *types = method_getTypeEncoding(mData);
-            if (class_addMethod(cls, selData, (IMP)zt_didReceiveData_handler, types)) {
-                @synchronized(s_orig_didReceiveData_map) {
-                    s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
-                }
-            } else {
-                IMP origImp = method_setImplementation(mData, (IMP)zt_didReceiveData_handler);
-                if (origImp && origImp != (IMP)zt_didReceiveData_handler) {
-                    @synchronized(s_orig_didReceiveData_map) {
-                        s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
-                    }
-                }
-            }
-        }
-    }
-
-    SEL selComplete = @selector(URLSession:task:didCompleteWithError:);
-    Method mComplete = class_getInstanceMethod(cls, selComplete);
-    if (mComplete) {
-        IMP currentImp = method_getImplementation(mComplete);
-        if (currentImp != (IMP)zt_didCompleteWithError_handler) {
-            const char *types = method_getTypeEncoding(mComplete);
-            if (class_addMethod(cls, selComplete, (IMP)zt_didCompleteWithError_handler, types)) {
-                @synchronized(s_orig_didCompleteWithError_map) {
-                    s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
-                }
-            } else {
-                IMP origImp = method_setImplementation(mComplete, (IMP)zt_didCompleteWithError_handler);
-                if (origImp && origImp != (IMP)zt_didCompleteWithError_handler) {
-                    @synchronized(s_orig_didCompleteWithError_map) {
-                        s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
-                    }
-                }
-            }
-        }
-    }
-}
-
-%hook NSURLSession
-
-+ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
-    if (delegate) {
-        swizzle_session_delegate_class([delegate class]);
-    }
-    return %orig;
-}
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    request = sanitize_outbound_zalo_request(request, NULL);
-    if (request && request.URL) {
-        NSString *absUrl = request.URL.absoluteString;
-        if ([absUrl containsString:@"talk-m.zaloapp.com/api/fcm"] && [absUrl containsString:@"method=submitToken"]) {
-            NSString *curVoipToken = @"";
-            NSURLComponents *components = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
-            for (NSURLQueryItem *item in components.queryItems) {
-                if ([item.name isEqualToString:@"token"]) {
-                    curVoipToken = item.value ?: @"";
-                    break;
-                }
-            }
-            if (curVoipToken.length > 0) {
-                ZTSettings *st = [ZTSettings sharedSettings];
-                NSString *status = @"";
-                if (st.lastWipedVoIPToken.length > 0 && [st.lastWipedVoIPToken isEqualToString:curVoipToken]) {
-                    status = @"⚠️ [TRÙNG LẶP VỚI LẦN TRƯỚC - ĐANG DÙNG CHUNG PHẦN CỨNG]";
-                    logAudit(@"PUSH-TOKEN-DEBUG", [NSString stringWithFormat:@"⚠️ [DEBUG] VoIP Token trùng lặp với nick trước: %@ (Đang gửi lên VNG)", curVoipToken]);
-                } else {
-                    status = @"✨ [TOKEN MỚI TỪ APPLE / ĐƯỢC CẤP LẠI]";
-                    logAudit(@"PUSH-TOKEN-DEBUG", [NSString stringWithFormat:@"✅ [DEBUG] VoIP Token mới độc nhất: %@ (Đang gửi lên VNG)", curVoipToken]);
-                }
-                st.currentVoIPToken = curVoipToken;
-                [st saveSettings];
-                logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [VOIP PUSH SUBMIT] %@ Token: %@ (Đang gửi lên server VNG tự nhiên)", status, curVoipToken]);
-            }
-            if (is_tweak_active() && !is_original_zalo_app()) {
-                logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
-                return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]]);
-            }
-        }
-    }
-    NSURLSessionDataTask *task = %orig(request);
-    if (task && request) {
-        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    }
-    if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-        NSString *urlStr = request.URL.absoluteString ?: @"";
-        NSString *method = request.HTTPMethod ?: @"GET";
-        NSString *desc = @"";
-        if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/consents"]) {
-            desc = @" 👉 [Zalo tải điều khoản đăng ký/sử dụng]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/phone/verify"]) {
-            desc = @" 👉 [Zalo xác thực SĐT đăng nhập/OTP]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/accounts"]) {
-            desc = @" 👉 [Zalo tạo tài khoản mới]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/login/otp/verify"]) {
-            desc = @" 👉 [Zalo xác thực mã OTP]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v2/login/otp"]) {
-            desc = @" 👉 [Zalo gửi mã xác thực OTP về máy]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/name"]) {
-            desc = @" 👉 [Zalo xác thực tên hiển thị]";
-        } else if ([urlStr containsString:@"register.zaloapp.com/api/v1/register/verify/dob"]) {
-            desc = @" 👉 [Zalo xác thực ngày sinh/giới tính]";
-        } else if ([urlStr containsString:@"centralized.zaloapp.com"]) {
-            desc = @" 👉 [Zalo gửi định danh thiết bị]";
-        }
-        logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [ASYNC DELEGATE] %@ %@%@", method, urlStr, desc]);
-    }
-    return task;
-}
-
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    request = sanitize_outbound_zalo_request(request, NULL);
-    if (is_tweak_active() && !is_original_zalo_app() && request && request.URL) {
-        NSString *absUrl = request.URL.absoluteString;
-        if ([absUrl containsString:@"talk-m.zaloapp.com/api/fcm"] && [absUrl containsString:@"method=submitToken"]) {
-            logAudit(@"PUSH-TOKEN", @"[PUSH-PROTECT] Đã chặn submitToken của Zalo Clone gửi ra Internet (Triệt tiêu 100% BadDeviceToken Apple) ✅");
-            NSData *mockResp = [@"{\"error_code\":0,\"error_message\":\"Successful.\",\"data\":1}" dataUsingEncoding:NSUTF8StringEncoding];
-            NSHTTPURLResponse *mockHttp = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{@"Content-Type": @"application/json"}];
-            if (completionHandler) {
-                dispatch_async(dispatch_get_main_queue(), ^{
-                    completionHandler(mockResp, mockHttp, nil);
-                });
-            }
-            return %orig([NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]], nil);
-        }
-    }
-    NSDate *startDate = [NSDate date];
-    NSData *reqBody = request.HTTPBody;
-
-    if (!completionHandler) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [TASK-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @""]);
-        }
-        return %orig(request, nil);
-    }
-
-    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-        data = rewrite_getDefaultCountry_response_if_needed(request, data);
-        NSDate *finishDate = [NSDate date];
-        record_har_traffic(request, reqBody, response, data, error, startDate, finishDate);
-        completionHandler(data, response, error);
-    };
-
-    return %orig(request, wrappedHandler);
-}
-
-- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
-    request = sanitize_outbound_zalo_request(request, &bodyData);
-    NSURLSessionUploadTask *task = %orig(request, bodyData);
-    if (task && request) {
-        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        if (bodyData) {
-            objc_setAssociatedObject(task, "zt_body_data", bodyData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-    }
-    if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-        logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-DELEGATE] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
-    }
-    return task;
-}
-
-- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    request = sanitize_outbound_zalo_request(request, &bodyData);
-    NSDate *startDate = [NSDate date];
-
-    if (!completionHandler) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
-        }
-        return %orig(request, bodyData, nil);
-    }
-
-    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-        data = rewrite_getDefaultCountry_response_if_needed(request, data);
-        NSDate *finishDate = [NSDate date];
-        record_har_traffic(request, bodyData, response, data, error, startDate, finishDate);
-        completionHandler(data, response, error);
-    };
-
-    return %orig(request, bodyData, wrappedHandler);
-}
-
-- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromFile:(NSURL *)fileURL completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
-    NSDate *startDate = [NSDate date];
-    NSData *fileData = fileURL ? [NSData dataWithContentsOfURL:fileURL options:NSDataReadingMappedIfSafe error:nil] : nil;
-
-    if (!completionHandler) {
-        if ([ZTSettings sharedSettings].enableAuditLog && request && request.URL) {
-            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-FILE-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
-        }
-        return %orig(request, fileURL, nil);
-    }
-
-    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-        NSDate *finishDate = [NSDate date];
-        record_har_traffic(request, fileData, response, data, error, startDate, finishDate);
-        completionHandler(data, response, error);
-    };
-
-    return %orig(request, fileURL, wrappedHandler);
-}
-
-- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSURL *location, NSURLResponse *response, NSError *error))completionHandler {
-    return %orig;
-}
-
-- (NSURLSessionDownloadTask *)downloadTaskWithRequest:(NSURLRequest *)request {
-    return %orig;
-}
-
-%end
-
-%hook NSURLConnection
-
-+ (NSData *)sendSynchronousRequest:(NSURLRequest *)request returningResponse:(NSURLResponse **)response error:(NSError **)error {
-    NSDate *startDate = [NSDate date];
-    NSURLResponse *resp = nil;
-    NSError *err = nil;
-    NSData *data = %orig(request, &resp, &err);
-    NSDate *finishDate = [NSDate date];
-
-    if (response) *response = resp;
-    if (error) *error = err;
-
-    record_har_traffic(request, request.HTTPBody, resp, data, err, startDate, finishDate);
-    return data;
-}
-
-+ (void)sendAsynchronousRequest:(NSURLRequest *)request queue:(NSOperationQueue *)queue completionHandler:(void (^)(NSURLResponse *response, NSData *data, NSError *connectionError))handler {
-    NSDate *startDate = [NSDate date];
-
-    if (!handler) {
-        record_har_traffic(request, request.HTTPBody, nil, nil, nil, startDate, nil);
-        %orig;
-        return;
-    }
-
-    void (^wrappedHandler)(NSURLResponse *, NSData *, NSError *) = ^(NSURLResponse *response, NSData *data, NSError *connectionError) {
-        NSDate *finishDate = [NSDate date];
-        record_har_traffic(request, request.HTTPBody, response, data, connectionError, startDate, finishDate);
-        handler(response, data, connectionError);
-    };
-
-    %orig(request, queue, wrappedHandler);
-}
-
-- (id)initWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
-    return %orig;
-}
-
-+ (NSURLConnection *)connectionWithRequest:(NSURLRequest *)request delegate:(id)delegate {
-    record_har_traffic(request, request.HTTPBody, nil, nil, nil, [NSDate date], nil);
-    return %orig;
-}
-
-%end
 
 %hook UIAlertController
 
@@ -5849,20 +4844,11 @@ static void zt_early_keychain_purge_if_needed(void) {
             universal_hook_c_function("CacheDeleteCopyAvailableSpaceForVolume", cdFunc, (void *)my_CacheDeleteCopyAvailableSpaceForVolume, (void **)&orig_CacheDeleteCopyAvailableSpaceForVolume);
         }
 
-        // Hook POSIX open & openat (Bẻ hướng LevelDB KVCore/Device về Sandbox an toàn)
+        // Hook POSIX open & openat (Chặn quét đường dẫn phát hiện Jailbreak)
         universal_hook_c_function("open", (void *)open, (void *)my_open, (void **)&orig_open);
         universal_hook_c_function("openat", (void *)openat, (void *)my_openat, (void **)&orig_openat);
 
-        // Hook CoreFoundation Preferences (App Groups Redirection)
-        universal_hook_c_function("CFPreferencesCopyAppValue", (void *)CFPreferencesCopyAppValue, (void *)my_CFPreferencesCopyAppValue, (void **)&orig_CFPreferencesCopyAppValue);
-        universal_hook_c_function("CFPreferencesSetAppValue", (void *)CFPreferencesSetAppValue, (void *)my_CFPreferencesSetAppValue, (void **)&orig_CFPreferencesSetAppValue);
-        universal_hook_c_function("CFPreferencesAppSynchronize", (void *)CFPreferencesAppSynchronize, (void *)my_CFPreferencesAppSynchronize, (void **)&orig_CFPreferencesAppSynchronize);
-
-        // Hook CoreFoundation Bundle Identifier (C-Layer Redirection cho Zalo Clone)
-        universal_hook_c_function("CFBundleGetIdentifier", (void *)CFBundleGetIdentifier, (void *)my_CFBundleGetIdentifier, (void **)&orig_CFBundleGetIdentifier);
-        universal_hook_c_function("CFBundleGetValueForInfoDictionaryKey", (void *)CFBundleGetValueForInfoDictionaryKey, (void *)my_CFBundleGetValueForInfoDictionaryKey, (void **)&orig_CFBundleGetValueForInfoDictionaryKey);
-
-        // Hook Security Framework (Keychain Isolation)
+        // Hook Security Framework (Pass-through 100%, chỉ ghi log khi bật Audit Log)
         universal_hook_c_function("SecItemCopyMatching", (void *)SecItemCopyMatching, (void *)my_SecItemCopyMatching, (void **)&orig_SecItemCopyMatching);
         universal_hook_c_function("SecItemAdd", (void *)SecItemAdd, (void *)my_SecItemAdd, (void **)&orig_SecItemAdd);
         universal_hook_c_function("SecItemDelete", (void *)SecItemDelete, (void *)my_SecItemDelete, (void **)&orig_SecItemDelete);

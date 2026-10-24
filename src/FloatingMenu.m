@@ -2024,6 +2024,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     
     // 2. Xóa sạch Keychain của Zalo trong sandbox này
     updateProgressAlert(@"[50%] 🔐 Đang làm sạch Keychain & NSUserDefaults App Suites...", 0.50f);
+    // 2. Xóa sạch Keychain của Zalo (bao gồm kZAIDForDevice, kZAIDS4UserDevices trên mọi Access Group có tiền tố <TeamID>.)
     NSArray *secClasses = @[
         (__bridge id)kSecClassGenericPassword,
         (__bridge id)kSecClassInternetPassword,
@@ -2031,17 +2032,58 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         (__bridge id)kSecClassKey,
         (__bridge id)kSecClassIdentity
     ];
-    NSArray *secGroups = @[
-        @"",
-        @"group.vn.com.vng.zingalo",
-        @"group.noti.vn.com.vng.zingalo",
-        @"group.zsettings",
-        @"group.com.vng.zalo",
-        @"group.com.zing.zalo",
-        @"vn.com.vng.zingalo",
-        @"vn.com.vng.zalo.user",
-        @"vn.com.vng.zingalo.zalosdk"
+    for (id secClass in secClasses) {
+        NSDictionary *enumQuery = @{
+            (__bridge id)kSecClass: secClass,
+            (__bridge id)kSecAttrSynchronizable: (__bridge id)kSecAttrSynchronizableAny,
+            (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitAll,
+            (__bridge id)kSecReturnAttributes: @YES
+        };
+        CFTypeRef result = NULL;
+        OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)enumQuery, &result);
+        if (status == errSecSuccess && result) {
+            NSArray *items = (CFGetTypeID(result) == CFArrayGetTypeID()) ? (__bridge NSArray *)result : @[(__bridge id)result];
+            for (NSDictionary *item in items) {
+                if (![item isKindOfClass:[NSDictionary class]]) continue;
+                NSMutableDictionary *delQ = [NSMutableDictionary dictionary];
+                delQ[(__bridge id)kSecClass] = secClass;
+                if (item[(__bridge id)kSecAttrAccessGroup]) delQ[(__bridge id)kSecAttrAccessGroup] = item[(__bridge id)kSecAttrAccessGroup];
+                if (item[(__bridge id)kSecAttrService]) delQ[(__bridge id)kSecAttrService] = item[(__bridge id)kSecAttrService];
+                if (item[(__bridge id)kSecAttrAccount]) delQ[(__bridge id)kSecAttrAccount] = item[(__bridge id)kSecAttrAccount];
+                delQ[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
+                SecItemDelete((__bridge CFDictionaryRef)delQ);
+
+                [delQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
+                SecItemDelete((__bridge CFDictionaryRef)delQ);
+            }
+        }
+        if (result) CFRelease(result);
+    }
+
+    NSArray *targetAccounts = @[
+        @"kZAIDForDevice",
+        @"kZAIDS4UserDevices",
+        @"kZADeviceId",
+        @"zalo_device_id",
+        @"zcid",
+        @"kSessionKey",
+        @"kSessionUid"
     ];
+    for (NSString *acc in targetAccounts) {
+        NSDictionary *accQ1 = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrAccount: acc,
+            (__bridge id)kSecAttrSynchronizable: (__bridge id)kSecAttrSynchronizableAny
+        };
+        SecItemDelete((__bridge CFDictionaryRef)accQ1);
+
+        NSDictionary *accQ2 = @{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+            (__bridge id)kSecAttrAccount: acc
+        };
+        SecItemDelete((__bridge CFDictionaryRef)accQ2);
+    }
+
     for (id secClass in secClasses) {
         NSMutableDictionary *broadQ = [NSMutableDictionary dictionary];
         broadQ[(__bridge id)kSecClass] = secClass;
@@ -2050,19 +2092,6 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
 
         [broadQ removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
         SecItemDelete((__bridge CFDictionaryRef)broadQ);
-
-        for (NSString *grp in secGroups) {
-            NSMutableDictionary *query = [NSMutableDictionary dictionary];
-            query[(__bridge id)kSecClass] = secClass;
-            if (grp.length > 0) {
-                query[(__bridge id)kSecAttrAccessGroup] = grp;
-            }
-            query[(__bridge id)kSecAttrSynchronizable] = (__bridge id)kSecAttrSynchronizableAny;
-            SecItemDelete((__bridge CFDictionaryRef)query);
-
-            [query removeObjectForKey:(__bridge id)kSecAttrSynchronizable];
-            SecItemDelete((__bridge CFDictionaryRef)query);
-        }
     }
 
     // Xoá sạch bộ nhớ đệm mạng WebKit và URLCache
@@ -2186,6 +2215,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
     settings.currentZCID = @"";
     settings.currentVoIPToken = @"";
+    settings.spoofedVoIPToken = @"";
     settings.centralizedDid = @"";
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
@@ -2193,7 +2223,7 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     settings.lastWipedTimestamp = (uint64_t)[[NSDate date] timeIntervalSince1970];
     settings.enableFakeTimeZone = NO;
     settings.needsNewProfile = NO;
-    settings.needsSandboxPurge = NO;
+    settings.needsSandboxPurge = YES;
 
     BOOL isJB = NO;
 #if defined(THEOS_PACKAGE_SCHEME_ROOTHIDE) || defined(THEOS_PACKAGE_SCHEME_ROOTLESS)
@@ -2215,6 +2245,27 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
         settings.showFloatingMenu = YES;
     }
     [settings saveSettings];
+
+    // Đảm bảo ghi cờ needsKeychainPurge=YES và justRestoredBackup=NO để Cold-Boot (%ctor trước main()) quét sạch 100%
+    // mọi dữ liệu mà luồng nền Zalo có thể flush ra đĩa trong 10 giây chờ Airplane Mode trước khi thoát
+    NSArray<NSString *> *wipePlistPaths = @[
+        [home stringByAppendingPathComponent:@"Library/Preferences/com.sonhu.zalotweak.plist"],
+        [home stringByAppendingPathComponent:@"Documents/com.sonhu.zalotweak.plist"],
+        GLOBAL_PREFS_PATH
+    ];
+    for (NSString *wp in wipePlistPaths) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:wp]) {
+            NSMutableDictionary *md = [NSMutableDictionary dictionaryWithContentsOfFile:wp];
+            if (md) {
+                md[@"needsSandboxPurge"] = @(YES);
+                md[@"needsKeychainPurge"] = @(YES);
+                md[@"needsNewProfile"] = @(NO);
+                md[@"justRestoredBackup"] = @(NO);
+                md[@"spoofedVoIPToken"] = @"";
+                [md writeToFile:wp atomically:YES];
+            }
+        }
+    }
 
     // Xả sạch cache mạng tầng RAM & Cookies
     [[NSURLCache sharedURLCache] removeAllCachedResponses];

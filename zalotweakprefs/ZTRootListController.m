@@ -1784,13 +1784,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedIDFV"] = p.spoofedIDFV;
             dict[@"spoofedIDFA"] = @"00000000-0000-0000-0000-000000000000";
             dict[@"profileId"] = p.profileId;
-            NSString *vSeed = [NSString stringWithFormat:@"VOIP:%@:%llu", p.profileId ?: [[NSUUID UUID] UUIDString], (uint64_t)[[NSDate date] timeIntervalSince1970]];
-            const char *vCStr = [vSeed UTF8String];
-            unsigned char vHash[32];
-            CC_SHA256(vCStr, (CC_LONG)strlen(vCStr), vHash);
-            NSMutableString *vHex = [NSMutableString stringWithCapacity:64];
-            for (int i = 0; i < 32; i++) [vHex appendFormat:@"%02x", vHash[i]];
-            dict[@"spoofedVoIPToken"] = [vHex copy];
+            dict[@"spoofedVoIPToken"] = @"";
             dict[@"spoofedSerial"] = p.spoofedSerial;
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
@@ -1810,6 +1804,7 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"needsKeychainPurge"] = @(YES);
             dict[@"needsSandboxPurge"] = @(YES);
             dict[@"needsNewProfile"] = @(NO);
+            dict[@"justRestoredBackup"] = @(NO);
 
             // Ghi đồng thời ra tất cả các vùng nhớ để sandbox luôn đọc được
             save_dict_to_all_locations(dict);

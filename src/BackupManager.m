@@ -647,6 +647,8 @@ static void zt_add_file_to_zip(FILE *zipFp, NSString *diskPath, NSString *zipPat
         if (tweakDict) {
             tweakDict[@"needsNewProfile"] = @(NO);
             tweakDict[@"needsSandboxPurge"] = @(NO);
+            tweakDict[@"needsKeychainPurge"] = @(NO);
+            tweakDict[@"justRestoredBackup"] = @(YES);
             tweakDict[@"hasConfiguredProfile"] = @(YES);
             tweakDict[@"enabled"] = @(YES);
 
