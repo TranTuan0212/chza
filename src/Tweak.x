@@ -929,10 +929,7 @@ static void purge_entire_sandbox_safely(void) {
             self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"pl-PL", @"en-PL"];
         } else {
             self.localeIdentifier = dict[@"localeIdentifier"] ?: @"vi_VN";
-            self.timeZoneName = dict[@"timeZoneName"] ?: @"Asia/Ho_Chi_Minh";
-            if ([self.timeZoneName isEqualToString:@"Asia/Bangkok"] || [self.timeZoneName isEqualToString:@"Asia/Saigon"]) {
-                self.timeZoneName = @"Asia/Ho_Chi_Minh";
-            }
+            self.timeZoneName = dict[@"timeZoneName"] ?: ([NSTimeZone systemTimeZone].name ?: @"Asia/Ho_Chi_Minh");
             self.preferredLanguages = dict[@"preferredLanguages"] ?: @[@"vi-VN", @"en-VN"];
         }
         self.darwinKernelRelease = dict[@"darwinKernelRelease"] ?: @"";
@@ -2687,6 +2684,12 @@ static OSStatus my_SecItemUpdate(CFDictionaryRef query, CFDictionaryRef attribut
 
 static BOOL is_jailbreak_path(const char *path) {
     if (!path) return NO;
+    // Cho phép truy cập nội bộ tới file cấu hình của chính Tweak mà không bị chặn hay báo động giả
+    if (strstr(path, "com.sonhu.zalotweak") != NULL ||
+        strstr(path, "ZaloAudit.log") != NULL ||
+        strstr(path, "ZaloTraffic.har") != NULL) {
+        return NO;
+    }
     static const char *jb_indicators[] = {
         "/Applications/Sileo.app",
         "/Applications/Zebra.app",
@@ -2700,6 +2703,8 @@ static BOOL is_jailbreak_path(const char *path) {
         "/private/var/lib/apt",
         "/private/var/stash",
         "/var/jb",
+        ".jbroot",
+        "jbroot",
         "/var/lib/apt",
         "/var/lib/dpkg",
         "/var/log/dpkg",
@@ -2982,7 +2987,7 @@ static CFDictionaryRef my_CFCopyServerVersionDictionary(void) {
 // Hook POSIX stat, lstat, fstat & getattrlist để làm mới device_id và st_birthtimespec
 static inline BOOL should_fake_stat_path(const char *path) {
     if (!path) return NO;
-    if (strstr(path, "zaloaudit.log") || strstr(path, "zalotraffic.har") || strstr(path, "zalotweak")) {
+    if (strstr(path, "zaloaudit.log") || strstr(path, "zalotraffic.har") || strstr(path, "zalotweak") || strstr(path, ".jbroot") || strstr(path, "jbroot")) {
         return NO;
     }
     if (strstr(path, "/var") ||
@@ -3018,6 +3023,19 @@ static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t b
         return base_birth;
     }
 
+    // Tier 0: Phân vùng hệ thống RootFS read-only ("/", "/System/...", "/usr/...", "/bin/...", "/sbin/...", "/etc/...", "/Library/...")
+    // Phải kiểm tra TRƯỚC Tier 4 để "/System/Library/..." không bị nhận nhầm là thư mục Library trong Sandbox của App!
+    if (strcmp(p, "/") == 0 ||
+        strncmp(p, "/System", 7) == 0 ||
+        strncmp(p, "/usr", 4) == 0 ||
+        strncmp(p, "/bin", 4) == 0 ||
+        strncmp(p, "/sbin", 5) == 0 ||
+        strncmp(p, "/etc", 4) == 0 ||
+        strncmp(p, "/Library", 8) == 0 ||
+        strncmp(p, "/Developer", 10) == 0) {
+        return base_birth;
+    }
+
     // Tier 4: Thư mục con cấu hình/cache trong Sandbox (Library, Caches, Preferences, tmp)
     if (strstr(p, "/Library") != NULL || strstr(p, "/Caches") != NULL || strstr(p, "/tmp") != NULL || strstr(p, "/Preferences") != NULL) {
         return base_birth + d_lib;
@@ -3050,7 +3068,6 @@ static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t b
     if (strcmp(p, "/var") == 0 || strcmp(p, "/var/") == 0) {
         return base_birth + d_var;
     }
-    // Tier 0: Root "/" hoặc "/System"
     return base_birth;
 }
 
@@ -3063,7 +3080,7 @@ static void log_stat_path_once(const char *api, const char *path, uint64_t eff_b
     if (!path || !api || !path[0]) return;
     static __thread BOOL s_in_stat_log = NO;
     if (s_in_stat_log) return;
-    if (strstr(path, "ZaloAudit.log") || strstr(path, "ZaloTraffic.har") || strstr(path, "zalotweak") || strstr(path, ".plist")) {
+    if (strstr(path, "ZaloAudit.log") || strstr(path, "ZaloTraffic.har") || strstr(path, "zalotweak") || strstr(path, ".plist") || strstr(path, ".jbroot") || strstr(path, "jbroot")) {
         return;
     }
     ZTSettings *s = [ZTSettings sharedSettings];
@@ -4275,10 +4292,220 @@ static __attribute__((unused)) void record_har_traffic(NSURLRequest *request, NS
 }
 
 // ==========================================
-// TẦNG MẠNG & JSON: ZERO NETWORK HOOKS (100% NATIVE)
-// Toàn bộ thông số thiết bị đã được fake ở tầng hệ thống (sysctl, uname, stat, UIDevice, NSLocale, CTCarrier...).
-// Không hook NSJSONSerialization, NSURLSession hay NSURLConnection để Zalo tự sinh và gửi gói tin tự nhiên 100%.
+// BỘ QUAN SÁT MẠNG CHỈ ĐỌC (100% READ-ONLY AUDIT OBSERVER)
+// Tuyệt đối KHÔNG sửa đổi NSURLRequest, Header, Body hay dữ liệu trả về của Zalo.
+// Chỉ ghi log khi người dùng bật enableAuditLog để kiểm tra gói tin.
 // ==========================================
+
+typedef void (*zt_didReceiveData_imp)(id, SEL, NSURLSession *, NSURLSessionDataTask *, NSData *);
+typedef void (*zt_didCompleteWithError_imp)(id, SEL, NSURLSession *, NSURLSessionTask *, NSError *);
+
+static NSMutableDictionary<NSString *, NSValue *> *s_orig_didReceiveData_map = nil;
+static NSMutableDictionary<NSString *, NSValue *> *s_orig_didCompleteWithError_map = nil;
+static __thread BOOL s_in_did_receive_data = NO;
+static __thread BOOL s_in_did_complete = NO;
+
+static void zt_didReceiveData_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionDataTask *dataTask, NSData *data) {
+    if (s_in_did_receive_data) return;
+    s_in_did_receive_data = YES;
+
+    if (dataTask && data && [ZTSettings sharedSettings].enableAuditLog) {
+        NSMutableData *accum = objc_getAssociatedObject(dataTask, "zt_resp_data");
+        if (accum) {
+            @synchronized(accum) {
+                [accum appendData:data];
+            }
+        }
+    }
+    Class cur = [self class];
+    NSValue *val = nil;
+    while (cur && !val) {
+        val = s_orig_didReceiveData_map[NSStringFromClass(cur)];
+        if (!val) cur = class_getSuperclass(cur);
+    }
+    if (val) {
+        zt_didReceiveData_imp origFunc = (zt_didReceiveData_imp)[val pointerValue];
+        if (origFunc && (IMP)origFunc != (IMP)zt_didReceiveData_handler) {
+            origFunc(self, _cmd, session, dataTask, data);
+        }
+    }
+    s_in_did_receive_data = NO;
+}
+
+static void zt_didCompleteWithError_handler(id self, SEL _cmd, NSURLSession *session, NSURLSessionTask *task, NSError *error) {
+    if (s_in_did_complete) return;
+    s_in_did_complete = YES;
+
+    if (task && [ZTSettings sharedSettings].enableAuditLog) {
+        NSNumber *alreadyRecorded = objc_getAssociatedObject(task, "zt_har_recorded");
+        if (![alreadyRecorded boolValue]) {
+            objc_setAssociatedObject(task, "zt_har_recorded", @(YES), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            NSURLRequest *origReq = objc_getAssociatedObject(task, "zt_orig_req") ?: (task.currentRequest ?: task.originalRequest);
+            NSDate *startDate = objc_getAssociatedObject(task, "zt_start_date") ?: [NSDate date];
+            NSData *respData = objc_getAssociatedObject(task, "zt_resp_data");
+            NSURLResponse *response = task.response;
+            NSData *reqBody = origReq.HTTPBody ?: objc_getAssociatedObject(task, "zt_body_data");
+
+            if (origReq) {
+                record_har_traffic(origReq, reqBody, response, respData, error, startDate, [NSDate date]);
+            }
+        }
+    }
+    Class cur = [self class];
+    NSValue *val = nil;
+    while (cur && !val) {
+        val = s_orig_didCompleteWithError_map[NSStringFromClass(cur)];
+        if (!val) cur = class_getSuperclass(cur);
+    }
+    if (val) {
+        zt_didCompleteWithError_imp origFunc = (zt_didCompleteWithError_imp)[val pointerValue];
+        if (origFunc && (IMP)origFunc != (IMP)zt_didCompleteWithError_handler) {
+            origFunc(self, _cmd, session, task, error);
+        }
+    }
+    s_in_did_complete = NO;
+}
+
+static void swizzle_session_delegate_class(Class cls) {
+    if (!cls) return;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        s_orig_didReceiveData_map = [[NSMutableDictionary alloc] init];
+        s_orig_didCompleteWithError_map = [[NSMutableDictionary alloc] init];
+    });
+
+    NSString *clsName = NSStringFromClass(cls);
+    @synchronized(s_orig_didReceiveData_map) {
+        if (s_orig_didReceiveData_map[clsName] || s_orig_didCompleteWithError_map[clsName]) return;
+    }
+
+    SEL selData = @selector(URLSession:dataTask:didReceiveData:);
+    Method mData = class_getInstanceMethod(cls, selData);
+    if (mData) {
+        IMP currentImp = method_getImplementation(mData);
+        if (currentImp != (IMP)zt_didReceiveData_handler) {
+            const char *types = method_getTypeEncoding(mData);
+            if (class_addMethod(cls, selData, (IMP)zt_didReceiveData_handler, types)) {
+                @synchronized(s_orig_didReceiveData_map) {
+                    s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
+                }
+            } else {
+                IMP origImp = method_setImplementation(mData, (IMP)zt_didReceiveData_handler);
+                if (origImp && origImp != (IMP)zt_didReceiveData_handler) {
+                    @synchronized(s_orig_didReceiveData_map) {
+                        s_orig_didReceiveData_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+                    }
+                }
+            }
+        }
+    }
+
+    SEL selComplete = @selector(URLSession:task:didCompleteWithError:);
+    Method mComplete = class_getInstanceMethod(cls, selComplete);
+    if (mComplete) {
+        IMP currentImp = method_getImplementation(mComplete);
+        if (currentImp != (IMP)zt_didCompleteWithError_handler) {
+            const char *types = method_getTypeEncoding(mComplete);
+            if (class_addMethod(cls, selComplete, (IMP)zt_didCompleteWithError_handler, types)) {
+                @synchronized(s_orig_didCompleteWithError_map) {
+                    s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)currentImp];
+                }
+            } else {
+                IMP origImp = method_setImplementation(mComplete, (IMP)zt_didCompleteWithError_handler);
+                if (origImp && origImp != (IMP)zt_didCompleteWithError_handler) {
+                    @synchronized(s_orig_didCompleteWithError_map) {
+                        s_orig_didCompleteWithError_map[clsName] = [NSValue valueWithPointer:(void *)origImp];
+                    }
+                }
+            }
+        }
+    }
+}
+
+%hook NSURLSession
+
++ (NSURLSession *)sessionWithConfiguration:(NSURLSessionConfiguration *)configuration delegate:(id<NSURLSessionDelegate>)delegate delegateQueue:(NSOperationQueue *)queue {
+    if (delegate && [ZTSettings sharedSettings].enableAuditLog) {
+        swizzle_session_delegate_class([delegate class]);
+    }
+    return %orig;
+}
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
+    NSURLSessionDataTask *task = %orig(request);
+    if ([ZTSettings sharedSettings].enableAuditLog && task && request) {
+        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (request.URL) {
+            NSString *urlStr = request.URL.absoluteString ?: @"";
+            NSString *method = request.HTTPMethod ?: @"GET";
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [ASYNC DELEGATE] %@ %@", method, urlStr]);
+        }
+    }
+    return task;
+}
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    if (![ZTSettings sharedSettings].enableAuditLog) {
+        return %orig;
+    }
+    NSDate *startDate = [NSDate date];
+    NSData *reqBody = request.HTTPBody;
+
+    if (!completionHandler) {
+        if (request && request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [TASK-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"GET", request.URL.absoluteString ?: @""]);
+        }
+        return %orig(request, nil);
+    }
+
+    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        record_har_traffic(request, reqBody, response, data, error, startDate, [NSDate date]);
+        completionHandler(data, response, error);
+    };
+
+    return %orig(request, wrappedHandler);
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData {
+    NSURLSessionUploadTask *task = %orig(request, bodyData);
+    if ([ZTSettings sharedSettings].enableAuditLog && task && request) {
+        objc_setAssociatedObject(task, "zt_orig_req", request, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_start_date", [NSDate date], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(task, "zt_resp_data", [NSMutableData data], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if (bodyData) {
+            objc_setAssociatedObject(task, "zt_body_data", bodyData, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        if (request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-DELEGATE] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
+        }
+    }
+    return task;
+}
+
+- (NSURLSessionUploadTask *)uploadTaskWithRequest:(NSURLRequest *)request fromData:(NSData *)bodyData completionHandler:(void (^)(NSData *data, NSURLResponse *response, NSError *error))completionHandler {
+    if (![ZTSettings sharedSettings].enableAuditLog) {
+        return %orig;
+    }
+    NSDate *startDate = [NSDate date];
+
+    if (!completionHandler) {
+        if (request && request.URL) {
+            logAudit(@"ZALO-HTTP-TASK", [NSString stringWithFormat:@"🚀 [UPLOAD-NO-HANDLER] %@ %@", request.HTTPMethod ?: @"POST", request.URL.absoluteString ?: @""]);
+        }
+        return %orig(request, bodyData, nil);
+    }
+
+    void (^wrappedHandler)(NSData *data, NSURLResponse *response, NSError *error) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+        record_har_traffic(request, bodyData, response, data, error, startDate, [NSDate date]);
+        completionHandler(data, response, error);
+    };
+
+    return %orig(request, bodyData, wrappedHandler);
+}
+
+%end
 
 %hook UIAlertController
 
