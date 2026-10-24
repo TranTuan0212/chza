@@ -2703,8 +2703,6 @@ static BOOL is_jailbreak_path(const char *path) {
         "/private/var/lib/apt",
         "/private/var/stash",
         "/var/jb",
-        ".jbroot",
-        "jbroot",
         "/var/lib/apt",
         "/var/lib/dpkg",
         "/var/log/dpkg",
