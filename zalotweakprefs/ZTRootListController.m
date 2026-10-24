@@ -1795,6 +1795,10 @@ static void prefs_analyze_phone_for_auto_wipe(NSString *rawPhone,
             dict[@"spoofedWifiMAC"] = p.spoofedWifiMAC;
             dict[@"spoofedBluetoothMAC"] = p.spoofedBluetoothMAC;
             dict[@"birthTimeSec"] = @(p.birthTimeSec);
+            dict[@"deltaVarSec"] = @(p.deltaVarSec);
+            dict[@"deltaMobileSec"] = @(p.deltaMobileSec);
+            dict[@"deltaSandboxSec"] = @(p.deltaSandboxSec);
+            if (p.darwinKernelRelease) dict[@"darwinKernelRelease"] = p.darwinKernelRelease;
             dict[@"l2cacheSize"] = @(p.l2cacheSize);
             dict[@"localeIdentifier"] = p.localeIdentifier ?: @"vi_VN";
             dict[@"timeZoneName"] = [NSTimeZone systemTimeZone].name ?: @"Asia/Ho_Chi_Minh";

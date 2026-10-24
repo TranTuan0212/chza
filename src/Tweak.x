@@ -3160,15 +3160,95 @@ static inline BOOL should_fake_stat_path(const char *path) {
 
 static inline uint64_t get_effective_birth_for_path(const char *path, uint64_t base_birth) {
     if (!path || base_birth == 0) return base_birth;
-    uint64_t delta_m = 180ULL + ((base_birth * 104729ULL) % 1800ULL) + (base_birth % 59ULL);
-    uint64_t delta_c = delta_m + 30ULL + ((base_birth * 1299709ULL) % 600ULL) + ((base_birth / 13ULL) % 43ULL);
-    if (strstr(path, "/Library") != NULL || strstr(path, "/Caches") != NULL || strstr(path, "/tmp") != NULL || strstr(path, "/Preferences") != NULL) {
-        return base_birth + delta_c;
+    ZTSettings *s = [ZTSettings sharedSettings];
+    uint64_t d_var = s.deltaVarSec > 0 ? (uint64_t)s.deltaVarSec : (180ULL + ((base_birth * 65537ULL) % 900ULL));
+    uint64_t d_mob = (s.deltaMobileSec > d_var) ? (uint64_t)s.deltaMobileSec : (d_var + 25ULL + ((base_birth * 104729ULL) % 120ULL));
+    uint64_t d_sbx = (s.deltaSandboxSec > d_mob) ? (uint64_t)s.deltaSandboxSec : (d_mob + 86400ULL * 7ULL + ((base_birth * 1299709ULL) % (86400ULL * 60ULL)));
+    uint64_t d_lib = d_sbx + 2ULL + ((base_birth * 2246822519ULL) % 15ULL);
+
+    const char *p = path;
+    if (strncmp(p, "/private/", 9) == 0) {
+        p += 8; // Chuẩn hóa "/private/var/..." -> "/var/..."
+    } else if (strcmp(p, "/private") == 0) {
+        return base_birth;
     }
-    if (strstr(path, "/Documents") != NULL || strstr(path, "/Containers/") != NULL || strstr(path, "/Application/") != NULL) {
-        return base_birth + delta_m;
+
+    // Tier 4: Thư mục con cấu hình/cache trong Sandbox (Library, Caches, Preferences, tmp)
+    if (strstr(p, "/Library") != NULL || strstr(p, "/Caches") != NULL || strstr(p, "/tmp") != NULL || strstr(p, "/Preferences") != NULL) {
+        return base_birth + d_lib;
     }
+    // Tier 3: Thư mục gốc Sandbox / Containers / Documents / Bundle Application
+    if (strstr(p, "/Documents") != NULL || strstr(p, "/Containers/") != NULL || strstr(p, "/Application/") != NULL) {
+        return base_birth + d_sbx;
+    }
+    // Tier 2b: Các thư mục con bên dưới /var/mobile/... (vd: /var/mobile/Media)
+    if (strncmp(p, "/var/mobile/", 12) == 0 && p[12] != '\0') {
+        uint64_t h = 0;
+        for (const char *c = p + 12; *c; ++c) {
+            if (*c != '/') h = h * 131ULL + (unsigned char)(*c);
+        }
+        return base_birth + d_mob + 12ULL + (h % 300ULL);
+    }
+    // Tier 2: /var/mobile
+    if (strcmp(p, "/var/mobile") == 0 || strcmp(p, "/var/mobile/") == 0 || strstr(p, "mobile") != NULL) {
+        return base_birth + d_mob;
+    }
+    // Tier 1b: Các thư mục con khác bên dưới /var/... (vd: /var/db, /var/root, /var/wireless, /var/msgs)
+    if (strncmp(p, "/var/", 5) == 0 && p[5] != '\0') {
+        uint64_t h = 0;
+        for (const char *c = p + 5; *c; ++c) {
+            if (*c != '/') h = h * 131ULL + (unsigned char)(*c);
+        }
+        return base_birth + d_var + 3ULL + (h % 20ULL);
+    }
+    // Tier 1: /var
+    if (strcmp(p, "/var") == 0 || strcmp(p, "/var/") == 0) {
+        return base_birth + d_var;
+    }
+    // Tier 0: Root "/" hoặc "/System"
     return base_birth;
+}
+
+#define MAX_STAT_LOG_PATHS 64
+static char s_stat_logged_paths[MAX_STAT_LOG_PATHS][256];
+static int s_stat_logged_count = 0;
+static pthread_mutex_t s_stat_log_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void log_stat_path_once(const char *api, const char *path, uint64_t eff_birth, long nsec_b) {
+    if (!path || !api || !path[0]) return;
+    static __thread BOOL s_in_stat_log = NO;
+    if (s_in_stat_log) return;
+    if (strstr(path, "ZaloAudit.log") || strstr(path, "ZaloTraffic.har") || strstr(path, "zalotweak") || strstr(path, ".plist")) {
+        return;
+    }
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (!s.enableAuditLog) return;
+
+    s_in_stat_log = YES;
+    char key[256];
+    snprintf(key, sizeof(key), "%s:%s", api, path);
+    BOOL shouldLog = NO;
+    pthread_mutex_lock(&s_stat_log_lock);
+    BOOL found = NO;
+    for (int i = 0; i < s_stat_logged_count; i++) {
+        if (strcmp(s_stat_logged_paths[i], key) == 0) {
+            found = YES;
+            break;
+        }
+    }
+    if (!found && s_stat_logged_count < MAX_STAT_LOG_PATHS) {
+        strncpy(s_stat_logged_paths[s_stat_logged_count], key, sizeof(s_stat_logged_paths[0]) - 1);
+        s_stat_logged_paths[s_stat_logged_count][sizeof(s_stat_logged_paths[0]) - 1] = '\0';
+        s_stat_logged_count++;
+        shouldLog = YES;
+    }
+    pthread_mutex_unlock(&s_stat_log_lock);
+
+    if (shouldLog) {
+        uint64_t ms = eff_birth * 1000ULL + ((uint64_t)nsec_b / 1000000ULL);
+        logAudit(@"STAT-PATH", [NSString stringWithFormat:@"[%s] path='%s' -> birth_ms=%llu (sec=%llu)", api, path, ms, eff_birth]);
+    }
+    s_in_stat_log = NO;
 }
 
 static inline void get_consistent_stat_times(uint64_t fake_birth, time_t *out_mtime, time_t *out_ctime, long *out_nsec_b, long *out_nsec_m, long *out_nsec_c) {
@@ -3195,6 +3275,7 @@ static inline void fake_stat_timespec_for_path(const char *path, struct stat *bu
     buf->st_mtimespec.tv_nsec = nsec_mtime;
     buf->st_ctimespec.tv_sec = fake_ctime;
     buf->st_ctimespec.tv_nsec = nsec_ctime;
+    log_stat_path_once("stat/lstat/fstat", path, (uint64_t)fake_birth, nsec_birth);
 }
 
 static int (*orig_stat)(const char *path, struct stat *buf);
@@ -3284,6 +3365,7 @@ static int my_getattrlist(const char *path, struct attrlist *attrList, void *att
             time_t fake_mtime = 0, fake_ctime = 0;
             long nsec_b = 0, nsec_m = 0, nsec_c = 0;
             get_consistent_stat_times(effBirth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
+            log_stat_path_once("getattrlist", path, effBirth, nsec_b);
             size_t words32 = attrBufSize / sizeof(uint32_t);
             uint32_t *ptr32 = (uint32_t *)attrBuf;
             int timeIdx = 0;
@@ -3670,6 +3752,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
                 time_t fake_mtime = 0, fake_ctime = 0;
                 long nsec_b = 0, nsec_m = 0, nsec_c = 0;
                 get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
+                log_stat_path_once("NSFileManager", [path UTF8String], fake_birth, nsec_b);
                 NSDate *fakeDate = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
                 NSDate *fakeModDate = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_mtime + (NSTimeInterval)nsec_m / 1000000000.0)];
                 NSMutableDictionary *m = [attrs mutableCopy];
@@ -3805,6 +3888,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
                 long nsec_b = 0, nsec_m = 0, nsec_c = 0;
                 get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
                 if ([key isEqualToString:NSURLCreationDateKey]) {
+                    if (urlPath) log_stat_path_once("NSURL.getResourceValue", [urlPath UTF8String], fake_birth, nsec_b);
                     *value = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
                 } else if ([key isEqualToString:NSURLContentModificationDateKey]) {
                     *value = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_mtime + (NSTimeInterval)nsec_m / 1000000000.0)];
@@ -3852,6 +3936,7 @@ static inline NSString *redirect_kvcore_nsstring(NSString *path) {
             long nsec_b = 0, nsec_m = 0, nsec_c = 0;
             get_consistent_stat_times(fake_birth, &fake_mtime, &fake_ctime, &nsec_b, &nsec_m, &nsec_c);
             if ([keys containsObject:NSURLCreationDateKey]) {
+                if (urlPath) log_stat_path_once("NSURL.resourceValues", [urlPath UTF8String], fake_birth, nsec_b);
                 m[NSURLCreationDateKey] = [NSDate dateWithTimeIntervalSince1970:((NSTimeInterval)fake_birth + (NSTimeInterval)nsec_b / 1000000000.0)];
                 changed = YES;
             }
