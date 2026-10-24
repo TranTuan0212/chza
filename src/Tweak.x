@@ -942,6 +942,17 @@ static void purge_entire_sandbox_safely(void) {
         self.currentVoIPToken = dict[@"currentVoIPToken"] ?: @"";
         self.spoofedVoIPToken = dict[@"spoofedVoIPToken"] ?: @"";
         self.lastWipedVoIPToken = dict[@"lastWipedVoIPToken"] ?: @"";
+        self.spoofContinuousCPUClock = (dict[@"spoofContinuousCPUClock"] != nil) ? [dict[@"spoofContinuousCPUClock"] boolValue] : YES;
+        self.spoofVoIPPushToken = (dict[@"spoofVoIPPushToken"] != nil) ? [dict[@"spoofVoIPPushToken"] boolValue] : YES;
+        if (self.spoofedVoIPToken.length == 0 && self.hasConfiguredProfile) {
+            unsigned char voipBytes[32];
+            arc4random_buf(voipBytes, sizeof(voipBytes));
+            NSMutableString *vHex = [NSMutableString stringWithCapacity:64];
+            for (int i = 0; i < 32; i++) {
+                [vHex appendFormat:@"%02x", voipBytes[i]];
+            }
+            self.spoofedVoIPToken = [vHex copy];
+        }
 
         BOOL isAppExtension = [[NSBundle mainBundle].bundlePath containsString:@".appex"];
         if (isAppExtension) {
@@ -1164,6 +1175,8 @@ static void purge_entire_sandbox_safely(void) {
     if (self.currentVoIPToken) dict[@"currentVoIPToken"] = self.currentVoIPToken;
     if (self.spoofedVoIPToken) dict[@"spoofedVoIPToken"] = self.spoofedVoIPToken;
     if (self.lastWipedVoIPToken) dict[@"lastWipedVoIPToken"] = self.lastWipedVoIPToken;
+    dict[@"spoofContinuousCPUClock"] = @(self.spoofContinuousCPUClock);
+    dict[@"spoofVoIPPushToken"] = @(self.spoofVoIPPushToken);
     if (self.lastWipedIDFV) dict[@"lastWipedIDFV"] = self.lastWipedIDFV;
     if (self.lastWipedIP) dict[@"lastWipedIP"] = self.lastWipedIP;
     dict[@"lastWipedTimestamp"] = @(self.lastWipedTimestamp);
@@ -2452,11 +2465,55 @@ static int my_clock_gettime(clockid_t clk_id, struct timespec *tp) {
 
 static uint64_t (*orig_mach_continuous_time)(void);
 static uint64_t my_mach_continuous_time(void) {
+    if (!is_tweak_active()) {
+        return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
+    }
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.spoofContinuousCPUClock && s.bootTimeSec > 0) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            static uint64_t s_mach_cont_offset = 0;
+            static uint64_t s_last_boot_sec = 0;
+            if (s_mach_cont_offset == 0 || s_last_boot_sec != s.bootTimeSec) {
+                struct timeval tv;
+                gettimeofday(&tv, NULL);
+                uint64_t nowSec = (uint64_t)tv.tv_sec;
+                uint64_t contSec = (nowSec > s.bootTimeSec) ? (nowSec - s.bootTimeSec) : 43200ULL;
+                uint64_t targetTicks = contSec * 24000000ULL;
+                uint64_t realTicks = orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
+                s_mach_cont_offset = targetTicks - realTicks;
+                s_last_boot_sec = s.bootTimeSec;
+            }
+            uint64_t realTicks = orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
+            return realTicks + s_mach_cont_offset;
+        }
+    }
     return orig_mach_continuous_time ? orig_mach_continuous_time() : mach_continuous_time();
 }
 
 static uint64_t (*orig_mach_absolute_time)(void);
 static uint64_t my_mach_absolute_time(void) {
+    if (!is_tweak_active()) {
+        return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+    }
+    ZTSettings *s = [ZTSettings sharedSettings];
+    if (s.spoofContinuousCPUClock && s.bootTimeSec > 0) {
+        void *c0 = __builtin_return_address(0);
+        if (is_zalo_caller(c0)) {
+            static uint64_t s_mach_abs_offset = 0;
+            static uint64_t s_last_abs_boot_sec = 0;
+            if (s_mach_abs_offset == 0 || s_last_abs_boot_sec != s.bootTimeSec) {
+                double awakeSec = 0;
+                get_consistent_uptimes(NULL, &awakeSec);
+                uint64_t targetTicks = (uint64_t)(awakeSec * 24000000.0);
+                uint64_t realTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+                s_mach_abs_offset = targetTicks - realTicks;
+                s_last_abs_boot_sec = s.bootTimeSec;
+            }
+            uint64_t realTicks = orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
+            return realTicks + s_mach_abs_offset;
+        }
+    }
     return orig_mach_absolute_time ? orig_mach_absolute_time() : mach_absolute_time();
 }
 
@@ -3757,6 +3814,29 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
 - (NSData *)token;
 @end
 
+%hook PKPushCredentials
+
+- (NSData *)token {
+    if (is_tweak_active()) {
+        ZTSettings *st = [ZTSettings sharedSettings];
+        if (st.spoofVoIPPushToken && st.spoofedVoIPToken.length == 64) {
+            NSMutableData *data = [NSMutableData dataWithCapacity:32];
+            const char *chars = [st.spoofedVoIPToken UTF8String];
+            char byteChars[3] = {'\0', '\0', '\0'};
+            for (int i = 0; i < 64; i += 2) {
+                byteChars[0] = chars[i];
+                byteChars[1] = chars[i + 1];
+                unsigned char byte = (unsigned char)strtol(byteChars, NULL, 16);
+                [data appendBytes:&byte length:1];
+            }
+            return [data copy];
+        }
+    }
+    return %orig;
+}
+
+%end
+
 %hook PKPushRegistry
 
 - (void)setDelegate:(id)delegate {
@@ -3788,19 +3868,25 @@ static inline BOOL is_sideload_provision_path(NSString *path) {
                                     [hex appendFormat:@"%02x", b[i]];
                                 }
                                 ZTSettings *st = [ZTSettings sharedSettings];
-                                BOOL isAPNsToken = NO;
-                                if (st.currentAPNsToken && st.currentAPNsToken.length > 0 && [hex isEqualToString:st.currentAPNsToken]) {
-                                    isAPNsToken = YES;
-                                }
-                                if (st.lastWipedAPNsToken && st.lastWipedAPNsToken.length > 0 && [hex isEqualToString:st.lastWipedAPNsToken]) {
-                                    isAPNsToken = YES;
-                                }
-                                if (isAPNsToken) {
-                                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"⚠️ [PUSHKIT BỎ QUA] Credential nhận được trùng với Token APNs (%@), bỏ qua không ghi đè VoIP", hex]);
-                                } else {
-                                    st.currentVoIPToken = hex;
+                                if (st.spoofVoIPPushToken && st.spoofedVoIPToken.length == 64) {
+                                    st.currentVoIPToken = st.spoofedVoIPToken;
                                     [st saveSettings];
-                                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã bắt Token VoIP chính thức từ PushKit (Type=%@): %@", type ?: @"VoIP", hex]);
+                                    logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã nạp Token VoIP giả lập độc nhất từ PushKit (Type=%@): %@", type ?: @"VoIP", st.spoofedVoIPToken]);
+                                } else {
+                                    BOOL isAPNsToken = NO;
+                                    if (st.currentAPNsToken && st.currentAPNsToken.length > 0 && [hex isEqualToString:st.currentAPNsToken]) {
+                                        isAPNsToken = YES;
+                                    }
+                                    if (st.lastWipedAPNsToken && st.lastWipedAPNsToken.length > 0 && [hex isEqualToString:st.lastWipedAPNsToken]) {
+                                        isAPNsToken = YES;
+                                    }
+                                    if (isAPNsToken) {
+                                        logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"⚠️ [PUSHKIT BỎ QUA] Credential nhận được trùng với Token APNs (%@), bỏ qua không ghi đè VoIP", hex]);
+                                    } else {
+                                        st.currentVoIPToken = hex;
+                                        [st saveSettings];
+                                        logAudit(@"PUSH-TOKEN", [NSString stringWithFormat:@"📞 [PUSHKIT CREDENTIALS] Đã bắt Token VoIP gốc từ PushKit (Type=%@): %@", type ?: @"VoIP", hex]);
+                                    }
                                 }
                             }
                         }
@@ -5296,7 +5382,9 @@ static void zt_early_keychain_purge_if_needed(void) {
             if (!is_original_zalo_app()) {
                 logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Clone: Đã chặn Token APNs Fake & Triệt tiêu submitToken (Chống Apple BadDeviceToken ban 3h) | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
             } else {
-                logAudit(@"PROFILE-SYNC", @"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Gốc: Bảo toàn Token Apple Gateway | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001");
+                NSString *voipMode = s.spoofVoIPPushToken ? @"Tự sinh Token PushKit VoIP 32-byte theo Profile" : @"Bảo toàn Token Apple Gateway gốc (Passthrough)";
+                NSString *cpuMode = s.spoofContinuousCPUClock ? @"Đồng bộ mach_time" : @"Passthrough CPU thật";
+                logAudit(@"PROFILE-SYNC", [NSString stringWithFormat:@"🛡️ [CHỐNG LIÊN KẾT NÂNG CAO] Zalo Gốc: %@ | CPU: %@ | Anti-Dyld/dladdr: Đã ẩn Zalotweak.dylib | SIM Slot: 0000000100000001", voipMode, cpuMode]);
             }
         }
 

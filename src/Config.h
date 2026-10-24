@@ -59,6 +59,8 @@
 @property (nonatomic, assign) uint16_t proxyPort;          // Cổng Port của Proxy
 @property (nonatomic, strong) NSString *proxyUser;         // Tài khoản Proxy (tuỳ chọn)
 @property (nonatomic, strong) NSString *proxyPass;         // Mật khẩu Proxy (tuỳ chọn)
+@property (nonatomic, assign) BOOL spoofContinuousCPUClock; // Đồng bộ bộ đếm thạch anh CPU mach_time theo Profile (Mặc định YES)
+@property (nonatomic, assign) BOOL spoofVoIPPushToken;      // Tự sinh mã VoIP token 32-byte riêng theo Profile (Mặc định YES)
 @property (nonatomic, strong) NSString *centralizedDid;       // Central Device ID từ centralized.zaloapp.com
 @property (nonatomic, strong) NSString *currentAPNsToken;      // Token APNs hiện tại của Zalo
 @property (nonatomic, strong) NSString *lastWipedAPNsToken;    // Token APNs trước lần Wipe gần nhất

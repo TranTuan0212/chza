@@ -281,6 +281,42 @@
             <key>cell</key>
             <string>PSGroupCell</string>
             <key>label</key>
+            <string>ẨN TẦNG HỆ THỐNG (HARDWARE SPOOF)</string>
+            <key>footerText</key>
+            <string>Đồng bộ bộ đếm CPU mach_time khớp với bootTime hồ sơ mới. Tự sinh mã Apple PushKit VoIP Token 32-byte độc nhất theo từng Profile để chống khóa tài khoản dây chuyền.</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>spoofContinuousCPUClock</string>
+            <key>label</key>
+            <string>Đồng Bộ Bộ Đếm CPU (mach_time)</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>default</key>
+            <true/>
+            <key>defaults</key>
+            <string>com.sonhu.zalotweak</string>
+            <key>key</key>
+            <string>spoofVoIPPushToken</string>
+            <key>label</key>
+            <string>Tự Sinh Token VoIP PushKit</string>
+            <key>PostNotification</key>
+            <string>com.sonhu.zalotweak/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSGroupCell</string>
+            <key>label</key>
             <string>TIỆN ÍCH &amp; KIỂM TOÁN HỆ THỐNG</string>
             <key>footerText</key>
             <string>Trên máy Jailbreak (Roothide), nút nổi mặc định TẮT để tàng hình tuyệt đối khỏi Zalo UI audit. Ghi lại nhật ký truy vấn hệ thống (ZaloAudit.log) và toàn bộ gói tin mạng HTTP/HTTPS (ZaloTraffic.har).</string>

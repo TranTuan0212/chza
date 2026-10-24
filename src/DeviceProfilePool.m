@@ -721,6 +721,17 @@ static NSString *detect_real_system_machine(void) {
 
     profile.spoofedScreenSize = [NSString stringWithFormat:@"%dx%d", (int)(spec.width * spec.scale), (int)(spec.height * spec.scale)];
 
+    // Tự sinh mã PushKit VoIP token 32-byte độc nhất chuẩn Apple theo hồ sơ máy mới
+    unsigned char voipBytes[32];
+    arc4random_buf(voipBytes, sizeof(voipBytes));
+    NSMutableString *vHex = [NSMutableString stringWithCapacity:64];
+    for (int i = 0; i < 32; i++) {
+        [vHex appendFormat:@"%02x", voipBytes[i]];
+    }
+    profile.spoofedVoIPToken = [vHex copy];
+    profile.spoofContinuousCPUClock = YES;
+    profile.spoofVoIPPushToken = YES;
+
     return profile;
 }
 

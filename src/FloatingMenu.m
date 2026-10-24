@@ -816,7 +816,12 @@ UIViewController *ZTGetTopViewController(void) {
         [self showAuditLogMenuFrom:presenter];
     }]];
 
-    // 4. Tạm ẩn nút nổi
+    // 4. Tùy chọn ẩn tầng hệ thống (CPU & VoIP Token)
+    [advSheet addAction:[UIAlertAction actionWithTitle:@"🛡️ Tùy Chọn Ẩn Tầng Hệ Thống (CPU & VoIP)" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        [self showHardwareSpoofSettingsFrom:presenter];
+    }]];
+
+    // 5. Tạm ẩn nút nổi
     [advSheet addAction:[UIAlertAction actionWithTitle:@"👁️ Tạm Ẩn Nút Nổi Trên Màn Hình" style:UIAlertActionStyleDestructive handler:^(UIAlertAction * _Nonnull action) {
         [[ZTFloatingButton sharedButton] hide];
         UIAlertController *hint = [UIAlertController alertControllerWithTitle:@"Đã Ẩn Nút Nổi"
@@ -834,6 +839,55 @@ UIViewController *ZTGetTopViewController(void) {
     }
 
     [presenter presentViewController:advSheet animated:YES completion:nil];
+}
+
+- (void)showHardwareSpoofSettingsFrom:(UIViewController *)top {
+    UIViewController *presenter = top ?: get_top_view_controller();
+    if (!presenter) return;
+
+    ZTSettings *s = [ZTSettings sharedSettings];
+
+    NSString *cpuStatus = s.spoofContinuousCPUClock ? @"🟢 ĐANG BẬT" : @"⚪ ĐANG TẮT";
+    NSString *voipStatus = s.spoofVoIPPushToken ? @"🟢 ĐANG BẬT" : @"⚪ ĐANG TẮT";
+
+    NSString *msg = [NSString stringWithFormat:
+                     @"1. Bộ đếm CPU (mach_time): %@\n"
+                     @"• Khi BẬT: Tự động đồng bộ số tick CPU khớp với bootTime hồ sơ mới (Chống tăng liền mạch nối đuôi giữa 2 acc).\n"
+                     @"• Khi TẮT: Đọc số tick CPU thật của máy (Bạn cần tắt nguồn khởi động lại máy để CPU về 0).\n\n"
+                     @"2. Token VoIP PushKit: %@\n"
+                     @"• Khi BẬT: Tự sinh mã 32-byte VoIP độc nhất chuẩn Apple theo từng Profile (Chống bị Zalo khóa tài khoản dây chuyền).\n"
+                     @"• Khi TẮT: Trả về Token VoIP gốc máy thật.\n\n"
+                     @"💡 Toàn bộ các cơ chế trên đều thực hiện ở C-Level nhân Darwin Kernel & PushKit Framework để Zalo tự quét tự lấy 100%%.",
+                     cpuStatus, voipStatus];
+
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🛡️ ẨN TẦNG HỆ THỐNG (CPU & VOIP)"
+                                                                   message:msg
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+
+    NSString *toggleCPUTitle = s.spoofContinuousCPUClock ? @"⏱️ TẮT Đồng Bộ Bộ Đếm CPU" : @"⏱️ BẬT Đồng Bộ Bộ Đếm CPU (Khuyên Dùng)";
+    [alert addAction:[UIAlertAction actionWithTitle:toggleCPUTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.spoofContinuousCPUClock = !s.spoofContinuousCPUClock;
+        [s saveSettings];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+        [self showHardwareSpoofSettingsFrom:presenter];
+    }]];
+
+    NSString *toggleVoIPTitle = s.spoofVoIPPushToken ? @"📞 TẮT Tự Sinh Token VoIP (Dùng Token Gốc)" : @"📞 BẬT Tự Sinh Token VoIP (Khuyên Dùng)";
+    [alert addAction:[UIAlertAction actionWithTitle:toggleVoIPTitle style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
+        s.spoofVoIPPushToken = !s.spoofVoIPPushToken;
+        [s saveSettings];
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(), CFSTR("com.sonhu.zalotweak/settingschanged"), NULL, NULL, YES);
+        [self showHardwareSpoofSettingsFrom:presenter];
+    }]];
+
+    [alert addAction:[UIAlertAction actionWithTitle:@"Quay Lại" style:UIAlertActionStyleCancel handler:nil]];
+
+    if (alert.popoverPresentationController) {
+        alert.popoverPresentationController.sourceView = [ZTFloatingButton sharedButton];
+        alert.popoverPresentationController.sourceRect = [ZTFloatingButton sharedButton].bounds;
+    }
+
+    [presenter presentViewController:alert animated:YES completion:nil];
 }
 
 #pragma mark - Submenus
@@ -2215,7 +2269,6 @@ static void wipe_directory_recursively_safely(NSFileManager *fm, NSString *dirPa
     }
     settings.currentZCID = @"";
     settings.currentVoIPToken = @"";
-    settings.spoofedVoIPToken = @"";
     settings.centralizedDid = @"";
     if (currentIP.length > 0 && ![currentIP isEqualToString:@"Không xác định"]) {
         settings.lastWipedIP = currentIP;
